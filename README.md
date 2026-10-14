@@ -29,6 +29,23 @@ the official firmware's pin assignments and RAK3401 hardware identity.
 
 ## Download a build
 
+Download ready-to-flash firmware from
+[Releases](https://github.com/ethan1980/RAK3401-Legion/releases).
+After both profiles build successfully, pushes to `main` and manual workflow runs
+on `main` automatically publish an **experimental prerelease** of Legion.
+Each release has a tag such as `legion-v0.1.0-<commit>` and includes:
+
+- `firmware-rak3401-legion-*.uf2` for USB/bootloader flashing.
+- `firmware-rak3401-legion-*-ota.zip` for OTA/DFU updates.
+- Corresponding source, build metadata, debug files, and `SHA256SUMS`.
+
+Release assets are direct downloads and have no Actions artifact retention limit.
+Published releases are preserved when the same commit is rebuilt. Pull requests
+build and test the firmware without publishing a release. To build and publish
+manually, open **Actions → Build RAK3401 Legion → Run workflow** and select `main`.
+
+The comparison baseline is also available in Actions.
+
 Open a successful run in
 [Actions](https://github.com/ethan1980/RAK3401-Legion/actions/workflows/build.yml)
 and download its artifacts:

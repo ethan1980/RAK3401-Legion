@@ -71,6 +71,7 @@ def package(firmware, target, output):
             "profiles",
             "patches",
             "scripts",
+            "tests",
             "LICENSE",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
@@ -80,6 +81,9 @@ def package(firmware, target, output):
         "environment": environment,
         "spi_hz": 4000000,
         "bulk_spi": target == "legion",
+        "energy_recovery": target == "legion",
+        "flash_write_deduplication": target == "legion",
+        "flash_readback_crc32": target == "legion",
         "hardware_tested": False,
         "energy_savings_measured": False,
         "overlay_commit": run(
@@ -118,6 +122,15 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
     firmware = prepare(args.dest)
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/test_firmware.py"),
+            "--firmware",
+            str(firmware),
+        ],
+        check=True,
+    )
     subprocess.run(
         [
             sys.executable,

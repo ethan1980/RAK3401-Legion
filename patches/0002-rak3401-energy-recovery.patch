@@ -1,0 +1,522 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 0d0a037bd7774e1f0d091b3634a0bce0793f8817..bcf3d076f18f080af66c9eea3844b666f16c021c 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -367,12 +367,19 @@ void printInfo()
+     LOG_INFO("S:B:%d,%s,%s,%s", HW_VENDOR, optstr(APP_VERSION), optstr(APP_ENV), optstr(APP_REPO));
+ }
+ #ifndef PIO_UNIT_TESTING
++#if RAK3401_LEGION_POWER
++#include "power/RAK3401LegionPower.h"
++#endif
+ void setup()
+ {
+ 
+     // initialize power HAL layer as early as possible
+     powerHAL_init();
+ 
++#if RAK3401_LEGION_POWER
++    legionPowerBootGate();
++#endif
++
+ #ifdef LED_POWER
+     pinMode(LED_POWER, OUTPUT);
+     digitalWrite(LED_POWER, LED_STATE_ON);
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index 55f0d7b82ea32d34210375f30b47b30ae1e214d3..f890fcda9c183088a50bc3028d82738cd711c4fe 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -13,6 +13,10 @@
+ #include <pb_decode.h>
+ #include <pb_encode.h>
+ 
++#if RAK3401_LEGION_POWER
++#include "power/RAK3401LegionPower.h"
++#endif
++
+ #if ARCH_PORTDUINO
+ #include "PortduinoGlue.h"
+ #include "meshUtils.h"
+@@ -161,7 +165,11 @@ bool RadioLibInterface::canSendImmediately()
+         }
+         return false;
+     } else
++#if RAK3401_LEGION_POWER
++        return legionPowerAllowTx();
++#else
+         return true;
++#endif
+ }
+ 
+ bool RadioLibInterface::preambleHoldActive()
+@@ -1383,7 +1391,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+ 
+     /* NOTE: Minimize the actions before startTransmit() to keep the time between
+              channel scan and actual transmit as low as possible to avoid collisions. */
++#if RAK3401_LEGION_POWER
++    const bool powerReady = legionPowerTxReady();
++    if (!powerReady)
++        LOG_WARN("Legion blocked TX: battery or VDD reserve");
++    if (disabled || !config.lora.tx_enabled || !powerReady) {
++#else
+     if (disabled || !config.lora.tx_enabled) {
++#endif
+         LOG_WARN("Drop Tx packet: LoRa Tx disabled");
+         // Never reaches completeSending(), so any per-packet radio state has to be released here.
+         RadioTxHooks::packetReleased(this, txp);
+diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
+index 3d2ccab267bf297d1eebdc22dfccac3a63445ac5..cb6a513f8f07d5934f8f419abdd1e3376c02733a 100644
+--- a/src/platform/nrf52/main-nrf52.cpp
++++ b/src/platform/nrf52/main-nrf52.cpp
+@@ -34,6 +34,10 @@
+ #include "flash/flash_nrf5x.h"
+ #include <hal/nrf_lpcomp.h>
+ 
++#if RAK3401_LEGION_POWER
++#include "power/RAK3401LegionPower.h"
++#endif
++
+ #ifdef BQ25703A_ADDR
+ #include "BQ25713.h"
+ #endif
+@@ -120,7 +124,11 @@ bool powerHAL_isPowerLevelSafe()
+         }
+     }
+ 
++#if RAK3401_LEGION_POWER
++    return powerLevelSafe && legionBatterySafeForFlash();
++#else
+     return powerLevelSafe;
++#endif
+ }
+ 
+ void powerHAL_platformInit()
+@@ -551,6 +559,9 @@ void cpuDeepSleep(uint32_t msecToWake)
+         // FIXME, use non-init RAM per
+         // https://devzone.nordicsemi.com/f/nordic-q-a/48919/ram-retention-settings-with-softdevice-enabled
+ 
++#if RAK3401_LEGION_POWER
++        legionPrepareSystemOff(variant_enableBatteryLpcompWake());
++#else
+ #ifdef BATTERY_LPCOMP_INPUT
+         // Only enable LPCOMP wake if the variant allows it
+         if (variant_enableBatteryLpcompWake()) {
+@@ -569,6 +580,7 @@ void cpuDeepSleep(uint32_t msecToWake)
+             while (!nrf_lpcomp_event_check(NRF_LPCOMP, NRF_LPCOMP_EVENT_READY))
+                 ;
+         }
++#endif
+ #endif
+ 
+         auto ok = sd_power_system_off();
+diff --git a/src/power/LegionPowerPolicy.h b/src/power/LegionPowerPolicy.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ee0b19f2b54a3fd8edc62444f4568a98ad964395
+--- /dev/null
++++ b/src/power/LegionPowerPolicy.h
+@@ -0,0 +1,81 @@
++#pragma once
++
++#include <stdint.h>
++
++namespace legion
++{
++constexpr uint16_t BATTERY_SLEEP_MV = 3500;
++constexpr uint16_t BATTERY_BOOT_MV = 3600;
++constexpr uint16_t BATTERY_POLL_RECOVERY_MV = 3800;
++constexpr uint16_t VDD_SLEEP_MV = 2900;
++constexpr uint16_t VDD_RECOVERY_MV = 3000;
++constexpr uint8_t BATTERY_LOW_SAMPLES = 3;
++constexpr uint8_t VDD_LOW_SAMPLES = 6;
++constexpr uint8_t RECOVERY_SAMPLES = 4;
++
++inline uint16_t batteryMvFromAdc(uint32_t sum, uint16_t samples)
++{
++    // RAK19007: R3=1 MOhm, R4=1.5 MOhm; SAADC reference is 3.0 V at 12 bits.
++    return samples ? static_cast<uint16_t>((sum * 5000u + samples * 2048u) / (samples * 4096u)) : 0;
++}
++
++inline bool bootPowerReady(uint16_t batteryMv, uint16_t vddMv, bool usb)
++{
++    return vddMv >= VDD_RECOVERY_MV && (usb || batteryMv >= BATTERY_BOOT_MV);
++}
++
++inline bool transmitPowerReady(uint16_t batteryMv, uint16_t vddMv, bool usb)
++{
++    return vddMv >= VDD_RECOVERY_MV && (usb || batteryMv >= BATTERY_SLEEP_MV);
++}
++
++class PowerPolicy
++{
++  public:
++    bool observeBattery(uint16_t mv, bool usb)
++    {
++        if (usb || mv >= BATTERY_SLEEP_MV)
++            lowBatterySamples = 0;
++        else if (lowBatterySamples < BATTERY_LOW_SAMPLES)
++            ++lowBatterySamples;
++        return lowBatterySamples >= BATTERY_LOW_SAMPLES;
++    }
++
++    bool observeVdd(uint16_t mv, bool usb)
++    {
++        if (usb) {
++            lowVddSamples = 0;
++            vddUnsafe = false;
++            return false;
++        }
++        if (mv < VDD_SLEEP_MV)
++            vddUnsafe = true;
++        else if (mv >= VDD_RECOVERY_MV)
++            vddUnsafe = false;
++        if (!vddUnsafe)
++            lowVddSamples = 0;
++        else if (lowVddSamples < VDD_LOW_SAMPLES)
++            ++lowVddSamples;
++        return lowVddSamples >= VDD_LOW_SAMPLES;
++    }
++
++    bool observeRecovery(uint16_t batteryMv, uint16_t vddMv, bool usb)
++    {
++        if (usb) {
++            recoverySamples = 0;
++            return vddMv >= VDD_RECOVERY_MV;
++        }
++        if (batteryMv < BATTERY_POLL_RECOVERY_MV || vddMv < VDD_RECOVERY_MV)
++            recoverySamples = 0;
++        else if (recoverySamples < RECOVERY_SAMPLES)
++            ++recoverySamples;
++        return recoverySamples >= RECOVERY_SAMPLES;
++    }
++
++  private:
++    uint8_t lowBatterySamples = 0;
++    uint8_t lowVddSamples = 0;
++    uint8_t recoverySamples = 0;
++    bool vddUnsafe = false;
++};
++} // namespace legion
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9e3d251c8997c88abb03cfae0f232cab937ccf2
+--- /dev/null
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -0,0 +1,226 @@
++#include "RAK3401LegionPower.h"
++
++#if RAK3401_LEGION_POWER
++#include "LegionPowerPolicy.h"
++#include "UptimeClock.h"
++#include "concurrency/LockGuard.h"
++#include "mesh/LegionPersistence.h"
++#include "mesh/Throttle.h"
++#include "platform/nrf52/Nrf52SaadcLock.h"
++#include "power/PowerHAL.h"
++#include "sleep.h"
++#include <atomic>
++#include <hal/nrf_lpcomp.h>
++#include <nrf_sdm.h>
++#include <nrf_soc.h>
++
++uint16_t getVDDVoltage();
++
++namespace
++{
++constexpr uint32_t BATTERY_CHECK_MS = 5000;
++constexpr uint32_t VDD_CHECK_MS = 1000;
++constexpr uint32_t RECOVERY_CHECK_MS = 30000;
++std::atomic<uint16_t> lastBatteryMv{0};
++std::atomic<uint16_t> lastVddMv{0};
++std::atomic<bool> energySleep{false};
++legion::PowerPolicy policy;
++
++uint16_t readBatteryMv()
++{
++    concurrency::LockGuard guard(concurrency::nrf52SaadcLock);
++    analogReadResolution(BATTERY_SENSE_RESOLUTION_BITS);
++    analogReference(VBAT_AR_INTERNAL);
++    uint32_t sum = 0;
++    constexpr uint16_t SAMPLES = 15;
++    for (uint16_t i = 0; i < SAMPLES; ++i)
++        sum += analogRead(BATTERY_PIN);
++    const auto mv = legion::batteryMvFromAdc(sum, SAMPLES);
++    lastBatteryMv.store(mv);
++    return mv;
++}
++
++void powerOffPeripherals()
++{
++    pinMode(SX126X_POWER_EN, OUTPUT);
++    pinMode(PIN_LED1, OUTPUT);
++    pinMode(PIN_LED2, OUTPUT);
++    digitalWrite(SX126X_POWER_EN, LOW);
++    digitalWrite(PIN_3V3_EN, LOW);
++    ledOff(PIN_LED1);
++    ledOff(PIN_LED2);
++}
++
++void stopComparator()
++{
++    nrf_lpcomp_task_trigger(NRF_LPCOMP, NRF_LPCOMP_TASK_STOP);
++    nrf_lpcomp_disable(NRF_LPCOMP);
++}
++
++bool armBatteryWake()
++{
++    // Retain SAADC ownership until System OFF; it shares AIN3 with LPCOMP.
++    concurrency::nrf52SaadcLock->lock();
++    NRF_SAADC->TASKS_STOP = 1;
++    NRF_SAADC->ENABLE = SAADC_ENABLE_ENABLE_Disabled;
++    for (uint8_t attempt = 0; attempt < 2; ++attempt) {
++        stopComparator();
++        nrf_lpcomp_event_clear(NRF_LPCOMP, NRF_LPCOMP_EVENT_READY);
++        nrf_lpcomp_event_clear(NRF_LPCOMP, NRF_LPCOMP_EVENT_UP);
++        nrf_lpcomp_event_clear(NRF_LPCOMP, NRF_LPCOMP_EVENT_DOWN);
++        nrf_lpcomp_event_clear(NRF_LPCOMP, NRF_LPCOMP_EVENT_CROSS);
++        nrf_lpcomp_config_t config;
++        config.reference = BATTERY_LPCOMP_THRESHOLD;
++        config.detection = NRF_LPCOMP_DETECT_UP;
++        config.hyst = NRF_LPCOMP_HYST_ENABLED;
++        nrf_lpcomp_configure(NRF_LPCOMP, &config);
++        nrf_lpcomp_input_select(NRF_LPCOMP, BATTERY_LPCOMP_INPUT);
++        nrf_lpcomp_enable(NRF_LPCOMP);
++        nrf_lpcomp_task_trigger(NRF_LPCOMP, NRF_LPCOMP_TASK_START);
++        const uint32_t start = micros();
++        while (!nrf_lpcomp_event_check(NRF_LPCOMP, NRF_LPCOMP_EVENT_READY) && (uint32_t)(micros() - start) < 1000u) {
++        }
++        if (nrf_lpcomp_event_check(NRF_LPCOMP, NRF_LPCOMP_EVENT_READY)) {
++            nrf_lpcomp_task_trigger(NRF_LPCOMP, NRF_LPCOMP_TASK_SAMPLE);
++            delayMicroseconds(20);
++            if (nrf_lpcomp_result_get(NRF_LPCOMP) == 0)
++                return true;
++            break;
++        }
++    }
++    stopComparator();
++    concurrency::nrf52SaadcLock->unlock();
++    return false;
++}
++
++void feedSleepWatchdog()
++{
++    if (NRF_WDT->RUNSTATUS) {
++        for (uint8_t channel = 0; channel < 8; ++channel) {
++            if (NRF_WDT->RREN & (1u << channel))
++                NRF_WDT->RR[channel] = WDT_RR_RR_Reload;
++        }
++    }
++}
++
++[[noreturn]] void waitForRecovery()
++{
++    // System ON fallback avoids sleeping without a working wake source or a future UP edge.
++    legion::PowerPolicy recovery;
++    while (true) {
++        feedSleepWatchdog();
++        delay(RECOVERY_CHECK_MS);
++        feedSleepWatchdog();
++        if (recovery.observeRecovery(readBatteryMv(), getVDDVoltage(), powerHAL_isVBUSConnected()))
++            NVIC_SystemReset();
++    }
++}
++
++[[noreturn]] void earlyEnergySleep()
++{
++    energySleep = true;
++    powerOffPeripherals();
++    if (!armBatteryWake())
++        waitForRecovery();
++    uint8_t softDeviceEnabled = 0;
++    if (sd_softdevice_is_enabled(&softDeviceEnabled) == NRF_SUCCESS && softDeviceEnabled) {
++        sd_power_gpregret_clr(0, 0xFF);
++        sd_power_gpregret_set(0, 0x6d);
++        sd_power_system_off();
++    } else {
++        NRF_POWER->GPREGRET = 0x6d;
++    }
++    NRF_POWER->SYSTEMOFF = 1;
++    __DSB();
++    while (true)
++        __WFE();
++}
++
++void checkBootPower()
++{
++    for (uint8_t i = 0; i < legion::RECOVERY_SAMPLES; ++i) {
++        delay(250);
++        const auto batteryMv = readBatteryMv();
++        const auto vddMv = getVDDVoltage();
++        lastVddMv.store(vddMv);
++        if (!legion::bootPowerReady(batteryMv, vddMv, powerHAL_isVBUSConnected()))
++            earlyEnergySleep();
++    }
++}
++
++[[noreturn]] void enterEnergySleep()
++{
++    energySleep = true;
++    LOG_WARN("Legion battery reserve: %u mV, entering energy sleep", (unsigned)lastBatteryMv.load());
++    // Skip the TX queue wait and final snapshots while the supply is falling.
++    doDeepSleep(portMAX_DELAY, true, true);
++    while (true)
++        __WFE();
++}
++} // namespace
++
++void legionPowerBootGate()
++{
++    // Before console/FS setup: no logging, Bluetooth startup or flash writes here.
++    checkBootPower();
++    digitalWrite(PIN_3V3_EN, HIGH);
++    checkBootPower();
++}
++
++bool legionBatteryWakeEnabled()
++{
++    return energySleep;
++}
++
++bool legionBatterySafeForFlash()
++{
++    return !energySleep && (powerHAL_isVBUSConnected() || lastBatteryMv.load() >= legion::BATTERY_SLEEP_MV);
++}
++
++bool legionPowerAllowTx()
++{
++    readBatteryMv();
++    lastVddMv.store(getVDDVoltage());
++    return legionPowerTxReady();
++}
++
++bool legionPowerTxReady()
++{
++    return !energySleep && legion::transmitPowerReady(lastBatteryMv.load(), lastVddMv.load(), powerHAL_isVBUSConnected());
++}
++
++void legionPrepareSystemOff(bool enableBatteryWake)
++{
++    powerOffPeripherals();
++    if (enableBatteryWake && !armBatteryWake())
++        waitForRecovery();
++}
++
++void legionPowerPoll()
++{
++    static bool sampled = false;
++    static uint32_t lastVddCheck = 0;
++    static uint32_t lastBatteryCheck = 0;
++    static uint32_t lastStats = 0;
++    if (!sampled || Throttle::hasElapsed(lastVddCheck, VDD_CHECK_MS)) {
++        lastVddCheck = Time::getMillis();
++        const auto vddMv = getVDDVoltage();
++        lastVddMv.store(vddMv);
++        if (policy.observeVdd(vddMv, powerHAL_isVBUSConnected()))
++            enterEnergySleep();
++    }
++    if (!sampled || Throttle::hasElapsed(lastBatteryCheck, BATTERY_CHECK_MS)) {
++        lastBatteryCheck = Time::getMillis();
++        if (policy.observeBattery(readBatteryMv(), powerHAL_isVBUSConnected()))
++            enterEnergySleep();
++    }
++    sampled = true;
++    if (Throttle::hasElapsed(lastStats, 300000)) {
++        lastStats = Time::getMillis();
++        LOG_INFO("Legion physical battery: %u mV", (unsigned)lastBatteryMv.load());
++#if RAK3401_LEGION_FLASH
++        legionLogPersistenceStats();
++#endif
++    }
++}
++#endif
+diff --git a/src/power/RAK3401LegionPower.h b/src/power/RAK3401LegionPower.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..14dc3f16c41ef229530fcce1e5428d1c92232c91
+--- /dev/null
++++ b/src/power/RAK3401LegionPower.h
+@@ -0,0 +1,17 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_POWER
++#if !defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302)
++#error "Legion energy recovery requires the RAK3401 + RAK13302 nRF52 profile"
++#endif
++
++void legionPowerBootGate();
++void legionPowerPoll();
++bool legionBatteryWakeEnabled();
++bool legionBatterySafeForFlash();
++bool legionPowerAllowTx();
++bool legionPowerTxReady();
++void legionPrepareSystemOff(bool enableBatteryWake);
++#endif
+diff --git a/variants/nrf52840/rak3401_1watt/variant.cpp b/variants/nrf52840/rak3401_1watt/variant.cpp
+index 188b747e899fe9d74dfd7a2add9d8603c4f7e355..13b0ec5821cd6852b85b81f4cee147bcff4b6e96 100644
+--- a/variants/nrf52840/rak3401_1watt/variant.cpp
++++ b/variants/nrf52840/rak3401_1watt/variant.cpp
+@@ -23,6 +23,10 @@
+ #include "wiring_constants.h"
+ #include "wiring_digital.h"
+ 
++#if RAK3401_LEGION_POWER
++#include "power/RAK3401LegionPower.h"
++#endif
++
+ #ifdef LOW_VDD_SYSTEMOFF_DELAY_MS
+ #include "Arduino.h"
+ #include "FreeRTOS.h"
+@@ -45,9 +49,26 @@ void initVariant()
+ 
+     // 3V3 Power Rail
+     pinMode(PIN_3V3_EN, OUTPUT);
++#if RAK3401_LEGION_POWER
++    digitalWrite(PIN_3V3_EN, LOW);
++    pinMode(SX126X_POWER_EN, OUTPUT);
++    digitalWrite(SX126X_POWER_EN, LOW);
++#else
+     digitalWrite(PIN_3V3_EN, HIGH);
++#endif
++}
++
++#if RAK3401_LEGION_POWER
++void variant_nrf52LoopHook(void)
++{
++    legionPowerPoll();
+ }
+ 
++bool variant_enableBatteryLpcompWake()
++{
++    return legionBatteryWakeEnabled();
++}
++#else
+ #ifdef LOW_VDD_SYSTEMOFF_DELAY_MS
+ void variant_nrf52LoopHook(void)
+ {
+@@ -83,3 +104,4 @@ void variant_nrf52LoopHook(void)
+     }
+ }
+ #endif
++#endif
+diff --git a/variants/nrf52840/rak3401_1watt/variant.h b/variants/nrf52840/rak3401_1watt/variant.h
+index 329ec21e4d3ad85b0d1fb0006bf862dc55988ad9..c5af463927b22987c110a3758ba501b006a1e62a 100644
+--- a/variants/nrf52840/rak3401_1watt/variant.h
++++ b/variants/nrf52840/rak3401_1watt/variant.h
+@@ -210,12 +210,16 @@ static const uint8_t SCK = PIN_SPI_SCK;
+ #define VBAT_AR_INTERNAL AR_INTERNAL_3_0
+ #define ADC_MULTIPLIER 1.73
+ #if defined(LOW_VDD_SYSTEMOFF_DELAY_MS)
+-#if !defined(OCV_ARRAY)
++#if !defined(OCV_ARRAY) && !RAK3401_LEGION_POWER
+ #define OCV_ARRAY 4160, 4020, 3940, 3870, 3810, 3760, 3740, 3720, 3680, 3620, 2990
+ #endif
+ #define BATTERY_LPCOMP_INPUT NRF_LPCOMP_INPUT_3
++#if RAK3401_LEGION_POWER
++#define BATTERY_LPCOMP_THRESHOLD NRF_LPCOMP_REF_SUPPLY_11_16 // RAK19007 divider 0.6: nominal VBAT=3.78 V at VDD=3.3 V
++#else
+ #define BATTERY_LPCOMP_THRESHOLD NRF_LPCOMP_REF_SUPPLY_5_8 // VDD=3.3V AIN3=5/8*VDD=2.06V VBAT=1.66*AIN3=3.41V
+ #endif
++#endif
+ 
+ #define RAK_4631 1
+ 

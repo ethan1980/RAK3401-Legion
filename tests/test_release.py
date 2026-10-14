@@ -89,6 +89,26 @@ class ReleaseValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Every release asset"):
             release.prepare_release(self.directory, self.commit)
 
+    def test_v020_requires_feature_manifest(self):
+        self.manifest["legion_version"] = "0.2.0"
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "all declared firmware features"):
+            release.prepare_release(self.directory, self.commit)
+
+    def test_v020_notes_describe_enabled_features(self):
+        self.manifest.update(
+            legion_version="0.2.0",
+            bulk_spi=True,
+            energy_recovery=True,
+            flash_write_deduplication=True,
+            flash_readback_crc32=True,
+        )
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.2.0-aaaaaaa")
+        self.assertIn("3.50 V", metadata["notes"])
+        self.assertIn("CRC32", metadata["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,247 @@
+diff --git a/src/SafeFile.cpp b/src/SafeFile.cpp
+index 67086789ff0842746b12d625085870d86cafb441..564349cc55351b5a1ddea6c6ee8a169a78b58274 100644
+--- a/src/SafeFile.cpp
++++ b/src/SafeFile.cpp
+@@ -1,5 +1,9 @@
+ #include "SafeFile.h"
+ 
++#if RAK3401_LEGION_FLASH
++#include "mesh/LegionCrc32.h"
++#endif
++
+ #ifdef FSCom
+ 
+ // Only way to work on both esp32 and nrf52
+@@ -40,7 +44,12 @@ size_t SafeFile::write(uint8_t ch)
+     if (!f)
+         return 0;
+ 
++#if RAK3401_LEGION_FLASH
++    hash = legionCrc32Update(hash, ch);
++    ++expectedBytes;
++#else
+     hash ^= ch;
++#endif
+     return f.write(ch);
+ }
+ 
+@@ -50,8 +59,15 @@ size_t SafeFile::write(const uint8_t *buffer, size_t size)
+         return 0;
+ 
+     for (size_t i = 0; i < size; i++) {
++#if RAK3401_LEGION_FLASH
++        hash = legionCrc32Update(hash, buffer[i]);
++#else
+         hash ^= buffer[i];
++#endif
+     }
++#if RAK3401_LEGION_FLASH
++    expectedBytes += size;
++#endif
+     return f.write((uint8_t const *)buffer, size); // This nasty cast is _IMPORTANT_ otherwise the correct adafruit method does
+                                                    // not get used (they made a mistake in their typing)
+ }
+@@ -98,13 +114,27 @@ bool SafeFile::testReadback()
+     }
+ 
+     int c = 0;
++#if RAK3401_LEGION_FLASH
++    uint32_t test_hash = 0xffffffffu;
++    size_t readBytes = 0;
++#else
+     uint8_t test_hash = 0;
++#endif
+     while ((c = f2.read()) >= 0) {
++#if RAK3401_LEGION_FLASH
++        test_hash = legionCrc32Update(test_hash, static_cast<uint8_t>(c));
++        ++readBytes;
++#else
+         test_hash ^= (uint8_t)c;
++#endif
+     }
+     f2.close();
+ 
++#if RAK3401_LEGION_FLASH
++    if (test_hash != hash || readBytes != expectedBytes) {
++#else
+     if (test_hash != hash) {
++#endif
+         LOG_ERROR("Readback failed hash mismatch");
+         return false;
+     }
+@@ -112,4 +142,4 @@ bool SafeFile::testReadback()
+     return true;
+ }
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/SafeFile.h b/src/SafeFile.h
+index 3d0f81cad270a96613d8489adbfb1faab5d8793e..5003eb99e465348d341840c6635b7278bf684e0e 100644
+--- a/src/SafeFile.h
++++ b/src/SafeFile.h
+@@ -13,7 +13,7 @@
+  * be very careful about how we write files.  This class provides a restricted (Stream only) writing API for writing to files.
+  *
+  * Notably:
+- * - we keep a simple xor hash of all characters that were written.
++ * - we keep a readback checksum of all characters that were written.
+  * - We do not allow seeking (because we want to maintain our hash)
+  * - we provide an close() method which is similar to close but returns false if we were unable to successfully write the
+  * file.  Also this method
+@@ -44,7 +44,12 @@ class SafeFile : public Print
+     String filename;
+     File f;
+     bool fullAtomic;
++#if RAK3401_LEGION_FLASH
++    uint32_t hash = 0xffffffffu;
++    size_t expectedBytes = 0;
++#else
+     uint8_t hash = 0;
++#endif
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/mesh/LegionCrc32.h b/src/mesh/LegionCrc32.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..d510e05b57bf368a6f68939f2ba7a80e56d99032
+--- /dev/null
++++ b/src/mesh/LegionCrc32.h
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include <stdint.h>
++
++inline uint32_t legionCrc32Update(uint32_t crc, uint8_t value)
++{
++    crc ^= value;
++    for (uint8_t bit = 0; bit < 8; ++bit)
++        crc = (crc >> 1) ^ ((0u - (crc & 1u)) & 0xedb88320u);
++    return crc;
++}
+diff --git a/src/mesh/LegionPersistence.cpp b/src/mesh/LegionPersistence.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..35aec9ce30d08d64cf8c4ed3656833d5b8419562
+--- /dev/null
++++ b/src/mesh/LegionPersistence.cpp
+@@ -0,0 +1,65 @@
++#include "LegionPersistence.h"
++
++#if RAK3401_LEGION_FLASH
++#include "FSCommon.h"
++#include "SPILock.h"
++#include "concurrency/LockGuard.h"
++#include <atomic>
++#include <cstring>
++#include <pb_encode.h>
++
++namespace
++{
++std::atomic<uint32_t> checks{0};
++std::atomic<uint32_t> unchanged{0};
++std::atomic<uint32_t> saved{0};
++std::atomic<uint32_t> failed{0};
++
++bool compareEncoded(pb_ostream_t *stream, const pb_byte_t *buffer, size_t count)
++{
++    auto *file = static_cast<File *>(stream->state);
++    uint8_t existing[32];
++    while (count) {
++        const size_t chunk = count < sizeof(existing) ? count : sizeof(existing);
++        if (file->read(existing, chunk) != static_cast<int>(chunk) || memcmp(existing, buffer, chunk) != 0)
++            return false;
++        buffer += chunk;
++        count -= chunk;
++    }
++    return true;
++}
++} // namespace
++
++bool legionProtoMatchesFile(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source)
++{
++    ++checks;
++#ifdef FSCom
++    concurrency::LockGuard guard(spiLock);
++    auto file = FSCom.open(filename, FILE_O_READ);
++    if (!file)
++        return false;
++    pb_ostream_t comparison = {compareEncoded, &file, protoSize};
++    const bool match = pb_encode(&comparison, fields, source) && file.read() < 0;
++    file.close();
++    if (match)
++        ++unchanged;
++    return match;
++#else
++    return false;
++#endif
++}
++
++void legionRecordProtoSave(bool success)
++{
++    if (success)
++        ++saved;
++    else
++        ++failed;
++}
++
++void legionLogPersistenceStats()
++{
++    LOG_INFO("Legion protobuf saves: checked=%u unchanged=%u saved=%u failed=%u", (unsigned)checks.load(),
++             (unsigned)unchanged.load(), (unsigned)saved.load(), (unsigned)failed.load());
++}
++#endif
+diff --git a/src/mesh/LegionPersistence.h b/src/mesh/LegionPersistence.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..01a605a974d9d4ec281b009ab5ed1c94c8396e47
+--- /dev/null
++++ b/src/mesh/LegionPersistence.h
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_FLASH
++#include <pb.h>
++
++bool legionProtoMatchesFile(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source);
++void legionRecordProtoSave(bool success);
++void legionLogPersistenceStats();
++#endif
+diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
+index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..b53b0288f4910c02e463b74f44a0cce2b34efd1b 100644
+--- a/src/mesh/NodeDB.cpp
++++ b/src/mesh/NodeDB.cpp
+@@ -46,6 +46,10 @@
+ #include <pb_decode.h>
+ #include <pb_encode.h>
+ #include <power/PowerHAL.h>
++
++#if RAK3401_LEGION_FLASH
++#include "LegionPersistence.h"
++#endif
+ #include <vector>
+ 
+ #ifdef MESHTASTIC_ENCRYPTED_STORAGE
+@@ -3168,6 +3172,10 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
+     }
+ #endif
+ 
++#if RAK3401_LEGION_FLASH
++    if (legionProtoMatchesFile(filename, protoSize, fields, dest_struct))
++        return true;
++#endif
+     bool okay = false;
+ #ifdef FSCom
+     auto f = SafeFile(filename, fullAtomic);
+@@ -3189,6 +3197,9 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
+     okay &= writeSucceeded;
+ #else
+     LOG_ERROR("Filesystem not implemented");
++#endif
++#if RAK3401_LEGION_FLASH
++    legionRecordProtoSave(okay);
+ #endif
+     return okay;
+ }

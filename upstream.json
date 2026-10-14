@@ -2,6 +2,10 @@
   "repository": "https://github.com/meshtastic/firmware.git",
   "commit": "04cb8885118b959a9f538cd5881bd7d595758911",
   "meshtastic_version": "2.8.2",
-  "legion_version": "0.1.0",
-  "patches": ["patches/0001-rak3401-bulk-spi.patch"]
+  "legion_version": "0.2.0",
+  "patches": [
+    "patches/0001-rak3401-bulk-spi.patch",
+    "patches/0002-rak3401-energy-recovery.patch",
+    "patches/0003-rak3401-flash-persistence.patch"
+  ]
 }

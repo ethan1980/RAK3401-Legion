@@ -83,7 +83,7 @@ def prepare(dest, *, submodules=True):
     already_applied = check_checkout(dest, config, patch)
     if not already_applied:
         for path in patches:
-            run("git", "apply", str(path), cwd=dest)
+            run("git", "apply", "--intent-to-add", str(path), cwd=dest)
     profile = dest / PROFILE_PATH
     profile.parent.mkdir(parents=True, exist_ok=True)
     profile.write_bytes((ROOT / "profiles/platformio.ini").read_bytes())

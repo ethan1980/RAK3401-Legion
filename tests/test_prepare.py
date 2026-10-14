@@ -72,6 +72,32 @@ class CheckoutProtectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "profile has local changes"):
             prepare.check_checkout(self.dest, self.config, self.patch)
 
+    def test_added_source_remains_protected_on_reuse(self):
+        source = self.dest / "energy.h"
+        source.write_text("battery policy\n")
+        self.git("add", "--intent-to-add", "energy.h")
+        self.file.write_text("bulk\n")
+        expected = self.git("diff", "HEAD", "--")
+        self.assertTrue(prepare.check_checkout(self.dest, self.config, expected))
+        source.write_text("user policy\n")
+        with self.assertRaisesRegex(ValueError, "local changes"):
+            prepare.check_checkout(self.dest, self.config, expected)
+
+    def test_expected_patch_includes_new_files(self):
+        source = self.dest / "energy.h"
+        source.write_text("battery policy\n")
+        self.git("add", "--intent-to-add", "energy.h")
+        addition = self.git("diff", "HEAD", "--")
+        self.git("reset", "--", "energy.h")
+        source.unlink()
+        with tempfile.TemporaryDirectory() as folder:
+            patch = Path(folder) / "addition.patch"
+            patch.write_text(addition)
+            expected = prepare.expected_diff(self.dest, [patch])
+            self.assertFalse(prepare.check_checkout(self.dest, self.config, expected))
+            self.git("apply", "--intent-to-add", str(patch))
+            self.assertTrue(prepare.check_checkout(self.dest, self.config, expected))
+
     def test_patch_can_follow_an_upstream_change_outside_its_context(self):
         original = "".join(f"line {n}\n" for n in range(20))
         self.file.write_text(original)

@@ -1,0 +1,34 @@
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index 7ca6590..55f0d7b 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -32,9 +32,10 @@ void LockingArduinoHal::spiEndTransaction()
+     spiLock->unlock();
+ }
+ 
+-#if ARCH_PORTDUINO
++#if ARCH_PORTDUINO || RAK3401_LEGION_SPI_BULK
+ void LockingArduinoHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in)
+ {
++    // The nRF52 core completes the EasyDMA transfer before returning.
+     spi->transfer(out, in, len);
+ }
+ #endif
+diff --git a/src/mesh/RadioLibInterface.h b/src/mesh/RadioLibInterface.h
+index c534f8f..f1238d4 100644
+--- a/src/mesh/RadioLibInterface.h
++++ b/src/mesh/RadioLibInterface.h
+@@ -46,9 +46,11 @@ class LockingArduinoHal : public ArduinoHal
+ 
+     void spiBeginTransaction() override;
+     void spiEndTransaction() override;
+-#if ARCH_PORTDUINO
++#if RAK3401_LEGION_SPI_BULK && (!defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302))
++#error "Legion bulk SPI requires the RAK3401 + RAK13302 nRF52 profile"
++#endif
++#if ARCH_PORTDUINO || RAK3401_LEGION_SPI_BULK
+     void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+-
+ #endif
+ };
+ 

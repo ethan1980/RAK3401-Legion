@@ -185,8 +185,6 @@ Its **GPL-3.0** license is preserved in `LICENSE` and also applies to the Legion
 changes. Dependencies retain their own licenses and source references in the
 upstream PlatformIO configuration.
 
-Energy recovery and write-reduction concepts were inspired by
-[EA2OY/NavaTastic](https://github.com/EA2OY/NavaTastic/tree/3feac1cb2e30fdb6a13992ec82db5f02b88f4dbb).
 The implementation uses the pinned Meshtastic 2.8.2 safeguards and RAK-specific
 electrical values. References:
 [RAK19007 schematic](https://docs.rakwireless.com/product-categories/wisblock/rak19007/datasheet/),

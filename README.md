@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/rak3401-legion-logo.png" alt="RAK3401 Legion - Unleash your demons" width="900">
+</p>
+
 # RAK3401 Legion
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.

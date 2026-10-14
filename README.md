@@ -71,6 +71,8 @@ The firmware measures voltage, not stored energy or solar charging current.
   skip the replacement when every byte and the length already match.
 - Verify SafeFile temporary writes using CRC32 and exact length before rename,
   including single-byte and buffer writes. The on-disk protobuf format is unchanged.
+- Require protobuf encoding to complete before committing its temporary file;
+  an encoding error keeps the previous critical configuration file.
 - Keep the full node database, peer keys, favorites, ignored nodes and settings.
 - Extend the existing VDD save guard with the measured battery reserve, and block
   guarded saves once an energy shutdown begins.

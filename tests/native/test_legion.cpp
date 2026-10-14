@@ -276,6 +276,39 @@ void test_stale_temp_is_not_appended()
     assert(fakeFs.get("/prefs/config") == data);
 }
 
+void test_complete_proto_save()
+{
+    const auto data = payload();
+    const pb_msgdesc_t fields;
+    assert(legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == data);
+    const auto mutations = fakeFs.mutations;
+    assert(legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.mutations == mutations);
+}
+
+void test_partial_encoding_keeps_complete_file()
+{
+    const auto data = payload();
+    const std::vector<uint8_t> old{9, 9};
+    fakeFs.put("/prefs/config", old);
+    const pb_msgdesc_t fields{false, 47};
+    assert(!legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == old);
+    assert(fakeFs.get("/prefs/config.tmp").size() == 47);
+}
+
+void test_proto_short_write_keeps_complete_file()
+{
+    const auto data = payload();
+    const std::vector<uint8_t> old{9, 9};
+    fakeFs.put("/prefs/config", old);
+    const pb_msgdesc_t fields;
+    fakeFs.shortWrites = true;
+    assert(!legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == old);
+}
+
 int main()
 {
     const std::pair<const char *, void (*)()> tests[] = {
@@ -303,6 +336,9 @@ int main()
         {"short write", test_short_write_preserves_good_file},
         {"failed rename", test_failed_rename_preserves_good_file},
         {"stale temporary file", test_stale_temp_is_not_appended},
+        {"complete protobuf save", test_complete_proto_save},
+        {"partial encoding", test_partial_encoding_keeps_complete_file},
+        {"protobuf short write", test_proto_short_write_keeps_complete_file},
     };
     for (const auto &test : tests) {
         fakeFs = {};

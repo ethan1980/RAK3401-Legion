@@ -14,6 +14,8 @@ inline bool pb_encode(pb_ostream_t *stream, const pb_msgdesc_t *fields, const vo
         if (!stream->callback(stream, bytes.data() + offset, chunk))
             return false;
         offset += chunk;
+        if (fields->failAfter >= 0 && offset >= static_cast<size_t>(fields->failAfter))
+            return false;
     }
     return stream->callback(stream, nullptr, 0);
 }

@@ -123,15 +123,16 @@ index 0000000000000000000000000000000000000000..d510e05b57bf368a6f68939f2ba7a80e
 +}
 diff --git a/src/mesh/LegionPersistence.cpp b/src/mesh/LegionPersistence.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..35aec9ce30d08d64cf8c4ed3656833d5b8419562
+index 0000000000000000000000000000000000000000..84e96b1c53b6c0228d0a4e3fc0bc9d0bbfca4b22
 --- /dev/null
 +++ b/src/mesh/LegionPersistence.cpp
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,94 @@
 +#include "LegionPersistence.h"
 +
 +#if RAK3401_LEGION_FLASH
 +#include "FSCommon.h"
 +#include "SPILock.h"
++#include "SafeFile.h"
 +#include "concurrency/LockGuard.h"
 +#include <atomic>
 +#include <cstring>
@@ -143,6 +144,12 @@ index 0000000000000000000000000000000000000000..35aec9ce30d08d64cf8c4ed3656833d5
 +std::atomic<uint32_t> unchanged{0};
 +std::atomic<uint32_t> saved{0};
 +std::atomic<uint32_t> failed{0};
++
++bool writeEncoded(pb_ostream_t *stream, const pb_byte_t *buffer, size_t count)
++{
++    auto *output = static_cast<Print *>(stream->state);
++    return count == 0 || output->write(buffer, count) == count;
++}
 +
 +bool compareEncoded(pb_ostream_t *stream, const pb_byte_t *buffer, size_t count)
 +{
@@ -186,6 +193,28 @@ index 0000000000000000000000000000000000000000..35aec9ce30d08d64cf8c4ed3656833d5
 +        ++failed;
 +}
 +
++bool legionSaveProto(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source, bool fullAtomic)
++{
++    if (legionProtoMatchesFile(filename, protoSize, fields, source))
++        return true;
++#ifdef FSCom
++    SafeFile staged(filename, fullAtomic);
++    pb_ostream_t stream = {writeEncoded, static_cast<Print *>(&staged), protoSize};
++    // A partial but successfully written encoding must never replace a complete saved file.
++    if (!pb_encode(&stream, fields, source)) {
++        LOG_ERROR("Legion protobuf encoding failed for %s", filename);
++        legionRecordProtoSave(false);
++        return false;
++    }
++    const bool success = staged.close();
++    legionRecordProtoSave(success);
++    return success;
++#else
++    legionRecordProtoSave(false);
++    return false;
++#endif
++}
++
 +void legionLogPersistenceStats()
 +{
 +    LOG_INFO("Legion protobuf saves: checked=%u unchanged=%u saved=%u failed=%u", (unsigned)checks.load(),
@@ -194,10 +223,10 @@ index 0000000000000000000000000000000000000000..35aec9ce30d08d64cf8c4ed3656833d5
 +#endif
 diff --git a/src/mesh/LegionPersistence.h b/src/mesh/LegionPersistence.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..01a605a974d9d4ec281b009ab5ed1c94c8396e47
+index 0000000000000000000000000000000000000000..67914b163e643ddd61b94428909d65b195c2f300
 --- /dev/null
 +++ b/src/mesh/LegionPersistence.h
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,12 @@
 +#pragma once
 +
 +#include "configuration.h"
@@ -206,11 +235,12 @@ index 0000000000000000000000000000000000000000..01a605a974d9d4ec281b009ab5ed1c94
 +#include <pb.h>
 +
 +bool legionProtoMatchesFile(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source);
++bool legionSaveProto(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source, bool fullAtomic);
 +void legionRecordProtoSave(bool success);
 +void legionLogPersistenceStats();
 +#endif
 diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
-index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..b53b0288f4910c02e463b74f44a0cce2b34efd1b 100644
+index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..5e77f7c74509ff61e722a363f82479d4a808b17a 100644
 --- a/src/mesh/NodeDB.cpp
 +++ b/src/mesh/NodeDB.cpp
 @@ -46,6 +46,10 @@
@@ -224,24 +254,21 @@ index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..b53b0288f4910c02e463b74f44a0cce2
  #include <vector>
  
  #ifdef MESHTASTIC_ENCRYPTED_STORAGE
-@@ -3168,6 +3172,10 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
+@@ -3168,6 +3172,9 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
      }
  #endif
  
 +#if RAK3401_LEGION_FLASH
-+    if (legionProtoMatchesFile(filename, protoSize, fields, dest_struct))
-+        return true;
-+#endif
++    return legionSaveProto(filename, protoSize, fields, dest_struct, fullAtomic);
++#else
      bool okay = false;
  #ifdef FSCom
      auto f = SafeFile(filename, fullAtomic);
-@@ -3189,6 +3197,9 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
-     okay &= writeSucceeded;
- #else
+@@ -3191,6 +3198,7 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
      LOG_ERROR("Filesystem not implemented");
-+#endif
-+#if RAK3401_LEGION_FLASH
-+    legionRecordProtoSave(okay);
  #endif
      return okay;
++#endif
  }
+ 
+ bool NodeDB::saveChannelsToDisk()

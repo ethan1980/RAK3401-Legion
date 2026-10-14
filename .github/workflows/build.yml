@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PLATFORMIO_SETTING_ENABLE_TELEMETRY: 'no'
+
 concurrency:
   group: legion-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

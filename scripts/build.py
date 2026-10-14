@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 from prepare import PROFILE_PATH, ROOT, load_config, prepare, run
 
 TARGETS = {"legion": "rak3401-legion", "baseline": "rak3401-1watt"}
+PIO_ENV = {**os.environ, "PLATFORMIO_SETTING_ENABLE_TELEMETRY": "no"}
 
 
 def source_files(firmware):
@@ -84,7 +86,7 @@ def package(firmware, target, output):
             "git", "rev-parse", "HEAD", cwd=ROOT, capture=True
         ).strip(),
         "platformio_version": run(
-            sys.executable, "-m", "platformio", "--version", capture=True
+            sys.executable, "-m", "platformio", "--version", capture=True, env=PIO_ENV
         ).strip(),
         "source_patch_sha256": {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
@@ -129,6 +131,7 @@ def main():
         ],
         cwd=firmware,
         check=True,
+        env=PIO_ENV,
     )
     package(firmware, args.target, args.output.resolve())
 

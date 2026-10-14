@@ -72,6 +72,44 @@ class CheckoutProtectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "profile has local changes"):
             prepare.check_checkout(self.dest, self.config, self.patch)
 
+    def test_patch_can_follow_an_upstream_change_outside_its_context(self):
+        original = "".join(f"line {n}\n" for n in range(20))
+        self.file.write_text(original)
+        self.git("add", "radio.cpp")
+        self.git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "larger base",
+        )
+        self.file.write_text(original.replace("line 10\n", "bulk\n"))
+        old_patch = self.git("diff", "HEAD", "--")
+        new_base = original.replace("line 0\n", "new upstream line\n")
+        self.file.write_text(new_base)
+        self.git("add", "radio.cpp")
+        self.git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "upstream update",
+        )
+        config = {"commit": self.git("rev-parse", "HEAD").strip()}
+        with tempfile.TemporaryDirectory() as folder:
+            patch = Path(folder) / "change.patch"
+            patch.write_text(old_patch)
+            expected = prepare.expected_diff(self.dest, [patch])
+            self.assertEqual(self.file.read_text(), new_base)
+            self.assertEqual(self.git("diff", "--cached", "HEAD"), "")
+            self.assertNotEqual(expected, old_patch)
+            self.git("apply", str(patch))
+            self.assertTrue(prepare.check_checkout(self.dest, config, expected))
+
 
 if __name__ == "__main__":
     unittest.main()

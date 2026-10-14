@@ -3,17 +3,19 @@
 
 import argparse
 import json
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = Path("variants/nrf52840/rak3401_legion/platformio.ini")
 
 
-def run(*args, cwd=None, capture=False):
+def run(*args, cwd=None, capture=False, env=None):
     return subprocess.run(
-        args, cwd=cwd, check=True, text=True, capture_output=capture
+        args, cwd=cwd, check=True, text=True, capture_output=capture, env=env
     ).stdout
 
 
@@ -26,10 +28,26 @@ def load_config():
     return config
 
 
-def check_checkout(dest, config, patch):
+def check_head(dest, config):
     actual = run("git", "rev-parse", "HEAD", cwd=dest, capture=True).strip()
     if actual != config["commit"]:
         raise ValueError(f"Unexpected upstream HEAD: {actual}; use a new destination")
+
+
+def expected_diff(dest, patches):
+    with tempfile.TemporaryDirectory(prefix="legion-index-") as folder:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(folder) / "index")}
+        run("git", "read-tree", "HEAD", cwd=dest, env=env)
+        for patch in patches:
+            run("git", "apply", "--cached", "--check", str(patch), cwd=dest, env=env)
+            run("git", "apply", "--cached", str(patch), cwd=dest, env=env)
+        return run(
+            "git", "diff", "--cached", "HEAD", "--", cwd=dest, env=env, capture=True
+        )
+
+
+def check_checkout(dest, config, patch):
+    check_head(dest, config)
     diff = run("git", "diff", "HEAD", "--", cwd=dest, capture=True)
     if diff not in ("", patch):
         raise ValueError("Checkout has local changes outside the exact Legion patch")
@@ -50,7 +68,6 @@ def check_checkout(dest, config, patch):
 def prepare(dest, *, submodules=True):
     config = load_config()
     patches = [ROOT / name for name in config["patches"]]
-    patch = "".join(path.read_text() for path in patches)
     dest = Path(dest).resolve()
     if not dest.exists():
         dest.mkdir(parents=True)
@@ -61,10 +78,12 @@ def prepare(dest, *, submodules=True):
     elif not (dest / ".git").exists():
         raise ValueError("Destination exists and is not a Git checkout")
 
+    check_head(dest, config)
+    patch = expected_diff(dest, patches)
     already_applied = check_checkout(dest, config, patch)
     if not already_applied:
-        run("git", "apply", "--check", *(str(p) for p in patches), cwd=dest)
-        run("git", "apply", *(str(p) for p in patches), cwd=dest)
+        for path in patches:
+            run("git", "apply", str(path), cwd=dest)
     profile = dest / PROFILE_PATH
     profile.parent.mkdir(parents=True, exist_ok=True)
     profile.write_bytes((ROOT / "profiles/platformio.ini").read_bytes())

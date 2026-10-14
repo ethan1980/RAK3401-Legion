@@ -42,12 +42,22 @@ def package(firmware, target, output):
     artifacts = []
     for suffix in ("uf2", "zip", "elf", "hex", "mt.json", "map", "ld"):
         for path in sorted(build.glob(f"firmware-*.{suffix}")):
-            shutil.copy2(path, output / path.name)
-            artifacts.append(path.name)
+            name = f"{path.stem}-ota.zip" if suffix == "zip" else path.name
+            shutil.copy2(path, output / name)
+            artifacts.append(name)
     if not any(p.endswith(".uf2") for p in artifacts) or not any(
         p.endswith(".zip") for p in artifacts
     ):
         raise RuntimeError("Build did not produce both UF2 and DFU ZIP")
+
+    for path in output.glob("firmware-*.mt.json"):
+        for entry in json.loads(path.read_text())["files"]:
+            data = (output / entry["name"]).read_bytes()
+            if (
+                len(data) != entry["bytes"]
+                or hashlib.md5(data).hexdigest() != entry["md5"]
+            ):
+                raise RuntimeError(f"Manifest mismatch: {entry['name']}")
 
     archive = output / "corresponding-source.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:

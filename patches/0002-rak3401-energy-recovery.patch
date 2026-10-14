@@ -198,7 +198,7 @@ index 0000000000000000000000000000000000000000..ee0b19f2b54a3fd8edc62444f4568a98
 +} // namespace legion
 diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9e3d251c8997c88abb03cfae0f232cab937ccf2
+index 0000000000000000000000000000000000000000..ef0bde4b1ade77770fce4ee5fecc773dca25cb2e
 --- /dev/null
 +++ b/src/power/RAK3401LegionPower.cpp
 @@ -0,0 +1,226 @@
@@ -248,11 +248,11 @@ index 0000000000000000000000000000000000000000..f9e3d251c8997c88abb03cfae0f232ca
 +{
 +    pinMode(SX126X_POWER_EN, OUTPUT);
 +    pinMode(PIN_LED1, OUTPUT);
-+    pinMode(PIN_LED2, OUTPUT);
++    pinMode(LED_BLUE, OUTPUT);
 +    digitalWrite(SX126X_POWER_EN, LOW);
 +    digitalWrite(PIN_3V3_EN, LOW);
 +    ledOff(PIN_LED1);
-+    ledOff(PIN_LED2);
++    ledOff(LED_BLUE);
 +}
 +
 +void stopComparator()

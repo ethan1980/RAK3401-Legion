@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run host tests against the actual prepared Legion policy and persistence code."""
+"""Run host tests against the actual prepared Legion firmware changes."""
 
 import argparse
 import os
@@ -48,6 +48,59 @@ def run_tests(firmware, *, leak_check=True):
                 str(directory / "SafeFile.cpp"),
                 str(directory / "mesh/LegionPersistence.cpp"),
                 str(ROOT / "tests/native/test_legion.cpp"),
+                "-o",
+                str(binary),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [str(binary)],
+            check=True,
+            env={
+                **os.environ,
+                "ASAN_OPTIONS": f"detect_leaks={int(leak_check)}",
+                "UBSAN_OPTIONS": "halt_on_error=1",
+            },
+        )
+    run_telemetry_tests(firmware, compiler, leak_check=leak_check)
+
+
+def run_telemetry_tests(firmware, compiler, *, leak_check=True):
+    sources = (
+        "src/modules/LegionTelemetryModule.cpp",
+        "src/modules/LegionTelemetryModule.h",
+        "src/modules/LegionTelemetryPolicy.h",
+        "src/mesh/Throttle.h",
+        "src/mesh/Throttle.cpp",
+        "src/concurrency/LockGuard.h",
+        "src/concurrency/LockGuard.cpp",
+        "src/platform/nrf52/LegionTelemetryHal.h",
+    )
+    with tempfile.TemporaryDirectory(prefix="legion-telemetry-") as folder:
+        directory = Path(folder)
+        for name in sources:
+            destination = directory / Path(name).relative_to("src")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(firmware) / name, destination)
+        shutil.copytree(ROOT / "tests/telemetry/stubs", directory, dirs_exist_ok=True)
+        binary = directory / "telemetry-tests"
+        subprocess.run(
+            [
+                compiler,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-g",
+                "-fsanitize=address,undefined",
+                "-fno-omit-frame-pointer",
+                "-pthread",
+                "-I",
+                str(directory),
+                str(directory / "modules/LegionTelemetryModule.cpp"),
+                str(directory / "mesh/Throttle.cpp"),
+                str(directory / "concurrency/LockGuard.cpp"),
+                str(ROOT / "tests/telemetry/test_telemetry.cpp"),
                 "-o",
                 str(binary),
             ],

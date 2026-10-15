@@ -1,0 +1,549 @@
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index f890fcd..8755e7c 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -13,6 +13,10 @@
+ #include <pb_decode.h>
+ #include <pb_encode.h>
+ 
++#if RAK3401_LEGION_TELEMETRY
++#include "modules/LegionTelemetryModule.h"
++#endif
++
+ #if RAK3401_LEGION_POWER
+ #include "power/RAK3401LegionPower.h"
+ #endif
+@@ -362,6 +366,9 @@ void RadioLibInterface::updateNoiseFloor()
+     }
+ 
+     noiseFloorSamples[currentSampleIndex] = (int32_t)rssi;
++#if RAK3401_LEGION_TELEMETRY
++    legionTelemetryObserveNoise(rssi);
++#endif
+     currentSampleIndex++;
+ 
+     if (currentSampleIndex >= NOISE_FLOOR_SAMPLES) {
+diff --git a/src/modules/LegionTelemetryModule.cpp b/src/modules/LegionTelemetryModule.cpp
+new file mode 100644
+index 0000000..c1a44f5
+--- /dev/null
++++ b/src/modules/LegionTelemetryModule.cpp
+@@ -0,0 +1,185 @@
++#include "LegionTelemetryModule.h"
++
++#if RAK3401_LEGION_TELEMETRY
++#include "MeshService.h"
++#include "NodeDB.h"
++#include "PowerStatus.h"
++#include "RadioLibInterface.h"
++#include "UptimeClock.h"
++#include "concurrency/LockGuard.h"
++#include "main.h"
++#include "platform/nrf52/LegionTelemetryHal.h"
++#include "power/RAK3401LegionPower.h"
++#include <cstdio>
++#include <cstring>
++
++LegionTelemetryModule *legionTelemetryModule = nullptr;
++
++LegionTelemetryModule::LegionTelemetryModule()
++    : SinglePortModule("legion-telemetry", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("LegionTelemetry")
++{
++    loopbackOk = true;
++    legionTelemetryModule = this;
++}
++
++bool LegionTelemetryModule::findChannel(Channel &result) const
++{
++    if (owner.is_licensed)
++        return false;
++    bool found = false;
++    for (uint8_t i = 1; i < channels.getNumChannels(); ++i) {
++        const auto &ch = channels.getByIndex(i);
++        if (!ch.has_settings || ch.role != meshtastic_Channel_Role_SECONDARY ||
++            std::strncmp(ch.settings.name, legion::TELEMETRY_CHANNEL, sizeof(ch.settings.name)) != 0)
++            continue;
++        if (found || (ch.settings.psk.size != 16 && ch.settings.psk.size != 32) || channels.usesPublicKey(i))
++            return false;
++        uint8_t nonzero = 0;
++        for (size_t k = 0; k < ch.settings.psk.size; ++k)
++            nonzero |= ch.settings.psk.bytes[k];
++        if (!nonzero)
++            return false;
++        result.index = i;
++        result.keySize = ch.settings.psk.size;
++        std::memcpy(result.key, ch.settings.psk.bytes, result.keySize);
++        result.aead = channels.isAEADEnabled(i);
++        found = true;
++    }
++    return found;
++}
++
++bool LegionTelemetryModule::sameChannel(const Channel &a, const Channel &b)
++{
++    return a.index == b.index && a.keySize == b.keySize && a.aead == b.aead && std::memcmp(a.key, b.key, a.keySize) == 0;
++}
++
++ProcessMessage LegionTelemetryModule::handleReceived(const meshtastic_MeshPacket &mp)
++{
++    if (mp.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
++        mp.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP || !isBroadcast(mp.to) ||
++        mp.decoded.payload.size > sizeof(mp.decoded.payload.bytes))
++        return ProcessMessage::CONTINUE;
++    Channel channel;
++    bool targeted;
++    if (!findChannel(channel) || mp.channel != channel.index ||
++        !legion::parseTelemetryCommand(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum(), targeted))
++        return ProcessMessage::CONTINUE;
++    const uint32_t delayMs = targeted ? random(250, 1001) : random(1000, 10001);
++    concurrency::LockGuard guard(&stateLock);
++    if (requests.reserve(getFrom(&mp), mp.id, Time::getMillis(), delayMs))
++        pendingChannel = channel;
++    return ProcessMessage::CONTINUE;
++}
++
++void LegionTelemetryModule::observeNoise(int16_t dbm)
++{
++    concurrency::LockGuard guard(&stateLock);
++    samples.observeNoise(dbm);
++}
++
++void LegionTelemetryModule::observeBattery(uint16_t mv)
++{
++    concurrency::LockGuard guard(&stateLock);
++    samples.observeBattery(mv);
++}
++
++void legionTelemetryObserveNoise(int16_t dbm)
++{
++    if (legionTelemetryModule)
++        legionTelemetryModule->observeNoise(dbm);
++}
++
++void legionTelemetryObserveBattery(uint16_t mv)
++{
++    if (legionTelemetryModule)
++        legionTelemetryModule->observeBattery(mv);
++}
++
++void LegionTelemetryModule::sample()
++{
++    int16_t temperature;
++    const bool validTemperature = legionReadCpuTemperature(temperature);
++    const uint16_t battery = legionPowerBatteryMv();
++    concurrency::LockGuard guard(&stateLock);
++    if (validTemperature)
++        samples.observeTemperature(temperature);
++    else
++        samples.hasTemperature = false;
++    samples.observeBattery(battery);
++}
++
++static void formatTemperature(char *buffer, size_t size, int16_t quarters)
++{
++    const int32_t magnitude = quarters < 0 ? -static_cast<int32_t>(quarters) : quarters;
++    std::snprintf(buffer, size, "%s%ld.%02ld", quarters < 0 ? "-" : "", (long)(magnitude / 4), (long)((magnitude % 4) * 25));
++}
++
++void LegionTelemetryModule::sendReport(uint8_t channel)
++{
++    legion::TelemetrySamples snapshot;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        snapshot = samples;
++    }
++    char temperature[16] = "NA", maximum[16] = "NA", battery[32] = "NA", noise[48] = "NA";
++    if (snapshot.hasTemperature)
++        formatTemperature(temperature, sizeof(temperature), snapshot.temperature);
++    if (snapshot.temperatureMax != std::numeric_limits<int16_t>::min())
++        formatTemperature(maximum, sizeof(maximum), snapshot.temperatureMax);
++    if (snapshot.hasBattery) {
++        char percent[5] = "NA";
++        if (powerStatus && powerStatus->getHasBattery() && powerStatus->getBatteryChargePercent() <= 100)
++            std::snprintf(percent, sizeof(percent), "%u", (unsigned)powerStatus->getBatteryChargePercent());
++        std::snprintf(battery, sizeof(battery), "%s%% %u.%02u/min%u.%02uV", percent, snapshot.battery / 1000,
++                      (snapshot.battery % 1000) / 10, snapshot.batteryMin / 1000, (snapshot.batteryMin % 1000) / 10);
++    }
++    if (snapshot.noiseCount)
++        std::snprintf(noise, sizeof(noise), "%d peak:%ddBm n:%lu", snapshot.averageNoise(), snapshot.noisePeak,
++                      (unsigned long)snapshot.noiseCount);
++    auto radio = RadioLibInterface::instance;
++    char report[200];
++    const int length = std::snprintf(
++        report, sizeof(report), "Legion0.3.0 !%08lx up:%lus\nCPU:%s/max%sC BAT:%s\nN:%s\nRX:%lu BAD:%lu TX:%lu REL:%lu DROP:%u",
++        (unsigned long)nodeDB->getNodeNum(), (unsigned long)Time::getUptimeSecs(), temperature, maximum, battery, noise,
++        (unsigned long)(radio ? radio->rxGood : 0), (unsigned long)(radio ? radio->rxBad : 0),
++        (unsigned long)(radio ? radio->txGood : 0), (unsigned long)(radio ? radio->txRelay : 0), radio ? radio->txDrop : 0);
++    if (length <= 0 || static_cast<size_t>(length) >= sizeof(report))
++        return;
++    auto packet = allocDataPacket();
++    if (!packet)
++        return;
++    packet->channel = channel;
++    packet->to = NODENUM_BROADCAST;
++    packet->want_ack = false;
++    packet->decoded.want_response = false;
++    packet->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
++    packet->decoded.payload.size = length;
++    std::memcpy(packet->decoded.payload.bytes, report, length);
++    service->sendToMesh(packet, RX_SRC_LOCAL, true);
++}
++
++int32_t LegionTelemetryModule::runOnce()
++{
++    Channel channel;
++    const bool configured = findChannel(channel);
++    const uint32_t now = Time::getMillis();
++    if (configured && (!sampled || Throttle::hasElapsed(lastSample, 60000))) {
++        sample();
++        lastSample = now;
++        sampled = true;
++    }
++    bool respond = false;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        if (requests.ready(now)) {
++            respond = configured && sameChannel(channel, pendingChannel);
++            requests.finish(now);
++        }
++    }
++    if (respond && legionPowerTxReady()) {
++        sample();
++        sendReport(channel.index);
++    }
++    return 1000;
++}
++#endif
+diff --git a/src/modules/LegionTelemetryModule.h b/src/modules/LegionTelemetryModule.h
+new file mode 100644
+index 0000000..a012bcf
+--- /dev/null
++++ b/src/modules/LegionTelemetryModule.h
+@@ -0,0 +1,48 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_TELEMETRY
++#if !defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302) || !RAK3401_LEGION_POWER
++#error "Legion telemetry requires the RAK3401 + RAK13302 energy profile"
++#endif
++#include "LegionTelemetryPolicy.h"
++#include "SinglePortModule.h"
++#include "concurrency/Lock.h"
++#include "concurrency/OSThread.h"
++
++class LegionTelemetryModule : public SinglePortModule, private concurrency::OSThread
++{
++  public:
++    LegionTelemetryModule();
++    void observeNoise(int16_t dbm);
++    void observeBattery(uint16_t mv);
++
++  protected:
++    ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override;
++    int32_t runOnce() override;
++
++  private:
++    struct Channel {
++        uint8_t index = 0;
++        uint8_t keySize = 0;
++        uint8_t key[32]{};
++        bool aead = false;
++    };
++    bool findChannel(Channel &result) const;
++    static bool sameChannel(const Channel &a, const Channel &b);
++    void sample();
++    void sendReport(uint8_t channel);
++
++    concurrency::Lock stateLock;
++    legion::TelemetryRequestGate requests;
++    legion::TelemetrySamples samples;
++    Channel pendingChannel;
++    uint32_t lastSample = 0;
++    bool sampled = false;
++};
++
++extern LegionTelemetryModule *legionTelemetryModule;
++void legionTelemetryObserveNoise(int16_t dbm);
++void legionTelemetryObserveBattery(uint16_t mv);
++#endif
+diff --git a/src/modules/LegionTelemetryPolicy.h b/src/modules/LegionTelemetryPolicy.h
+new file mode 100644
+index 0000000..d80b47e
+--- /dev/null
++++ b/src/modules/LegionTelemetryPolicy.h
+@@ -0,0 +1,150 @@
++#pragma once
++
++#include "mesh/Throttle.h"
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++
++namespace legion
++{
++constexpr char TELEMETRY_CHANNEL[] = "LegionRF";
++constexpr uint32_t TELEMETRY_COOLDOWN_MS = 60000;
++constexpr uint32_t TELEMETRY_DUPLICATE_MS = 600000;
++
++inline bool commandSpace(uint8_t c)
++{
++    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
++}
++
++inline bool parseTelemetryCommand(const uint8_t *data, size_t size, uint32_t ownNode, bool &targeted)
++{
++    targeted = false;
++    if (!data || !ownNode)
++        return false;
++    while (size && commandSpace(*data)) {
++        ++data;
++        --size;
++    }
++    while (size && commandSpace(data[size - 1]))
++        --size;
++    constexpr char command[] = "/telemetry";
++    constexpr size_t commandSize = sizeof(command) - 1;
++    if (size < commandSize || std::memcmp(data, command, commandSize) != 0)
++        return false;
++    data += commandSize;
++    size -= commandSize;
++    if (!size)
++        return true;
++    if (!commandSpace(*data))
++        return false;
++    while (size && commandSpace(*data)) {
++        ++data;
++        --size;
++    }
++    if (size != 9 || data[0] != '!')
++        return false;
++    uint32_t node = 0;
++    for (size_t i = 1; i < size; ++i) {
++        uint8_t c = data[i];
++        uint8_t digit;
++        if (c >= '0' && c <= '9')
++            digit = c - '0';
++        else if (c >= 'a' && c <= 'f')
++            digit = c - 'a' + 10;
++        else if (c >= 'A' && c <= 'F')
++            digit = c - 'A' + 10;
++        else
++            return false;
++        node = (node << 4) | digit;
++    }
++    targeted = true;
++    return node == ownNode;
++}
++
++class TelemetryRequestGate
++{
++  public:
++    bool reserve(uint32_t from, uint32_t id, uint32_t now, uint32_t delayMs)
++    {
++        if (pending || (cooling && !Throttle::deadlinePassedAt(now, nextAllowed)))
++            return false;
++        for (const auto &entry : seen) {
++            if (entry.used && entry.from == from && entry.id == id && !Throttle::deadlinePassedAt(now, entry.expires))
++                return false;
++        }
++        seen[nextSeen] = {from, id, now + TELEMETRY_DUPLICATE_MS, true};
++        nextSeen = (nextSeen + 1) % SEEN_COUNT;
++        due = now + delayMs;
++        pending = true;
++        return true;
++    }
++
++    bool ready(uint32_t now) const { return pending && Throttle::deadlinePassedAt(now, due); }
++    bool isPending() const { return pending; }
++
++    void finish(uint32_t now)
++    {
++        pending = false;
++        cooling = true;
++        nextAllowed = now + TELEMETRY_COOLDOWN_MS;
++    }
++
++  private:
++    struct Seen {
++        uint32_t from = 0;
++        uint32_t id = 0;
++        uint32_t expires = 0;
++        bool used = false;
++    };
++    static constexpr size_t SEEN_COUNT = 16;
++    Seen seen[SEEN_COUNT]{};
++    size_t nextSeen = 0;
++    uint32_t due = 0;
++    uint32_t nextAllowed = 0;
++    bool pending = false;
++    bool cooling = false;
++};
++
++struct TelemetrySamples {
++    int64_t noiseSum = 0;
++    uint32_t noiseCount = 0;
++    int16_t noisePeak = std::numeric_limits<int16_t>::min();
++    int16_t temperature = 0;
++    int16_t temperatureMax = std::numeric_limits<int16_t>::min();
++    uint16_t battery = 0;
++    uint16_t batteryMin = std::numeric_limits<uint16_t>::max();
++    bool hasTemperature = false;
++    bool hasBattery = false;
++
++    void observeNoise(int16_t dbm)
++    {
++        if (dbm < -127 || dbm >= 0)
++            return;
++        if (noiseCount != UINT32_MAX) {
++            noiseSum += dbm;
++            ++noiseCount;
++        }
++        if (dbm > noisePeak)
++            noisePeak = dbm;
++    }
++
++    void observeTemperature(int16_t quarters)
++    {
++        temperature = quarters;
++        hasTemperature = true;
++        if (quarters > temperatureMax)
++            temperatureMax = quarters;
++    }
++
++    void observeBattery(uint16_t mv)
++    {
++        battery = mv;
++        hasBattery = true;
++        if (mv < batteryMin)
++            batteryMin = mv;
++    }
++
++    int16_t averageNoise() const { return noiseCount ? static_cast<int16_t>(noiseSum / noiseCount) : 0; }
++};
++} // namespace legion
+diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
+index dec52ae..3599fea 100644
+--- a/src/modules/Modules.cpp
++++ b/src/modules/Modules.cpp
+@@ -1,4 +1,7 @@
+ #include "configuration.h"
++#if RAK3401_LEGION_TELEMETRY
++#include "modules/LegionTelemetryModule.h"
++#endif
+ #if !MESHTASTIC_EXCLUDE_INPUTBROKER
+ #include "buzz/BuzzerFeedbackThread.h"
+ #include "modules/SystemCommandsModule.h"
+@@ -131,6 +134,9 @@
+  */
+ void setupModules()
+ {
++#if RAK3401_LEGION_TELEMETRY
++    new LegionTelemetryModule();
++#endif
+ #if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
+     if (config.display.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
+         inputBroker = new InputBroker();
+diff --git a/src/platform/nrf52/LegionTelemetryHal.cpp b/src/platform/nrf52/LegionTelemetryHal.cpp
+new file mode 100644
+index 0000000..4968cef
+--- /dev/null
++++ b/src/platform/nrf52/LegionTelemetryHal.cpp
+@@ -0,0 +1,36 @@
++#include "configuration.h"
++
++#if RAK3401_LEGION_TELEMETRY
++#include "LegionTelemetryHal.h"
++#include <Arduino.h>
++#include <nrf_sdm.h>
++#include <nrf_soc.h>
++
++bool legionReadCpuTemperature(int16_t &quarterDegrees)
++{
++    int32_t value;
++    uint8_t enabled = 0;
++    if (sd_softdevice_is_enabled(&enabled) != NRF_SUCCESS)
++        return false;
++    if (enabled) {
++        if (sd_temp_get(&value) != NRF_SUCCESS)
++            return false;
++    } else {
++        NRF_TEMP->EVENTS_DATARDY = 0;
++        NRF_TEMP->TASKS_START = 1;
++        const uint32_t started = micros();
++        while (!NRF_TEMP->EVENTS_DATARDY && (uint32_t)(micros() - started) < 1000u) {
++        }
++        const bool ready = NRF_TEMP->EVENTS_DATARDY != 0;
++        value = static_cast<int32_t>(NRF_TEMP->TEMP);
++        NRF_TEMP->TASKS_STOP = 1;
++        NRF_TEMP->EVENTS_DATARDY = 0;
++        if (!ready)
++            return false;
++    }
++    if (value < -160 || value > 500)
++        return false;
++    quarterDegrees = static_cast<int16_t>(value);
++    return true;
++}
++#endif
+diff --git a/src/platform/nrf52/LegionTelemetryHal.h b/src/platform/nrf52/LegionTelemetryHal.h
+new file mode 100644
+index 0000000..023660b
+--- /dev/null
++++ b/src/platform/nrf52/LegionTelemetryHal.h
+@@ -0,0 +1,5 @@
++#pragma once
++
++#include <cstdint>
++
++bool legionReadCpuTemperature(int16_t &quarterDegrees);
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+index ef0bde4..088029b 100644
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -9,6 +9,9 @@
+ #include "platform/nrf52/Nrf52SaadcLock.h"
+ #include "power/PowerHAL.h"
+ #include "sleep.h"
++#if RAK3401_LEGION_TELEMETRY
++#include "modules/LegionTelemetryModule.h"
++#endif
+ #include <atomic>
+ #include <hal/nrf_lpcomp.h>
+ #include <nrf_sdm.h>
+@@ -37,6 +40,9 @@ uint16_t readBatteryMv()
+         sum += analogRead(BATTERY_PIN);
+     const auto mv = legion::batteryMvFromAdc(sum, SAMPLES);
+     lastBatteryMv.store(mv);
++#if RAK3401_LEGION_TELEMETRY
++    legionTelemetryObserveBattery(mv);
++#endif
+     return mv;
+ }
+ 
+@@ -172,6 +178,11 @@ bool legionBatteryWakeEnabled()
+     return energySleep;
+ }
+ 
++uint16_t legionPowerBatteryMv()
++{
++    return lastBatteryMv.load();
++}
++
+ bool legionBatterySafeForFlash()
+ {
+     return !energySleep && (powerHAL_isVBUSConnected() || lastBatteryMv.load() >= legion::BATTERY_SLEEP_MV);
+diff --git a/src/power/RAK3401LegionPower.h b/src/power/RAK3401LegionPower.h
+index 14dc3f1..1c64904 100644
+--- a/src/power/RAK3401LegionPower.h
++++ b/src/power/RAK3401LegionPower.h
+@@ -9,6 +9,7 @@
+ 
+ void legionPowerBootGate();
+ void legionPowerPoll();
++uint16_t legionPowerBatteryMv();
+ bool legionBatteryWakeEnabled();
+ bool legionBatterySafeForFlash();
+ bool legionPowerAllowTx();

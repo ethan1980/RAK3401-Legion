@@ -73,17 +73,23 @@ def package(firmware, target, output):
             "scripts",
             "tests",
             "LICENSE",
+            "README.md",
+            "COMMANDS.md",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {
         **config,
         "target": target,
         "environment": environment,
-        "spi_hz": 4000000,
+        "spi_hz": 8000000 if target == "legion" else 4000000,
         "bulk_spi": target == "legion",
         "energy_recovery": target == "legion",
         "flash_write_deduplication": target == "legion",
         "flash_readback_crc32": target == "legion",
+        "private_telemetry": target == "legion",
+        "telemetry_channel": "LegionRF" if target == "legion" else None,
+        "telemetry_cooldown_seconds": 60 if target == "legion" else None,
+        "telemetry_automatic_reports": False,
         "hardware_tested": False,
         "energy_savings_measured": False,
         "overlay_commit": run(

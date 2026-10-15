@@ -1,0 +1,13 @@
+diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
+index 8c39e6d..d4f4fab 100644
+--- a/src/mesh/RadioInterface.cpp
++++ b/src/mesh/RadioInterface.cpp
+@@ -384,6 +384,8 @@ std::unique_ptr<RadioInterface> initLoRa()
+ 
+ #if ARCH_PORTDUINO
+     SPISettings loraSpiSettings(portduino_config.spiSpeed, MSBFIRST, SPI_MODE0);
++#elif RAK3401_LEGION_SPI_BULK
++    SPISettings loraSpiSettings(8000000, MSBFIRST, SPI_MODE0);
+ #else
+     SPISettings loraSpiSettings(4000000, MSBFIRST, SPI_MODE0);
+ #endif

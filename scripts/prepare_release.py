@@ -52,7 +52,7 @@ def prepare_release(directory, commit):
 
     version = manifest["legion_version"]
     upstream = manifest["meshtastic_version"]
-    if version == "0.2.0" and not all(
+    if version in ("0.2.0", "0.3.0") and not all(
         manifest.get(name) is True
         for name in (
             "bulk_spi",
@@ -61,8 +61,35 @@ def prepare_release(directory, commit):
             "flash_readback_crc32",
         )
     ):
-        raise ValueError("Legion 0.2.0 requires all declared firmware features")
-    features = "This release includes bulk SPI.\n\n"
+        raise ValueError(f"Legion {version} requires all declared firmware features")
+    if version == "0.3.0" and not (
+        manifest.get("private_telemetry") is True
+        and manifest.get("spi_hz") == 8000000
+        and manifest.get("telemetry_channel") == "LegionRF"
+        and manifest.get("telemetry_cooldown_seconds") == 60
+        and manifest.get("telemetry_automatic_reports") is False
+    ):
+        raise ValueError(
+            "Legion 0.3.0 requires 8 MHz SPI and private on-demand telemetry"
+        )
+    spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
+    features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
+    if manifest.get("private_telemetry"):
+        features += (
+            "Private on-demand diagnostics: create a SECONDARY channel named exactly "
+            "`LegionRF` with your own random 16- or 32-byte PSK. No shared key is built "
+            "into the firmware. Send `/telemetry` in that channel, or "
+            "`/telemetry !xxxxxxxx` to select one node. Replies are ordinary channel "
+            "text messages and are also copied to a locally connected app. "
+            "There are no automatic diagnostic broadcasts. "
+            "A node accepts at most one response per 60 seconds, with duplicate "
+            "suppression and a random response delay. Reports include chip "
+            "temperature, physical battery voltage, estimated charge, noise samples, "
+            "packet counters and uptime. Diagnostics are accumulated in RAM only.\n\n"
+            f"Read [COMMANDS.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/COMMANDS.md) "
+            "for setup, fields and limits. The private channel shares the existing "
+            "LoRa frequency and airtime. Requests cannot wake an energy-sleeping node.\n\n"
+        )
     if manifest.get("energy_recovery"):
         features += (
             "RAK-specific battery recovery and TX reserve are enabled. Battery sleep: below "

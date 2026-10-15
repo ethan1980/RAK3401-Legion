@@ -109,6 +109,51 @@ class ReleaseValidationTests(unittest.TestCase):
         self.assertIn("3.50 V", metadata["notes"])
         self.assertIn("CRC32", metadata["notes"])
 
+    def v030_manifest(self):
+        self.manifest.update(
+            legion_version="0.3.0",
+            bulk_spi=True,
+            energy_recovery=True,
+            flash_write_deduplication=True,
+            flash_readback_crc32=True,
+            spi_hz=8000000,
+            private_telemetry=True,
+            telemetry_channel="LegionRF",
+            telemetry_cooldown_seconds=60,
+            telemetry_automatic_reports=False,
+        )
+
+    def test_v030_notes_explain_channel_commands_and_clock(self):
+        self.v030_manifest()
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.3.0-aaaaaaa")
+        for term in (
+            "8 MHz",
+            "LegionRF",
+            "/telemetry",
+            "SECONDARY",
+            "PSK",
+            "COMMANDS.md",
+            "60 seconds",
+        ):
+            self.assertIn(term, metadata["notes"])
+
+    def test_v030_rejects_wrong_spi_or_missing_private_command_feature(self):
+        for field, value in (
+            ("spi_hz", 4000000),
+            ("private_telemetry", False),
+            ("telemetry_channel", "Primary"),
+            ("telemetry_cooldown_seconds", 0),
+            ("telemetry_automatic_reports", True),
+        ):
+            with self.subTest(field=field):
+                self.v030_manifest()
+                self.manifest[field] = value
+                self.write_manifest()
+                with self.assertRaisesRegex(ValueError, "8 MHz SPI and private"):
+                    release.prepare_release(self.directory, self.commit)
+
 
 if __name__ == "__main__":
     unittest.main()

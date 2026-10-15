@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/rak3401-legion-logo.png" alt="RAK3401 Legion - Unleash your demons" width="700">
+  <img src="https://raw.githubusercontent.com/ethan1980/RAK3401-Legion/ce6a7ded2c675c8a0d4417828eb1246c66033afb/assets/rak3401-legion-logo.png" alt="RAK3401 Legion - Unleash your demons" width="700">
 </p>
 
 # RAK3401 Legion

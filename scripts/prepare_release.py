@@ -59,7 +59,7 @@ def prepare_release(directory, commit):
 
     version = manifest["legion_version"]
     upstream = manifest["meshtastic_version"]
-    if version in ("0.2.0", "0.3.0") and not all(
+    if version in ("0.2.0", "0.3.0", "0.3.5") and not all(
         manifest.get(name) is True
         for name in (
             "bulk_spi",
@@ -69,7 +69,7 @@ def prepare_release(directory, commit):
         )
     ):
         raise ValueError(f"Legion {version} requires all declared firmware features")
-    if version == "0.3.0" and not (
+    if version in ("0.3.0", "0.3.5") and not (
         manifest.get("private_telemetry") is True
         and manifest.get("spi_hz") == 8000000
         and manifest.get("telemetry_channel") == "LegionRF"
@@ -77,10 +77,39 @@ def prepare_release(directory, commit):
         and manifest.get("telemetry_automatic_reports") is False
     ):
         raise ValueError(
-            "Legion 0.3.0 requires 8 MHz SPI and private on-demand telemetry"
+            f"Legion {version} requires 8 MHz SPI and private on-demand telemetry"
         )
+    if version == "0.3.5":
+        dfu = manifest.get("ble_dfu_validation") or {}
+        if not (
+            dfu.get("method") == "compiled-cortex-m4-emulation"
+            and dfu.get("callback_routes_to_ota_reset") is True
+            and dfu.get("reset_requested") is True
+            and dfu.get("gpregret") == "0xa8"
+            and dfu.get("task_stack_preserved") is True
+            and dfu.get("softdevice_disable_stubbed") is True
+            and dfu.get("hardware_tested") is False
+        ):
+            raise ValueError("Legion 0.3.5 requires verified compiled BLE DFU reset")
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
+    if version == "0.3.5":
+        features += (
+            "**USB recovery from Legion 0.2.0 or 0.3.0:** install this release's UF2 "
+            "over USB. Their installed BLE DFU entry can reset into normal firmware "
+            "before accepting an OTA upload; a different ZIP cannot repair that "
+            "installed entry. Use the normal UF2 update and keep the existing "
+            "configuration; do not run factory erase/reset.\n\n"
+            "This hotfix preserves flash quiescing and Bluetooth peer/bond handoff "
+            "but enters BLE OTA through the nRF52 core's full-reset path "
+            "(`GPREGRET=0xA8`), avoiding the unsafe PSP-to-MSP C epilogue. "
+            "The active callback and compiled reset entry are checked in Cortex-M4 "
+            "emulation before packaging. SoftDevice disable is stubbed in that "
+            "check; physical BLE reconnection and end-to-end OTA still need "
+            "verification on a RAK3401.\n\n"
+            "Legion 0.2.0 and 0.3.0 downloads are withdrawn after this release "
+            "is published; their source tags and Git history are retained.\n\n"
+        )
     if manifest.get("private_telemetry"):
         features += (
             "Private on-demand diagnostics: create a SECONDARY channel named exactly "

@@ -1,0 +1,166 @@
+diff --git a/src/platform/nrf52/LegionDfu.cpp b/src/platform/nrf52/LegionDfu.cpp
+new file mode 100644
+index 0000000..e7da607
+--- /dev/null
++++ b/src/platform/nrf52/LegionDfu.cpp
+@@ -0,0 +1,117 @@
++/*
++ * Adapted from Adafruit Bluefruit52Lib BLEDfu.cpp by hathach (tinyusb.org).
++ * Copyright (c) 2018, Adafruit Industries (adafruit.com). All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ * 3. Neither the name of the copyright holders nor the names of its
++ *    contributors may be used to endorse or promote products derived from
++ *    this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
++ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
++ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
++ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
++ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "configuration.h"
++
++#if defined(ARCH_NRF52) && defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
++
++#include "LegionDfu.h"
++#include "SPILock.h"
++#include <InternalFileSystem.h>
++#include <cstddef>
++#include <cstring>
++
++extern void nrf52FlashQuiesce();
++
++namespace
++{
++struct PeerData {
++    ble_gap_addr_t address;
++    ble_gap_irk_t irk;
++    ble_gap_enc_key_t encryptionKey;
++    uint8_t systemAttributes[8];
++    uint16_t crc;
++};
++static_assert(offsetof(PeerData, crc) == 60, "Bootloader peer-data layout changed");
++static_assert(sizeof(PeerData) == 62, "Bootloader peer-data size changed");
++
++uint16_t peerCrc(const uint8_t *data, size_t length)
++{
++    uint16_t crc = 0xffff;
++    while (length--) {
++        uint8_t value = (crc >> 8) ^ *data++;
++        value ^= value >> 4;
++        crc = (crc << 8) ^ (uint16_t(value) << 12) ^ (uint16_t(value) << 5) ^ value;
++    }
++    return crc;
++}
++} // namespace
++
++extern "C" __attribute__((noinline)) void legionDfuControlWrite(uint16_t connHandle, BLECharacteristic *characteristic,
++                                                                ble_gatts_evt_write_t *request)
++{
++    if (request->handle != characteristic->handles().value_handle || request->op != BLE_GATTS_OP_WRITE_REQ)
++        return;
++
++    ble_gatts_rw_authorize_reply_params_t reply = {};
++    reply.type = BLE_GATTS_AUTHORIZE_TYPE_WRITE;
++    if (!characteristic->notifyEnabled(connHandle)) {
++        reply.params.write.gatt_status = BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR;
++    } else if (!request->len) {
++        reply.params.write.gatt_status = BLE_GATT_STATUS_ATTERR_INVALID_ATT_VAL_LENGTH;
++    } else if (request->data[0] != 1) {
++        sd_ble_gatts_rw_authorize_reply(connHandle, &reply);
++        return;
++    } else {
++        BLEConnection *connection = Bluefruit.Connection(connHandle);
++        if (!connection)
++            return;
++
++        nrf52FlashQuiesce();
++        // Bond-key reads need the filesystem mutex; spiLock still fences writers.
++        InternalFS._unlockFS();
++        if (sd_ble_gatts_rw_authorize_reply(connHandle, &reply) != NRF_SUCCESS) {
++            spiLock->unlock();
++            return;
++        }
++
++        // This retained-RAM address and layout are part of the Adafruit bootloader ABI.
++        auto *peer = reinterpret_cast<PeerData *>(0x20007f80UL);
++        memset(peer, 0, sizeof(*peer));
++        uint16_t attributeLength = sizeof(peer->systemAttributes);
++        sd_ble_gatts_sys_attr_get(connHandle, peer->systemAttributes, &attributeLength, BLE_GATTS_SYS_ATTR_FLAG_SYS_SRVCS);
++        peer->address = connection->getPeerAddr();
++        if (connection->secured()) {
++            bond_keys_t keys;
++            if (connection->loadBondKey(&keys)) {
++                peer->address = keys.peer_id.id_addr_info;
++                peer->irk = keys.peer_id.id_info;
++                peer->encryptionKey = keys.own_enc;
++            }
++        }
++        peer->crc = peerCrc(reinterpret_cast<const uint8_t *>(peer), offsetof(PeerData, crc));
++
++        Bluefruit.Advertising.restartOnDisconnect(false);
++        connection->disconnect();
++        // 0xA8 requests a fresh OTA boot; no C frame survives a PSP-to-MSP switch.
++        enterOTADfu();
++        __builtin_unreachable();
++    }
++    sd_ble_gatts_rw_authorize_reply(connHandle, &reply);
++}
++
++#endif
+diff --git a/src/platform/nrf52/LegionDfu.h b/src/platform/nrf52/LegionDfu.h
+new file mode 100644
+index 0000000..0f1eb52
+--- /dev/null
++++ b/src/platform/nrf52/LegionDfu.h
+@@ -0,0 +1,5 @@
++#pragma once
++
++#include <bluefruit.h>
++
++extern "C" void legionDfuControlWrite(uint16_t connHandle, BLECharacteristic *characteristic, ble_gatts_evt_write_t *request);
+diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
+index f9cbdc4..07b4b31 100644
+--- a/src/platform/nrf52/NRF52Bluetooth.cpp
++++ b/src/platform/nrf52/NRF52Bluetooth.cpp
+@@ -13,6 +13,9 @@
+ #include <InternalFileSystem.h>
+ #include <bluefruit.h>
+ #include <utility/bonding.h>
++#if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
++#include "LegionDfu.h"
++#endif
+ static BLEService meshBleService = BLEService(BLEUuid(MESH_SERVICE_UUID_16));
+ static BLECharacteristic fromNum = BLECharacteristic(BLEUuid(FROMNUM_UUID_16));
+ static BLECharacteristic fromRadio = BLECharacteristic(BLEUuid(FROMRADIO_UUID_16));
+@@ -36,6 +39,9 @@ class QuiescingBLEDfu : public BLEDfu
+ 
+     static void onControlWrite(uint16_t conn_hdl, BLECharacteristic *chr, ble_gatts_evt_write_t *request)
+     {
++#if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
++        legionDfuControlWrite(conn_hdl, chr, request);
++#else
+         // Only START_DFU resets, and the library reads this byte without checking len, so match it exactly.
+         if (request->data[0] != 1) {
+             libraryCb(conn_hdl, chr, request);
+@@ -47,6 +53,7 @@ class QuiescingBLEDfu : public BLEDfu
+         InternalFS._unlockFS();
+         libraryCb(conn_hdl, chr, request);
+         spiLock->unlock();
++#endif
+     }
+ 
+   public:

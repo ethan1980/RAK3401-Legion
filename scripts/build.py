@@ -12,6 +12,7 @@ import tarfile
 from pathlib import Path
 
 from prepare import PROFILE_PATH, ROOT, firmware_version, load_config, prepare, run
+from validate_dfu import validate_dfu
 
 TARGETS = {"legion": "rak3401-legion", "baseline": "rak3401-1watt"}
 PIO_ENV = {**os.environ, "PLATFORMIO_SETTING_ENABLE_TELEMETRY": "no"}
@@ -49,6 +50,11 @@ def package(firmware, target, output):
     if advertised_version.encode("ascii") + b"\0" not in elf.read_bytes():
         raise RuntimeError("Compiled firmware does not contain its advertised version")
     print(f"Verified firmware identification: {advertised_version}")
+    dfu_validation = validate_dfu(elf) if target == "legion" else None
+    if dfu_validation:
+        print(
+            "Verified active BLE DFU callback and compiled OTA reset in Cortex-M4 emulation"
+        )
     artifacts = []
     for suffix in ("uf2", "zip", "elf", "hex", "mt.json", "map", "ld"):
         for path in sorted(build.glob(f"firmware-*.{suffix}")):
@@ -96,6 +102,7 @@ def package(firmware, target, output):
         "flash_write_deduplication": target == "legion",
         "flash_readback_crc32": target == "legion",
         "private_telemetry": target == "legion",
+        "ble_dfu_validation": dfu_validation,
         "telemetry_channel": "LegionRF" if target == "legion" else None,
         "telemetry_cooldown_seconds": 60 if target == "legion" else None,
         "telemetry_automatic_reports": False,

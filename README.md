@@ -5,7 +5,7 @@
 # RAK3401 Legion
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current version: **Legion 0.3.0**, based on **Meshtastic 2.8.2 develop/nightly**,
+Current version: **Legion 0.3.5**, based on **Meshtastic 2.8.2 develop/nightly**,
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
 
@@ -59,7 +59,7 @@ those demons and help this particular kit work better.
 
 Legion transfers RadioLib buffers to the SX1262 in blocks through the nRF52
 core's synchronous SPI API, which uses EasyDMA. The baseline transfers these
-buffers one byte at a time. Legion 0.3.0 runs radio SPI at **8 MHz** for both reads
+buffers one byte at a time. Legion runs radio SPI at **8 MHz** for both reads
 and writes; the unchanged baseline remains at **4 MHz**. The existing
 bus locking and transaction boundaries are preserved. This optimization is enabled
 only in `rak3401-legion`.
@@ -173,7 +173,7 @@ Download ready-to-flash firmware from
 [Releases](https://github.com/ethan1980/RAK3401-Legion/releases).
 After both profiles build successfully, pushes to `main` and manual workflow runs
 on `main` automatically publish an **experimental prerelease** of Legion.
-Each release has a tag such as `legion-v0.3.0-<commit>` and includes:
+Each release has a tag such as `legion-v0.3.5-<commit>` and includes:
 
 - `firmware-rak3401-legion-*.uf2` for USB/bootloader flashing.
 - `firmware-rak3401-legion-*-ota.zip` for OTA/DFU updates.
@@ -185,6 +185,28 @@ build and test the firmware without publishing a release. To build and publish
 manually, open **Actions → Build RAK3401 Legion → Run workflow** and select `main`.
 
 The comparison baseline is also available in Actions.
+
+### USB recovery and BLE OTA in 0.3.5
+
+**If Legion 0.2.0 or 0.3.0 is installed, update to 0.3.5 using the UF2 over USB.**
+Those builds contain a defective BLE DFU entry that can immediately restart the
+normal firmware instead of staying in the bootloader. Selecting another OTA ZIP
+does not repair the entry in the installed firmware. Their releases are withdrawn
+when 0.3.5 is published; source tags and Git history are retained.
+
+Connect a USB data cable, double-press Reset to expose the bootloader drive, and
+copy this release's `firmware-rak3401-legion-*.uf2` onto it. Allow the node to
+restart and check that the app reports **`2.8.2.Legion0.3.5`**. Use a normal UF2
+update, without factory erase/reset. The firmware keeps the existing configuration
+format and flash layout. Export the node configuration beforehand if possible.
+
+The hotfix retains flash-write coordination and Bluetooth peer/bond handoff,
+then uses the nRF52 core's full OTA reset (`GPREGRET=0xA8`). This avoids switching
+from the FreeRTOS task stack before a compiler-generated C epilogue. Packaging
+checks the active callback and emulates the compiled reset entry, including its
+OTA marker and stack behavior. This software check stubs SoftDevice disable;
+**physical BLE reconnection and a complete OTA transfer still need testing on
+the RAK3401**. An OTA test must start from the corrected firmware.
 
 Open a successful run in
 [Actions](https://github.com/ethan1980/RAK3401-Legion/actions/workflows/build.yml)
@@ -203,7 +225,7 @@ This version requires hardware testing before use on an unattended node.
 
 ### Firmware identification
 
-The firmware identifies itself as **`2.8.2.Legion0.3.0`** in MQTT map reports,
+The firmware identifies itself as **`2.8.2.Legion0.3.5`** in MQTT map reports,
 device metadata read by the app, Bluetooth Device Information and startup logs.
 The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
 the firmware version. Maps update after receiving the next MQTT map report.

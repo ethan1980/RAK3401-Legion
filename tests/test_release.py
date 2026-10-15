@@ -170,6 +170,54 @@ class ReleaseValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Advertised firmware version"):
                     release.prepare_release(self.directory, self.commit)
 
+    def v035_manifest(self):
+        self.v030_manifest()
+        self.manifest.update(
+            legion_version="0.3.5",
+            advertised_firmware_version="2.8.2.Legion0.3.5",
+            ble_dfu_validation={
+                "method": "compiled-cortex-m4-emulation",
+                "callback_routes_to_ota_reset": True,
+                "reset_requested": True,
+                "gpregret": "0xa8",
+                "task_stack_preserved": True,
+                "softdevice_disable_stubbed": True,
+                "hardware_tested": False,
+            },
+        )
+
+    def test_v035_requires_compiled_safe_dfu_reset(self):
+        for field, value in (
+            ("callback_routes_to_ota_reset", False),
+            ("reset_requested", False),
+            ("gpregret", "0xb1"),
+            ("task_stack_preserved", False),
+            ("softdevice_disable_stubbed", False),
+            ("method", "source-only"),
+        ):
+            with self.subTest(field=field):
+                self.v035_manifest()
+                self.manifest["ble_dfu_validation"][field] = value
+                self.write_manifest()
+                with self.assertRaisesRegex(ValueError, "verified compiled BLE DFU"):
+                    release.prepare_release(self.directory, self.commit)
+
+    def test_v035_notes_require_usb_recovery_and_distinguish_hardware_validation(self):
+        self.v035_manifest()
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.3.5-aaaaaaa")
+        for text in (
+            "USB recovery",
+            "UF2",
+            "0xA8",
+            "physical BLE",
+            "0.2.0 and 0.3.0",
+            "8 MHz",
+            "LegionRF",
+        ):
+            self.assertIn(text, metadata["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,10 +32,10 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Check checkout protection
-        run: python -m unittest discover -s tests -v
       - name: Install build tools
         run: python -m pip install -r requirements.txt
+      - name: Check checkout protection and release validation
+        run: python -m unittest discover -s tests -v
       - name: Build firmware and package source
         run: python scripts/build.py --target '${{ matrix.target }}'
       - name: Upload firmware, source and checksums
@@ -87,3 +87,20 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" dist/legion/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+      - name: Withdraw releases with defective BLE DFU entry
+        if: startsWith(steps.metadata.outputs.tag, 'legion-v0.3.5-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" == "false" ]]
+          gh api --paginate "repos/$GH_REPO/releases" \
+            --jq '.[] | select(.tag_name == "legion-v0.2.0-e27b9db" or .tag_name == "legion-v0.3.0-d828b8d") | .id' \
+            > withdrawn-release-ids.txt
+          while IFS= read -r release_id; do
+            [[ "$release_id" =~ ^[0-9]+$ ]]
+            gh api --method DELETE "repos/$GH_REPO/releases/$release_id"
+          done < withdrawn-release-ids.txt

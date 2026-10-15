@@ -152,7 +152,11 @@ class CheckoutProtectionTests(unittest.TestCase):
 
 class FirmwareIdentificationTests(unittest.TestCase):
     def test_versions_and_display_name_follow_the_configuration(self):
-        for upstream, legion in (("2.8.2", "0.3.0"), ("2.8.3", "0.4.0")):
+        for upstream, legion in (
+            ("2.8.2", "0.3.0"),
+            ("2.8.2", "0.3.5"),
+            ("2.8.3", "0.4.0"),
+        ):
             with self.subTest(upstream=upstream, legion=legion):
                 config = {"meshtastic_version": upstream, "legion_version": legion}
                 version = f"{upstream}.Legion{legion}"

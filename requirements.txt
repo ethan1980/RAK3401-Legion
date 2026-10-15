@@ -1,2 +1,5 @@
 platformio==6.2.0
 adafruit-nrfutil==0.5.3.post16
+capstone==5.0.9
+unicorn==2.1.4
+pyelftools==0.33

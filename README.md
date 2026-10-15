@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/rak3401-legion-logo.png" alt="RAK3401 Legion - Unleash your demons" width="900">
+  <img src="assets/rak3401-legion-logo.png" alt="RAK3401 Legion - Unleash your demons" width="700">
 </p>
 
 # RAK3401 Legion
@@ -13,6 +13,47 @@ This repository contains a small set of patches and a build profile. The build
 downloads the upstream source pinned in `upstream.json`, applies the changes,
 and produces the complete firmware. This keeps Legion changes easy to review
 and port to newer Meshtastic versions.
+
+## The story behind Legion
+
+I'm Ethan (Javier). I joined the Meshtastic world a few years ago with a LILYGO
+T-Beam as my first node. A lot has changed since then. After trying different
+boards and configurations, and having more than a few battles with the mesh and
+its gadgets, I ended up building a RAK3401 1W. It is still my current node, and
+the one I have enjoyed using the most.
+
+Even so, it has limitations I want to address. Some reflect the trade-offs of
+general-purpose firmware: Meshtastic supports a wide range of boards, variants,
+peripherals and use cases, so its development has to balance many different
+requirements. I wanted to explore what could be gained by concentrating on one
+particular kit and the way I use it.
+
+That is how Legion began: custom firmware for my own RAK3401, built to make my
+day-to-day life easier. I have no plans to expand it to other hardware models
+or shape its development around every user's needs. Anyone with a RAK3401 is
+welcome to try it, experiment and adapt it freely under the project's license.
+
+### Why "Legion"?
+
+The name comes from [Legion](https://en.wikipedia.org/wiki/Legion_%28demons%29),
+the collective name given by a multitude of demons in the New Testament account
+of the exorcism of the Gerasene demoniac. The image of many demons speaking with
+one voice is what inspired the name and the logo. In the Gospel of Mark, Jesus
+asks the possessed man his name:
+
+> "What is thy name?"
+>
+> "My name is Legion: for we are many."
+>
+> — [Mark 5:9, King James Version](https://www.biblegateway.com/passage/?search=Mark%205%3A9&version=KJV)
+
+To me, the mesh feels like a hive: many independent nodes forming a greater
+whole. Inside my RAK3401, I picture the complexity of firmware designed for so
+many different boards as a legion of demons, getting between the hardware and
+what I want it to do. Legion is my attempt to untangle that complexity, release
+those demons and help this particular kit work better.
+
+**Unleash your demons.**
 
 ## Included changes
 

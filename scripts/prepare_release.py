@@ -8,6 +8,8 @@ import os
 import re
 from pathlib import Path
 
+from prepare import firmware_version
+
 
 def prepare_release(directory, commit):
     directory = Path(directory)
@@ -21,6 +23,11 @@ def prepare_release(directory, commit):
     for field in ("legion_version", "meshtastic_version"):
         if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", manifest[field]):
             raise ValueError(f"Invalid version: {field}")
+    advertised_version = firmware_version(manifest)
+    if manifest.get("advertised_firmware_version") != advertised_version:
+        raise ValueError(
+            "Advertised firmware version does not match the release versions"
+        )
 
     files = {p.name for p in directory.iterdir() if p.is_file()}
     uf2 = [
@@ -111,9 +118,13 @@ def prepare_release(directory, commit):
             f"- Legion version: `{version}`\n"
             f"- Meshtastic base: `{upstream}`, commit `{manifest['commit']}`\n"
             f"- Legion build commit: `{commit}`\n"
+            f"- Advertised firmware: `{advertised_version}` (MQTT, device metadata and BLE)\n"
             f"- USB/bootloader firmware: `{uf2[0]}`\n"
             f"- OTA/DFU firmware: `{ota[0]}`\n\n"
             f"{features}"
+            "The advertised version is generated from `upstream.json`. Firmware filenames "
+            "retain the upstream version and source hash; both complete source commits "
+            "are recorded above and in `legion-build.json`.\n\n"
             "The assets include source, build metadata, debug files and `SHA256SUMS`.\n"
             "Experimental: hardware stability, voltage thresholds, sleep current and battery "
             "savings still require testing on the complete kit. Keep a previous build for rollback.\n"

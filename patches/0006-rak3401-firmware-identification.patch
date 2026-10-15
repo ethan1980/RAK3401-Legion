@@ -1,0 +1,44 @@
+diff --git a/src/configuration.h b/src/configuration.h
+index 5da3c7c..02fb701 100644
+--- a/src/configuration.h
++++ b/src/configuration.h
+@@ -78,6 +78,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #error APP_VERSION must be set by the build environment
+ #endif
+ 
++#ifdef RAK3401_LEGION_FIRMWARE_VERSION
++#undef APP_VERSION
++#define APP_VERSION RAK3401_LEGION_FIRMWARE_VERSION
++#endif
++
+ // FIXME: This is still needed by the Bluetooth Stack and needs to be replaced by something better. Remnant of the old versioning
+ // system.
+ #ifndef HW_VERSION
+diff --git a/src/main.cpp b/src/main.cpp
+index bcf3d07..5932243 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1316,6 +1316,9 @@ bool runASAP;
+ extern meshtastic_DeviceMetadata getDeviceMetadata()
+ {
+     meshtastic_DeviceMetadata deviceMetadata = meshtastic_DeviceMetadata_init_default;
++#ifdef RAK3401_LEGION_FIRMWARE_VERSION
++    static_assert(sizeof(optstr(APP_VERSION)) <= sizeof(deviceMetadata.firmware_version), "Legion firmware version is too long");
++#endif
+     strncpy(deviceMetadata.firmware_version, optstr(APP_VERSION), sizeof(deviceMetadata.firmware_version));
+     deviceMetadata.device_state_version = DEVICESTATE_CUR_VER;
+ #if defined(ARCH_STM32WL) && HAS_CPU_SHUTDOWN
+diff --git a/src/mqtt/MQTT.cpp b/src/mqtt/MQTT.cpp
+index 1454467..592b6b3 100644
+--- a/src/mqtt/MQTT.cpp
++++ b/src/mqtt/MQTT.cpp
+@@ -880,6 +880,9 @@ void MQTT::perhapsReportToMap()
+     memcpy(mapReport.short_name, owner.short_name, sizeof(owner.short_name));
+     mapReport.role = config.device.role;
+     mapReport.hw_model = owner.hw_model;
++#ifdef RAK3401_LEGION_FIRMWARE_VERSION
++    static_assert(sizeof(optstr(APP_VERSION)) <= sizeof(mapReport.firmware_version), "Legion firmware version is too long");
++#endif
+     strncpy(mapReport.firmware_version, optstr(APP_VERSION), sizeof(mapReport.firmware_version));
+     mapReport.region = config.lora.region;
+     mapReport.modem_preset = config.lora.modem_preset;

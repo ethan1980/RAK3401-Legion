@@ -11,7 +11,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from prepare import PROFILE_PATH, ROOT, load_config, prepare, run
+from prepare import PROFILE_PATH, ROOT, firmware_version, load_config, prepare, run
 
 TARGETS = {"legion": "rak3401-legion", "baseline": "rak3401-1watt"}
 PIO_ENV = {**os.environ, "PLATFORMIO_SETTING_ENABLE_TELEMETRY": "no"}
@@ -41,6 +41,14 @@ def package(firmware, target, output):
     output = output / target
     output.mkdir(parents=True, exist_ok=True)
     build = firmware / ".pio/build" / environment
+    upstream_version = f"{config['meshtastic_version']}.{config['commit'][:7]}"
+    advertised_version = (
+        firmware_version(config) if target == "legion" else upstream_version
+    )
+    elf = build / f"firmware-{environment}-{upstream_version}.elf"
+    if advertised_version.encode("ascii") + b"\0" not in elf.read_bytes():
+        raise RuntimeError("Compiled firmware does not contain its advertised version")
+    print(f"Verified firmware identification: {advertised_version}")
     artifacts = []
     for suffix in ("uf2", "zip", "elf", "hex", "mt.json", "map", "ld"):
         for path in sorted(build.glob(f"firmware-*.{suffix}")):
@@ -81,6 +89,7 @@ def package(firmware, target, output):
         **config,
         "target": target,
         "environment": environment,
+        "advertised_firmware_version": advertised_version,
         "spi_hz": 8000000 if target == "legion" else 4000000,
         "bulk_spi": target == "legion",
         "energy_recovery": target == "legion",

@@ -2,6 +2,7 @@
 """Prepare the pinned upstream checkout without overwriting local changes."""
 
 import argparse
+import configparser
 import json
 import os
 import re
@@ -11,6 +12,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = Path("variants/nrf52840/rak3401_legion/platformio.ini")
+
+
+def firmware_version(config):
+    for field in ("meshtastic_version", "legion_version"):
+        if not re.fullmatch(r"\d+\.\d+\.\d+", config[field], flags=re.ASCII):
+            raise ValueError(f"Invalid version: {field}")
+    version = f"{config['meshtastic_version']}.Legion{config['legion_version']}"
+    if len(version) > 17:
+        raise ValueError("Advertised firmware version exceeds the 17-character field")
+    return version
+
+
+def render_profile(config):
+    return (
+        (ROOT / "profiles/platformio.ini")
+        .read_text()
+        .replace("@LEGION_VERSION@", config["legion_version"])
+        .replace("@FIRMWARE_VERSION@", firmware_version(config))
+        .encode()
+    )
 
 
 def run(*args, cwd=None, capture=False, env=None):
@@ -25,6 +46,7 @@ def load_config():
         raise ValueError("upstream.commit must be a complete commit SHA")
     if config["repository"] != "https://github.com/meshtastic/firmware.git":
         raise ValueError("Unexpected upstream repository")
+    firmware_version(config)
     return config
 
 
@@ -32,6 +54,14 @@ def check_head(dest, config):
     actual = run("git", "rev-parse", "HEAD", cwd=dest, capture=True).strip()
     if actual != config["commit"]:
         raise ValueError(f"Unexpected upstream HEAD: {actual}; use a new destination")
+
+
+def check_base_version(dest, config):
+    properties = configparser.ConfigParser()
+    properties.read(dest / "version.properties")
+    actual = ".".join(properties["VERSION"][key] for key in ("major", "minor", "build"))
+    if actual != config["meshtastic_version"]:
+        raise ValueError(f"Meshtastic version does not match upstream source: {actual}")
 
 
 def expected_diff(dest, patches):
@@ -57,10 +87,7 @@ def check_checkout(dest, config, patch):
     if set(untracked) - {PROFILE_PATH.as_posix()}:
         raise ValueError("Checkout has unexpected untracked files")
     profile = dest / PROFILE_PATH
-    if (
-        profile.exists()
-        and profile.read_bytes() != (ROOT / "profiles/platformio.ini").read_bytes()
-    ):
+    if profile.exists() and profile.read_bytes() != render_profile(config):
         raise ValueError("Legion profile has local changes")
     return bool(diff)
 
@@ -79,6 +106,7 @@ def prepare(dest, *, submodules=True):
         raise ValueError("Destination exists and is not a Git checkout")
 
     check_head(dest, config)
+    check_base_version(dest, config)
     patch = expected_diff(dest, patches)
     already_applied = check_checkout(dest, config, patch)
     if not already_applied:
@@ -86,7 +114,7 @@ def prepare(dest, *, submodules=True):
             run("git", "apply", "--intent-to-add", str(path), cwd=dest)
     profile = dest / PROFILE_PATH
     profile.parent.mkdir(parents=True, exist_ok=True)
-    profile.write_bytes((ROOT / "profiles/platformio.ini").read_bytes())
+    profile.write_bytes(render_profile(config))
     if submodules:
         run("git", "submodule", "update", "--init", "--recursive", cwd=dest)
     check_checkout(dest, config, patch)

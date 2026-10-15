@@ -9,11 +9,13 @@ download as a ready-to-flash release.
 import hashlib
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location(
     "prepare_release", ROOT / "scripts/prepare_release.py"
 )
@@ -33,6 +35,7 @@ class ReleaseValidationTests(unittest.TestCase):
             "environment": "rak3401-legion",
             "legion_version": "0.1.0",
             "meshtastic_version": "2.8.2",
+            "advertised_firmware_version": "2.8.2.Legion0.1.0",
         }
         self.uf2 = self.directory / "firmware-rak3401-legion-2.8.2.04cb888.uf2"
         self.ota = self.directory / "firmware-rak3401-legion-2.8.2.04cb888-ota.zip"
@@ -91,6 +94,7 @@ class ReleaseValidationTests(unittest.TestCase):
 
     def test_v020_requires_feature_manifest(self):
         self.manifest["legion_version"] = "0.2.0"
+        self.manifest["advertised_firmware_version"] = "2.8.2.Legion0.2.0"
         self.write_manifest()
         with self.assertRaisesRegex(ValueError, "all declared firmware features"):
             release.prepare_release(self.directory, self.commit)
@@ -98,6 +102,7 @@ class ReleaseValidationTests(unittest.TestCase):
     def test_v020_notes_describe_enabled_features(self):
         self.manifest.update(
             legion_version="0.2.0",
+            advertised_firmware_version="2.8.2.Legion0.2.0",
             bulk_spi=True,
             energy_recovery=True,
             flash_write_deduplication=True,
@@ -112,6 +117,7 @@ class ReleaseValidationTests(unittest.TestCase):
     def v030_manifest(self):
         self.manifest.update(
             legion_version="0.3.0",
+            advertised_firmware_version="2.8.2.Legion0.3.0",
             bulk_spi=True,
             energy_recovery=True,
             flash_write_deduplication=True,
@@ -136,6 +142,7 @@ class ReleaseValidationTests(unittest.TestCase):
             "PSK",
             "COMMANDS.md",
             "60 seconds",
+            "2.8.2.Legion0.3.0",
         ):
             self.assertIn(term, metadata["notes"])
 
@@ -152,6 +159,15 @@ class ReleaseValidationTests(unittest.TestCase):
                 self.manifest[field] = value
                 self.write_manifest()
                 with self.assertRaisesRegex(ValueError, "8 MHz SPI and private"):
+                    release.prepare_release(self.directory, self.commit)
+
+    def test_missing_stale_or_truncated_firmware_identification_is_rejected(self):
+        for version in (None, "2.8.2.04cb888", "2.8.2.Legion0.2.0", "2.8.2.Legion0.3"):
+            with self.subTest(version=version):
+                self.v030_manifest()
+                self.manifest["advertised_firmware_version"] = version
+                self.write_manifest()
+                with self.assertRaisesRegex(ValueError, "Advertised firmware version"):
                     release.prepare_release(self.directory, self.commit)
 
 

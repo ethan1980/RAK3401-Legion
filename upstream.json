@@ -8,6 +8,7 @@
     "patches/0002-rak3401-energy-recovery.patch",
     "patches/0003-rak3401-flash-persistence.patch",
     "patches/0004-rak3401-spi-8mhz.patch",
-    "patches/0005-rak3401-private-telemetry.patch"
+    "patches/0005-rak3401-private-telemetry.patch",
+    "patches/0006-rak3401-firmware-identification.patch"
   ]
 }

@@ -34,7 +34,10 @@ class CheckoutProtectionTests(unittest.TestCase):
             "-qm",
             "base",
         )
-        self.config = {"commit": self.git("rev-parse", "HEAD").strip()}
+        self.config = {
+            **prepare.load_config(),
+            "commit": self.git("rev-parse", "HEAD").strip(),
+        }
         self.file.write_text("bulk\n")
         self.patch = self.git("diff", "HEAD", "--")
         self.file.write_text("original\n")
@@ -71,6 +74,16 @@ class CheckoutProtectionTests(unittest.TestCase):
         profile.write_text("local profile\n")
         with self.assertRaisesRegex(ValueError, "profile has local changes"):
             prepare.check_checkout(self.dest, self.config, self.patch)
+
+    def test_generated_profile_is_reusable_but_stale_version_is_rejected(self):
+        profile = self.dest / prepare.PROFILE_PATH
+        profile.parent.mkdir(parents=True)
+        profile.write_bytes(prepare.render_profile(self.config))
+        self.assertFalse(prepare.check_checkout(self.dest, self.config, self.patch))
+        changed = {**self.config, "legion_version": "0.3.1"}
+        with self.assertRaisesRegex(ValueError, "profile has local changes"):
+            prepare.check_checkout(self.dest, changed, self.patch)
+        self.assertEqual(profile.read_bytes(), prepare.render_profile(self.config))
 
     def test_added_source_remains_protected_on_reuse(self):
         source = self.dest / "energy.h"
@@ -135,6 +148,45 @@ class CheckoutProtectionTests(unittest.TestCase):
             self.assertNotEqual(expected, old_patch)
             self.git("apply", str(patch))
             self.assertTrue(prepare.check_checkout(self.dest, config, expected))
+
+
+class FirmwareIdentificationTests(unittest.TestCase):
+    def test_versions_and_display_name_follow_the_configuration(self):
+        for upstream, legion in (("2.8.2", "0.3.0"), ("2.8.3", "0.4.0")):
+            with self.subTest(upstream=upstream, legion=legion):
+                config = {"meshtastic_version": upstream, "legion_version": legion}
+                version = f"{upstream}.Legion{legion}"
+                self.assertEqual(prepare.firmware_version(config), version)
+                profile = prepare.render_profile(config).decode()
+                self.assertIn(f"-DRAK3401_LEGION_FIRMWARE_VERSION={version}", profile)
+                self.assertIn(f"RAK3401 Legion {legion} (experimental)", profile)
+                self.assertNotIn("@", profile)
+
+    def test_overlong_or_invalid_versions_fail_before_truncation(self):
+        config = {"meshtastic_version": "2.8.2", "legion_version": "0.3.0"}
+        self.assertEqual(len(prepare.firmware_version(config)), 17)
+        for upstream, legion in (
+            ("2.8.12", "0.3.0"),
+            ("2.8.2", "0.10.0"),
+            ("2.8.2\n", "0.3.0"),
+            ("2.8.2", "0.3.0 -DOTHER=1"),
+            ("2.8.2", "０.3.0"),
+        ):
+            with self.subTest(upstream=upstream, legion=legion):
+                with self.assertRaises(ValueError):
+                    prepare.firmware_version(
+                        {"meshtastic_version": upstream, "legion_version": legion}
+                    )
+
+    def test_base_version_must_match_the_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dest = Path(folder)
+            (dest / "version.properties").write_text(
+                "[VERSION]\nmajor = 2\nminor = 8\nbuild = 2\n"
+            )
+            prepare.check_base_version(dest, {"meshtastic_version": "2.8.2"})
+            with self.assertRaisesRegex(ValueError, "does not match upstream source"):
+                prepare.check_base_version(dest, {"meshtastic_version": "2.8.3"})
 
 
 if __name__ == "__main__":

@@ -159,8 +159,27 @@ and an archive of the source used for the build. The Actions artifact ZIP contai
 another ZIP, which is the DFU package. Artifacts are retained for 30 days.
 
 This version requires hardware testing before use on an unattended node.
-The filename and profile identify Legion; the version shown in the app retains
-the Meshtastic version and commit (`2.8.2.04cb888`).
+
+### Firmware identification
+
+The firmware identifies itself as **`2.8.2.Legion0.3.0`** in MQTT map reports,
+device metadata read by the app, Bluetooth Device Information and startup logs.
+The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
+the firmware version. Maps update after receiving the next MQTT map report.
+
+Both version numbers and the build profile display name are generated from
+`meshtastic_version` and `legion_version` in `upstream.json`. Update those fields
+when changing the base or Legion version. Preparation verifies the base version
+against upstream `version.properties`. The advertised string must fit the
+existing **17-character** field: preparation and compilation reject an overlong
+version instead of truncating it. A longer future version number will require
+an explicitly shorter identification format before it can be built.
+
+Filenames retain the upstream version and source hash (`2.8.2.04cb888`).
+`legion-build.json` records `advertised_firmware_version` and both complete source
+commits. Packaging verifies the advertised string is present in the compiled ELF;
+release validation checks it matches the configured versions. The reference
+baseline keeps the original upstream firmware identification.
 
 ## Build locally
 

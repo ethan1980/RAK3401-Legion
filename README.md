@@ -9,12 +9,12 @@ Current release: **Legion 0.4.2**, based on **Meshtastic 2.8.2 develop/nightly**
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
 
-**BLE updates: use nRF Connect for Android.** The owner reports firmware transfer
-from an installed 0.4.2 to the same 0.4.2 OTA image. At publication preparation,
-completion/restart and a repeated update have not yet been reported. iPhone DFU
-remains unresolved. See [DFU.md](DFU.md) for the supported procedure and evidence.
-Older release downloads are withdrawn because of their superseded DFU entry;
-their source tags and Git history remain available.
+**BLE OTA updates have been verified using nRF Connect.** Telemetry responses,
+firmware version display and min/max formatting, manual backup creation with a
+success confirmation, backup status and deletion have also been verified on 0.4.2.
+Emergency restoration from a saved backup has not yet been tested on hardware.
+See [installation and updates](DFU.md) and [manual rescue backup](RECOVERY.md).
+Older release downloads are withdrawn; their source tags and Git history remain available.
 
 This repository contains a small set of patches and a build profile. The build
 downloads the upstream source pinned in `upstream.json`, applies the changes,
@@ -73,9 +73,6 @@ only in `rak3401-legion`.
 
 The goal is to reduce transfer time and CPU overhead. **Battery savings and
 8 MHz hardware stability have not been measured in a controlled bench test.**
-The owner reports stable normal operation with 0.3.5; the observed name-change
-restart was scheduled, not a confirmed spontaneous reset. This is not validation
-of the new 0.4.0 recovery feature or end-to-end OTA.
 During continuous reception,
 the RF front end will still account for a significant share of total power use.
 
@@ -212,42 +209,14 @@ The comparison baseline is also available in Actions.
 
 ### Installing and updating 0.4.2
 
-**0.3.5 has a confirmed OTA-entry failure on the owner's node.** It receives an
-authenticated DFU write but sends no ATT response before the phone's timeout.
-The later 0.4.1 trace identified a rejected write-authorization reply. The 0.4.0
-image retains the earlier entry
-implementation; a different destination OTA ZIP cannot repair the running image.
+BLE OTA operation is verified using **nRF Connect** with the release's
+`firmware-rak3401-legion-*-ota.zip`. See [DFU.md](DFU.md) for the procedure.
 
-**Migrate from older Legion builds using the 0.4.2 UF2 over USB.** It installs
-an immediate authorization callback, acknowledges START before any flash wait,
-and performs the flash/bond handoff in the main loop, without AdaCallback queue
-dispatch. The safe `GPREGRET=0xA8` reset is retained. No bootloader, SoftDevice,
-configuration format or rescue-reserve layout is changed. See [DFU.md](DFU.md)
-for the Android nRF Connect procedure, diagnostics and remaining limits.
-
-The 0.4.1 hardware trace pinpointed a rejected write-authorization reply. On
-success, 0.4.2 sets `update=1` and supplies the incoming offset, length and data,
-as required by the pinned S140 API. The strengthened verifier rejects the old
-0.4.1 ELF for this omission. This validates the correction against that API
-contract. The owner's Android test subsequently reached firmware transfer;
-completion/restart and a repeat are recorded separately from software checks.
-
-Connect a USB data cable, double-press Reset to expose the bootloader drive, and
-copy this release's `firmware-rak3401-legion-*.uf2` onto it. Allow the node to
-restart and check that the app reports **`2.8.2.Legion0.4.2`**. Use a normal UF2
-update, without factory erase/reset. The firmware keeps the existing configuration
-format and keeps the preference/warm-store boundaries. It reserves two previously
-unused pages below the warm store. Export the configuration beforehand if possible.
-
-Packaging checks the immediate callback registration, the deferred reset route,
-and the compiled reset's marker/stack behavior. Native tests run the actual DFU
-source against SDK/RTOS stubs. These checks do not emulate the Bluetooth radio,
-installed bootloader or real flash timing. The owner's installed bootloader is
-RAK4631 0.4.3 with S140 6.1.1. **Use nRF Connect on Android for this release;
-iPhone OTA is not validated.** Select the running Legion node, start DFU and
-select the release's `-ota.zip`. Wait for completion and the application to
-restart, then confirm the version and settings. Retain the phone's log if an
-attempt fails. A same-version update exercises the path.
+Migration from older Legion releases uses the **0.4.2 UF2 over USB**. Connect a
+USB data cable, double-press Reset to expose the bootloader drive, and copy the
+release's `firmware-rak3401-legion-*.uf2` onto it. The firmware identifies itself
+as **`2.8.2.Legion0.4.2`** after restart. A normal UF2 update preserves the existing
+configuration; no factory erase/reset is required.
 
 Open a successful run in
 [Actions](https://github.com/ethan1980/RAK3401-Legion/actions/workflows/build.yml)
@@ -262,7 +231,7 @@ Each package contains the **UF2**, **DFU ZIP**, ELF, HEX, metadata, `SHA256SUMS`
 and an archive of the source used for the build. The Actions artifact ZIP contains
 another ZIP, which is the DFU package. Artifacts are retained for 30 days.
 
-This version requires hardware testing before use on an unattended node.
+The hardware validation status is listed below.
 
 ### Firmware identification
 
@@ -313,37 +282,26 @@ they do not flash a device. Preparation can be repeated and rejects a different
 upstream revision or unexpected local changes. To use another destination:
 `python scripts/build.py --dest /path/to/new/directory`.
 
-## Test on the RAK
+## Validation status
 
-Compare the baseline and Legion using the same battery, configuration, traffic,
-and RF conditions. Check startup, Bluetooth, configuration reads, messages in
-both directions, ACKs, retransmissions, and reception over several hours.
-Use an external meter to measure idle RX current and energy per transmitted
-and received message. Battery percentage alone does not demonstrate savings.
+| Area | Status in 0.4.2 |
+| --- | --- |
+| BLE OTA using nRF Connect | Verified on hardware. |
+| `/telemetry` response, current version and min/max formatting | Verified on hardware. |
+| `/backup !xxxxxxxx` | Backup creation and success confirmation verified on hardware. |
+| `/backup status !xxxxxxxx` | Verified on hardware. |
+| `/backup delete !xxxxxxxx` | Verified on hardware. |
+| `/backup replace !xxxxxxxx` | Covered by automated tests; hardware verification pending. |
+| Emergency restoration and recovery announcement | Covered by automated tests; restoration from a saved backup has not yet been tested on hardware. |
+| Recovery during interrupted writes or power loss | Covered by simulated storage tests; physical power-cut testing pending. |
+| Energy savings, voltage thresholds and complete-kit sleep current | Controlled hardware measurements pending. |
+| Long-term radio stability at 8 MHz | Controlled comparison with the 4 MHz baseline pending. |
 
-For energy recovery, use a current-limited supply and a connected antenna. Lower
-VBAT slowly and confirm TX stops and the board sleeps. Raise it through the wake
-threshold and confirm configuration, keys and peer identities survive. Repeat
-with brief voltage dips, weak recovery, USB servicing and an intentional shutdown.
-Measure current on the complete kit during System OFF and the recovery fallback.
-Keep the previous release available for rollback until these checks pass.
-
-The host tests exercise the actual prepared policy, protobuf comparison and
-SafeFile implementation with simulated I/O. They cover low readings, USB,
-recovery, CRC collisions, short writes, trailing data, failed renames and stale
-temporary files. The actual private telemetry module is also compiled against
-simulated channels and transports: tests cover exact commands, target IDs, local
-delivery, private-key checks, duplicate suppression, cooldown/rollover, changed
-keys, low-power cancellation, concurrent sample updates and report size.
-They do not emulate the analog circuit or prove radio stability.
-
-For 0.4.2, test the command forms from a second node and from the app connected
-to the RAK. Check missing/wrong/public keys, other channels, repeated requests,
-multiple Legion responders and a key change while a reply is pending. Compare
-SPI errors, reception and consumption with the reference at 4 MHz, including low
-battery and recovery. Keep the 0.4.2 UF2 for USB recovery. Follow [RECOVERY.md](RECOVERY.md)
-for manual backup and controlled restoration tests. The host runner also checks
-interrupted journal writes, transaction resume, deletion and bounded retry state.
+Automated tests cover the prepared power policy, protobuf comparison, verified
+file writes, telemetry transport, recovery journal and restoration engine.
+Native DFU tests and compiled ARM checks cover update entry and image boundaries.
+Both Legion and baseline profiles compile successfully. Simulated tests do not
+measure the analog circuit, real flash timing, RF delivery or energy consumption.
 
 ## Update the upstream base
 

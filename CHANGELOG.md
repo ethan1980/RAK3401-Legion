@@ -2,17 +2,13 @@
 
 ## 0.4.2 — 2026-10-16
 
-- Correct successful DFU write authorization for the pinned S140 API: supply
-  `update=1` and the original request offset, length and data. The rejected
-  `NRF_ERROR_INVALID_PARAM` reply previously stopped entry before the reset.
-- Handle authorization directly in the BLE task and perform flash/bond preparation
-  in the main loop. Snapshot connection values before deferral; retain the safe
-  full reset into the BLE bootloader with `GPREGRET=0xA8`.
-- Add native DFU regression checks and execute the compiled SDK dispatch/reply
-  path in ARM emulation. Check the actual write-reply contract before packaging.
-- Document nRF Connect for Android as the update method. The owner reports
-  0.4.2-to-0.4.2 firmware transfer; completion/restart and repeat confirmation are
-  still pending at publication preparation. iPhone DFU remains unresolved.
+- Fix BLE OTA entry. Correct operation is verified using nRF Connect.
+- Add native DFU regression tests and compiled ARM checks for update entry.
+- Verify telemetry responses, current firmware version and min/max formatting
+  on hardware.
+- Verify manual backup creation with a success confirmation, status and deletion
+  on hardware. Emergency restoration from the saved backup, its announcement,
+  backup replacement and physical power-cut recovery remain pending hardware tests.
 - Preserve the 0.4.0 manual rescue engine, flash layout, radio, power policy,
   persistence and private telemetry. Advertise `2.8.2.Legion0.4.2` consistently
   in MQTT, Bluetooth, device metadata and the telemetry header.

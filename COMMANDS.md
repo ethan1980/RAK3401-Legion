@@ -92,7 +92,7 @@ deleted response; a delivery icon is not proof of persistence.
 
 Installing firmware, rebooting or changing settings never creates a rescue point.
 Names, keys, radio/module/channel settings and fixed position are captured only
-after the owner's command. Read [RECOVERY.md](RECOVERY.md) before using factory
+after an explicit backup command. Read [RECOVERY.md](RECOVERY.md) before using factory
 reset: an armed rescue point is restored; delete it first to deliberately remain blank.
 The successful-recovery notice is separate from routine telemetry and is emitted
 only after a completed recovery.
@@ -140,3 +140,10 @@ and that the target runs a compatible Legion version. Wait at least a minute aft
 attempt, and allow for the response delay and a busy channel. A muted channel may
 hide notifications. Keep a receiver/app connected if you need a continuous record:
 ordinary nodes do not provide a guaranteed archive of earlier reports.
+
+## Validation status in 0.4.2
+
+Telemetry responses, current firmware version and min/max formatting are verified
+on hardware. Backup creation with its success confirmation, status and deletion
+are also verified. Backup replacement, emergency restoration from the saved copy
+and the recovery announcement remain pending hardware verification.

@@ -328,7 +328,7 @@ class ReleaseValidationTests(unittest.TestCase):
         ] = True
         self.write_manifest()
         notes = release.prepare_release(self.directory, self.commit)["notes"]
-        for term in ("0x7", "update=1", "Install over USB first", "2.8.2.Legion0.4.2"):
+        for term in ("Install over USB first", "2.8.2.Legion0.4.2"):
             self.assertIn(term, notes)
 
     def test_v042_requires_explicit_clean_provenance(self):
@@ -356,12 +356,15 @@ class ReleaseValidationTests(unittest.TestCase):
         ] = True
         self.write_manifest()
         notes = release.prepare_release(self.directory, self.commit)["notes"]
-        self.assertIn("nRF Connect for Android", notes)
-        self.assertIn("iPhone OTA remains unresolved", notes)
-        self.assertIn(
-            "Completion/restart and a repeated update have not yet been reported", notes
-        )
-        self.assertNotIn("reports a completed", notes)
+        self.assertIn("BLE OTA completion remains pending hardware verification", notes)
+        self.assertNotIn("BLE OTA updates have been verified", notes)
+        self.manifest["ota_hardware_observation"]["completion_confirmed"] = True
+        self.write_manifest()
+        notes = release.prepare_release(self.directory, self.commit)["notes"]
+        self.assertIn("BLE OTA updates have been verified using **nRF Connect**", notes)
+        self.assertNotIn("iPhone", notes)
+        self.assertNotIn("owner reports", notes)
+        self.assertIn("Emergency restoration from a saved backup", notes)
 
 
 if __name__ == "__main__":

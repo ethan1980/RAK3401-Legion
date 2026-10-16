@@ -124,23 +124,17 @@ The two-page record keeps the previous valid generation during a torn write.
 
 Packaging rejects an ELF, OTA BIN or UF2 that overlaps this reserve and checks
 that all three describe the same application. The OTA ZIP contains only an
-application. Version 0.4.2 corrects DFU write authorization and defers the
-flash/bond handoff to the main loop while preserving the safe `0xA8` reset.
-Compiled Cortex-M4 callback/reset validation remains mandatory.
-The reviewed Adafruit bootloader uses image-sized application erases for the
-single-bank path and addressed page writes for application UF2.
+application. No bootloader or SoftDevice update is included.
 
-Migrate from older Legion builds to 0.4.2 using the UF2 over USB. For later BLE
-updates, use the application-only OTA ZIP with **nRF Connect for Android**;
-iPhone DFU is not validated. The owner has reported transfer from 0.4.2 to
-0.4.2; see [DFU.md](DFU.md) for the exact hardware evidence and remaining checks.
+BLE OTA updates have been verified using **nRF Connect**. Migration from older
+Legion releases uses the 0.4.2 UF2 over USB. See [DFU.md](DFU.md) for installation.
 Normal Legion application updates that respect this boundary preserve the reserve.
 Other firmware, a full chip erase, a bootloader/SoftDevice update or failed flash
 hardware can destroy it. Installing vanilla or another fork is outside that guarantee.
 Encrypted-storage lockdown and event-profile builds do not create/use this rescue
 format. BLE bonding is separate and is not restored by the LoRa identity snapshot.
 
-## Validation and first hardware checks
+## Validation status
 
 Host tests exercise the actual journal/parser/recovery runner, including every
 32-bit interrupted-write boundary, committed deletion, unsupported schemas,
@@ -153,8 +147,8 @@ The telemetry transport is tested against simulated channels. Build/package gate
 check the active DFU callback, emulated OTA reset, image boundaries and file integrity.
 These checks do not substitute for physical power-cut or RF-delivery tests.
 
-After the update, confirm **`2.8.2.Legion0.4.2`** in device information and MQTT,
-and **`Legion0.4.2`** in `/telemetry`. Check normal operation, create a manual rescue
-point, and verify `status`. Test restoration first on an accessible bench node.
-Keep the 0.4.2 UF2 for USB recovery; no rescue point is armed until
-the owner explicitly creates the rescue point.
+On 0.4.2, telemetry responses and formatting, manual backup creation with its
+success confirmation, backup status and deletion have been verified on hardware.
+Emergency restoration from a saved backup, the recovery announcement, replacement
+of an existing backup and physical power-cut recovery remain pending hardware
+verification. No rescue point is armed until an explicit backup command succeeds.

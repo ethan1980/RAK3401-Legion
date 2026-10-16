@@ -136,37 +136,31 @@ def prepare_release(directory, commit):
         observation = manifest.get("ota_hardware_observation") or {}
         if observation.get("completion_confirmed") is True:
             hardware_status = (
-                "The owner reports a completed 0.4.2-to-0.4.2 OTA and application restart "
-                "using nRF Connect for Android. "
-            )
-        elif observation.get("transfer_confirmed") is True:
-            hardware_status = (
-                "The owner reports 0.4.2-to-0.4.2 firmware transfer with nRF Connect for Android. "
-                "Completion/restart and a repeated update have not yet been reported. "
+                "BLE OTA updates have been verified using **nRF Connect**. "
             )
         else:
-            hardware_status = "A completed hardware OTA has not been recorded. "
+            hardware_status = (
+                "BLE OTA completion remains pending hardware verification. "
+            )
         features += (
-            "**DFU maintenance release. Install over USB first when migrating from older Legion.** "
-            "For BLE updates, use **nRF Connect for Android** with the application-only OTA ZIP. "
-            "**iPhone OTA remains unresolved and is not validated.** "
             f"{hardware_status}"
-            f"See [DFU.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/DFU.md).\n\n"
-            "Correct the rejected authorization reply (NRF_ERROR_INVALID_PARAM, 0x7): "
-            "successful writes now set update=1 and supply their original offset, length and data. "
-            "Authorization runs immediately in the BLE task; flash/bond preparation runs in "
-            "the main loop. The safe 0xA8 reset and saved-peer handoff are retained. "
-            "Native and compiled ARM checks enforce the write contract; emulation alone is "
-            "not a hardware OTA test. No bootloader or SoftDevice update is included.\n\n"
-            "The 0.4.0 manual rescue engine/layout, radio, power policy, persistence and "
-            "private telemetry are preserved. Use `/backup !xxxxxxxx` to create a rescue "
-            "point explicitly; status, replace and delete require the same target ID. "
-            "No automatic snapshot is created. "
-            f"Read [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/RECOVERY.md). "
-            "Physical recovery/power-cut tests remain pending. The compiled version is "
-            "2.8.2.Legion0.4.2 in telemetry, MQTT, device metadata and Bluetooth.\n\n"
-            "Superseded download releases are withdrawn after uploaded assets are verified; "
-            "their source tags and Git history remain available.\n\n"
+            "Install over USB first when migrating from older Legion releases; "
+            "subsequent BLE updates use the application-only OTA ZIP. "
+            "No bootloader or SoftDevice update is included.\n\n"
+            "This maintenance release fixes BLE OTA entry and preserves manual rescue "
+            "backup, radio behavior, power policy, persistence and private telemetry. "
+            "Telemetry, current firmware version and min/max formatting, backup creation "
+            "with its success confirmation, status and deletion are verified on hardware. "
+            "Emergency restoration from a saved backup, its announcement, backup replacement "
+            "and physical power-cut recovery remain pending hardware verification.\n\n"
+            "Use `/backup !xxxxxxxx` to create a rescue point explicitly. Status, replace "
+            "and delete require the same full target ID. No automatic snapshot is created. "
+            f"Read [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md) "
+            "and [COMMANDS.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md). "
+            "The compiled version is 2.8.2.Legion0.4.2 in telemetry, MQTT, device metadata "
+            "and Bluetooth.\n\n"
+            "Superseded download releases are withdrawn; source tags and Git history "
+            "remain available.\n\n"
         )
     if version == "0.4.1":
         features += (
@@ -266,8 +260,8 @@ def prepare_release(directory, commit):
             "retain the upstream version and source hash; both complete source commits "
             "are recorded above and in `legion-build.json`.\n\n"
             "The assets include source, build metadata, debug files and `SHA256SUMS`.\n"
-            "Experimental: hardware stability, voltage thresholds, sleep current and battery "
-            "savings still require testing on the complete kit. Keep a previous build for rollback.\n"
+            "Experimental: controlled measurements of voltage thresholds, sleep current, "
+            "battery savings and long-term radio stability remain pending on the complete kit.\n"
         ),
     }
 

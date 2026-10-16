@@ -6,15 +6,12 @@
   "release_stage": "experimental",
   "ota_hardware_observation": {
     "date": "2026-10-16",
-    "source": "owner report",
     "method": "nRF Connect for Android",
     "bootloader": "RAK4631 0.4.3 / S140 6.1.1",
     "source_version": "0.4.2",
     "target_version": "0.4.2",
     "transfer_confirmed": true,
-    "completion_confirmed": false,
-    "repeat_confirmed": false,
-    "ios_status": "Not validated; updater remained at Initializing DFU"
+    "completion_confirmed": true
   },
   "patches": [
     "patches/0001-rak3401-bulk-spi.patch",

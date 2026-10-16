@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[docs-only]')
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -130,3 +131,71 @@ jobs:
             [[ "$release_id" =~ ^[0-9]+$ ]]
             gh api --method DELETE "repos/$GH_REPO/releases/$release_id"
           done < withdrawn-release-ids.txt
+
+  documentation:
+    name: Update existing release documentation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[docs-only]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: legion-v0.4.2-aee6ab8
+      BEFORE_SHA: ${{ github.event.before }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate documentation-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          before = os.environ["BEFORE_SHA"]
+          allowed = {
+              "README.md", "DFU.md", "RECOVERY.md", "COMMANDS.md", "CHANGELOG.md",
+              "RELEASE_NOTES.md", "upstream.json", "scripts/prepare_release.py",
+              "tests/test_release.py", ".github/workflows/build.yml",
+          }
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only", before, "HEAD"], text=True
+          ).splitlines())
+          if changed - allowed:
+              raise SystemExit(f"Non-documentation changes: {sorted(changed - allowed)}")
+          old = json.loads(subprocess.check_output(
+              ["git", "show", f"{before}:upstream.json"], text=True
+          ))
+          new = json.loads(Path("upstream.json").read_text())
+          for metadata in (old, new):
+              metadata.pop("ota_hardware_observation", None)
+          if old != new or new["legion_version"] != "0.4.2":
+              raise SystemExit("Firmware inputs changed")
+          PYCODE
+          python3 -m unittest discover -s tests -p test_release.py -v
+          git diff --check "$BEFORE_SHA" HEAD
+      - name: Update notes and verify existing assets are preserved
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" > release-before.json
+          gh release edit "$RELEASE_TAG" --notes-file RELEASE_NOTES.md
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" > release-after.json
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          before = json.loads(Path("release-before.json").read_text())
+          after = json.loads(Path("release-after.json").read_text())
+          for key in ("id", "tag_name", "target_commitish", "draft", "prerelease", "assets"):
+              if before[key] != after[key]:
+                  raise SystemExit(f"Unexpected release change: {key}")
+          if after["body"].strip() != Path("RELEASE_NOTES.md").read_text().strip():
+              raise SystemExit("Published notes differ")
+          print("Release notes updated; firmware assets and release identity preserved.")
+          PYCODE

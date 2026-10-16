@@ -15,7 +15,11 @@ from pathlib import Path
 from unicorn import UC_ERR_READ_UNMAPPED, UcError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from validate_dfu import emulate_reset_entry
+from validate_dfu import (
+    emulate_registration,
+    emulate_reset_entry,
+    validate_write_authorization,
+)
 
 ENTRY = 0x26100
 # svc #0x11; movs r0,#0xa8; stores to GPREGRET and AIRCR; literal pool.
@@ -27,6 +31,48 @@ def image(code):
 
 
 class DfuEmulationTests(unittest.TestCase):
+    def test_successful_write_reply_requires_update_and_matching_request(self):
+        payload = bytes.fromhex("0104")
+        old_reply = struct.pack("<BBH", 2, 0, 0) + bytes(12)
+        with self.assertRaisesRegex(ValueError, "0x7.*update=1"):
+            validate_write_authorization(old_reply, payload, 0, lambda *_: payload)
+        reply = bytearray(old_reply)
+        reply[6] = 1
+        struct.pack_into("<HHI", reply, 8, 0, 2, 0x20001000)
+        self.assertEqual(
+            validate_write_authorization(reply, payload, 0, lambda *_: payload), 0
+        )
+        for position, value in ((8, 1), (10, 1), (12, 0)):
+            with self.subTest(position=position):
+                bad = bytearray(reply)
+                struct.pack_into("<H" if position < 12 else "<I", bad, position, value)
+                with self.assertRaisesRegex(ValueError, "offset, length and data"):
+                    validate_write_authorization(bad, payload, 0, lambda *_: payload)
+        with self.assertRaisesRegex(ValueError, "request data"):
+            validate_write_authorization(reply, payload, 0, lambda *_: b"\x02\x04")
+        denied = bytearray(old_reply)
+        struct.pack_into("<H", denied, 4, 0x1FD)
+        self.assertEqual(
+            validate_write_authorization(denied, payload, 0, lambda *_: b""), 0x1FD
+        )
+
+    def test_registration_requires_callback_pointer_and_immediate_dispatch(self):
+        # Set the callback, clear the AdaCallback flag and enable write authorization.
+        # movs r1,#0x71; str r1,[r0,#76]; movs r2,#68; movs r3,#0;
+        # strb r3,[r0,r2]; movs r2,#49; movs r3,#16; strb r3,[r0,r2]; bx lr.
+        setter = bytes.fromhex("7121c1644422002383543122102383547047")
+        result = emulate_registration(image(setter), ENTRY, 0x71)
+        self.assertTrue(result["registration_emulated"])
+        self.assertFalse(result["ada_callback_dispatch"])
+        deferred = setter[:6] + bytes.fromhex("0823") + setter[8:]
+        with self.assertRaisesRegex(ValueError, "immediate callback"):
+            emulate_registration(image(deferred), ENTRY, 0x71)
+        with self.assertRaisesRegex(ValueError, "immediate callback"):
+            emulate_registration(image(setter), ENTRY, 0x73)
+        no_authorization = setter[:10] + bytes.fromhex("7047")
+        with self.assertRaisesRegex(ValueError, "immediate callback"):
+            emulate_registration(image(no_authorization), ENTRY, 0x71)
+
     def test_ota_reset_keeps_task_stack_and_thumb_state(self):
         result = emulate_reset_entry(image(VALID_RESET), ENTRY)
         self.assertTrue(result["reset_requested"])

@@ -5,9 +5,16 @@
 # RAK3401 Legion
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current version: **Legion 0.4.0**, based on **Meshtastic 2.8.2 develop/nightly**,
+Current release: **Legion 0.4.2**, based on **Meshtastic 2.8.2 develop/nightly**,
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
+
+**BLE updates: use nRF Connect for Android.** The owner reports firmware transfer
+from an installed 0.4.2 to the same 0.4.2 OTA image. At publication preparation,
+completion/restart and a repeated update have not yet been reported. iPhone DFU
+remains unresolved. See [DFU.md](DFU.md) for the supported procedure and evidence.
+Older release downloads are withdrawn because of their superseded DFU entry;
+their source tags and Git history remain available.
 
 This repository contains a small set of patches and a build profile. The build
 downloads the upstream source pinned in `upstream.json`, applies the changes,
@@ -76,7 +83,7 @@ The selected upstream revision's AGC and radio recovery fixes are preserved.
 The profile inherits the official pin assignments and RAK3401 hardware identity.
 Normal operation retains the configured TX power, channels, role and Bluetooth.
 
-### Manual rescue backup in 0.4.0
+### Manual rescue backup (introduced in 0.4.0)
 
 Create a rescue point explicitly with `/backup !xxxxxxxx` on the private LegionRF
 channel. Only the node matching that full Node ID acts. The rescue point stores
@@ -190,7 +197,7 @@ Download ready-to-flash firmware from
 [Releases](https://github.com/ethan1980/RAK3401-Legion/releases).
 After both profiles build successfully, pushes to `main` and manual workflow runs
 on `main` automatically publish an **experimental prerelease** of Legion.
-Each release has a tag such as `legion-v0.4.0-<commit>` and includes:
+Each release has a tag such as `legion-v0.4.2-<commit>` and includes:
 
 - `firmware-rak3401-legion-*.uf2` for USB/bootloader flashing.
 - `firmware-rak3401-legion-*-ota.zip` for OTA/DFU updates.
@@ -203,32 +210,44 @@ manually, open **Actions → Build RAK3401 Legion → Run workflow** and select 
 
 The comparison baseline is also available in Actions.
 
-### Updating to 0.4.0 and the preserved DFU correction
+### Installing and updating 0.4.2
 
-**From installed 0.3.5, use this release's application OTA ZIP.** The DFU entry
-correction from 0.3.5 is preserved. Physical end-to-end OTA is still a pending
-hardware test; compiled callback/reset validation runs before packaging.
+**0.3.5 has a confirmed OTA-entry failure on the owner's node.** It receives an
+authenticated DFU write but sends no ATT response before the phone's timeout.
+The later 0.4.1 trace identified a rejected write-authorization reply. The 0.4.0
+image retains the earlier entry
+implementation; a different destination OTA ZIP cannot repair the running image.
 
-**If Legion 0.2.0 or 0.3.0 is installed, install 0.4.0 using its UF2 over USB.**
-Those builds contain a defective BLE DFU entry that can immediately restart the
-normal firmware instead of staying in the bootloader. Selecting another OTA ZIP
-does not repair the entry in the installed firmware. Their releases are withdrawn
-following the 0.3.5 hotfix; source tags and Git history are retained.
+**Migrate from older Legion builds using the 0.4.2 UF2 over USB.** It installs
+an immediate authorization callback, acknowledges START before any flash wait,
+and performs the flash/bond handoff in the main loop, without AdaCallback queue
+dispatch. The safe `GPREGRET=0xA8` reset is retained. No bootloader, SoftDevice,
+configuration format or rescue-reserve layout is changed. See [DFU.md](DFU.md)
+for the Android nRF Connect procedure, diagnostics and remaining limits.
+
+The 0.4.1 hardware trace pinpointed a rejected write-authorization reply. On
+success, 0.4.2 sets `update=1` and supplies the incoming offset, length and data,
+as required by the pinned S140 API. The strengthened verifier rejects the old
+0.4.1 ELF for this omission. This validates the correction against that API
+contract. The owner's Android test subsequently reached firmware transfer;
+completion/restart and a repeat are recorded separately from software checks.
 
 Connect a USB data cable, double-press Reset to expose the bootloader drive, and
 copy this release's `firmware-rak3401-legion-*.uf2` onto it. Allow the node to
-restart and check that the app reports **`2.8.2.Legion0.4.0`**. Use a normal UF2
+restart and check that the app reports **`2.8.2.Legion0.4.2`**. Use a normal UF2
 update, without factory erase/reset. The firmware keeps the existing configuration
 format and keeps the preference/warm-store boundaries. It reserves two previously
 unused pages below the warm store. Export the configuration beforehand if possible.
 
-The hotfix retains flash-write coordination and Bluetooth peer/bond handoff,
-then uses the nRF52 core's full OTA reset (`GPREGRET=0xA8`). This avoids switching
-from the FreeRTOS task stack before a compiler-generated C epilogue. Packaging
-checks the active callback and emulates the compiled reset entry, including its
-OTA marker and stack behavior. This software check stubs SoftDevice disable;
-**physical BLE reconnection and a complete OTA transfer still need testing on
-the RAK3401**. An OTA test must start from the corrected firmware.
+Packaging checks the immediate callback registration, the deferred reset route,
+and the compiled reset's marker/stack behavior. Native tests run the actual DFU
+source against SDK/RTOS stubs. These checks do not emulate the Bluetooth radio,
+installed bootloader or real flash timing. The owner's installed bootloader is
+RAK4631 0.4.3 with S140 6.1.1. **Use nRF Connect on Android for this release;
+iPhone OTA is not validated.** Select the running Legion node, start DFU and
+select the release's `-ota.zip`. Wait for completion and the application to
+restart, then confirm the version and settings. Retain the phone's log if an
+attempt fails. A same-version update exercises the path.
 
 Open a successful run in
 [Actions](https://github.com/ethan1980/RAK3401-Legion/actions/workflows/build.yml)
@@ -247,9 +266,9 @@ This version requires hardware testing before use on an unattended node.
 
 ### Firmware identification
 
-The firmware identifies itself as **`2.8.2.Legion0.4.0`** in MQTT map reports,
+The release identifies itself as **`2.8.2.Legion0.4.2`** in MQTT map reports,
 device metadata read by the app, Bluetooth Device Information and startup logs.
-The `/telemetry` header derives `Legion0.4.0` from that same compiled version;
+The `/telemetry` header derives `Legion0.4.2` from that same compiled version;
 temperature maximum and battery minimum labels include readable spacing.
 The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
 the firmware version. Maps update after receiving the next MQTT map report.
@@ -318,11 +337,11 @@ delivery, private-key checks, duplicate suppression, cooldown/rollover, changed
 keys, low-power cancellation, concurrent sample updates and report size.
 They do not emulate the analog circuit or prove radio stability.
 
-For 0.4.0, test the command forms from a second node and from the app connected
+For 0.4.2, test the command forms from a second node and from the app connected
 to the RAK. Check missing/wrong/public keys, other channels, repeated requests,
 multiple Legion responders and a key change while a reply is pending. Compare
 SPI errors, reception and consumption with the reference at 4 MHz, including low
-battery and recovery. Keep 0.3.5 available for rollback. Follow [RECOVERY.md](RECOVERY.md)
+battery and recovery. Keep the 0.4.2 UF2 for USB recovery. Follow [RECOVERY.md](RECOVERY.md)
 for manual backup and controlled restoration tests. The host runner also checks
 interrupted journal writes, transaction resume, deletion and bounded retry state.
 

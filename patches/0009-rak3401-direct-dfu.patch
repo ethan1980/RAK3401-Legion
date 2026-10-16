@@ -1,0 +1,273 @@
+diff --git a/src/platform/nrf52/LegionDfu.cpp b/src/platform/nrf52/LegionDfu.cpp
+index e7da607..3acca1d 100644
+--- a/src/platform/nrf52/LegionDfu.cpp
++++ b/src/platform/nrf52/LegionDfu.cpp
+@@ -31,11 +31,15 @@
+ 
+ #include "LegionDfu.h"
+ #include "SPILock.h"
++#include "UptimeClock.h"
++#include "concurrency/OSThread.h"
++#include "flash/flash_nrf5x.h"
++#include "mesh/Throttle.h"
+ #include <InternalFileSystem.h>
++#include <atomic>
+ #include <cstddef>
+ #include <cstring>
+-
+-extern void nrf52FlashQuiesce();
++#include <utility/bonding.h>
+ 
+ namespace
+ {
+@@ -49,6 +53,28 @@ struct PeerData {
+ static_assert(offsetof(PeerData, crc) == 60, "Bootloader peer-data layout changed");
+ static_assert(sizeof(PeerData) == 62, "Bootloader peer-data size changed");
+ 
++enum class State : uint32_t { Idle, Capturing, Pending, Working };
++std::atomic<State> state{State::Idle};
++static_assert(std::atomic<State>::is_always_lock_free, "DFU callback must not acquire a lock");
++PeerData pendingPeer;
++uint16_t pendingConnection;
++bool pendingSecured;
++uint32_t acceptedAt;
++std::atomic<uint32_t> requestCount{0}, lastRequest{0}, lastReplyResult{0};
++constexpr uint32_t ACK_SETTLE_MS = 500;
++
++uint32_t authorize(uint16_t connHandle, uint8_t opcode, uint16_t status)
++{
++    ble_gatts_rw_authorize_reply_params_t reply = {};
++    reply.type = BLE_GATTS_AUTHORIZE_TYPE_WRITE;
++    reply.params.write.gatt_status = status;
++    const uint32_t result = sd_ble_gatts_rw_authorize_reply(connHandle, &reply);
++    lastRequest.store((uint32_t(opcode) << 16) | status, std::memory_order_relaxed);
++    lastReplyResult.store(result, std::memory_order_relaxed);
++    requestCount.fetch_add(1, std::memory_order_release);
++    return result;
++}
++
+ uint16_t peerCrc(const uint8_t *data, size_t length)
+ {
+     uint16_t crc = 0xffff;
+@@ -61,57 +87,131 @@ uint16_t peerCrc(const uint8_t *data, size_t length)
+ }
+ } // namespace
+ 
++extern "C" __attribute__((noinline)) void legionDfuInstall(BLECharacteristic *characteristic)
++{
++    // Authorization must not depend on AdaCallback queue space or another callback finishing.
++    characteristic->setWriteAuthorizeCallback(legionDfuControlWrite, false);
++}
++
+ extern "C" __attribute__((noinline)) void legionDfuControlWrite(uint16_t connHandle, BLECharacteristic *characteristic,
+                                                                 ble_gatts_evt_write_t *request)
+ {
+-    if (request->handle != characteristic->handles().value_handle || request->op != BLE_GATTS_OP_WRITE_REQ)
++    const uint8_t opcode = request->len ? request->data[0] : 0;
++    if (request->handle != characteristic->handles().value_handle) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INVALID_HANDLE);
+         return;
+-
+-    ble_gatts_rw_authorize_reply_params_t reply = {};
+-    reply.type = BLE_GATTS_AUTHORIZE_TYPE_WRITE;
++    }
++    if (request->op != BLE_GATTS_OP_WRITE_REQ) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_WRITE_NOT_PERMITTED);
++        return;
++    }
++    if (request->offset) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INVALID_OFFSET);
++        return;
++    }
+     if (!characteristic->notifyEnabled(connHandle)) {
+-        reply.params.write.gatt_status = BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR;
+-    } else if (!request->len) {
+-        reply.params.write.gatt_status = BLE_GATT_STATUS_ATTERR_INVALID_ATT_VAL_LENGTH;
+-    } else if (request->data[0] != 1) {
+-        sd_ble_gatts_rw_authorize_reply(connHandle, &reply);
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR);
+         return;
+-    } else {
+-        BLEConnection *connection = Bluefruit.Connection(connHandle);
+-        if (!connection)
+-            return;
++    }
++    if (!request->len) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INVALID_ATT_VAL_LENGTH);
++        return;
++    }
++    if (opcode != 1) {
++        // Preserve the legacy application-mode probe behavior; only START_DFU arms a reset.
++        authorize(connHandle, opcode, BLE_GATT_STATUS_SUCCESS);
++        return;
++    }
++    State expected = State::Idle;
++    if (!state.compare_exchange_strong(expected, State::Capturing, std::memory_order_acquire)) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INSUF_RESOURCES);
++        return;
++    }
++    BLEConnection *connection = Bluefruit.Connection(connHandle);
++    if (!connection) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_UNLIKELY_ERROR);
++        state.store(State::Idle, std::memory_order_release);
++        return;
++    }
+ 
+-        nrf52FlashQuiesce();
+-        // Bond-key reads need the filesystem mutex; spiLock still fences writers.
+-        InternalFS._unlockFS();
+-        if (sd_ble_gatts_rw_authorize_reply(connHandle, &reply) != NRF_SUCCESS) {
++    // Value-only snapshot: no BLEConnection or event-buffer pointer survives this BLE-task callback.
++    memset(&pendingPeer, 0, sizeof(pendingPeer));
++    pendingPeer.address = connection->getPeerAddr();
++    pendingSecured = connection->secured();
++    pendingConnection = connHandle;
++    uint16_t attributeLength = sizeof(pendingPeer.systemAttributes);
++    const uint32_t result =
++        sd_ble_gatts_sys_attr_get(connHandle, pendingPeer.systemAttributes, &attributeLength, BLE_GATTS_SYS_ATTR_FLAG_SYS_SRVCS);
++    if (result != NRF_SUCCESS || attributeLength != sizeof(pendingPeer.systemAttributes)) {
++        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_UNLIKELY_ERROR);
++        state.store(State::Idle, std::memory_order_release);
++        return;
++    }
++    if (authorize(connHandle, opcode, BLE_GATT_STATUS_SUCCESS) != NRF_SUCCESS) {
++        state.store(State::Idle, std::memory_order_release);
++        return;
++    }
++    acceptedAt = Time::getMillis();
++    state.store(State::Pending, std::memory_order_release);
++    concurrency::mainDelay.interrupt();
++}
++
++extern "C" __attribute__((noinline)) void legionDfuProcess()
++{
++    static uint32_t reportedCount;
++    const uint32_t count = requestCount.load(std::memory_order_acquire);
++    if (count != reportedCount) {
++        const uint32_t request = lastRequest.load(std::memory_order_relaxed);
++        LOG_INFO("Legion DFU ATT: count=%lu opcode=0x%x status=0x%x reply=0x%lx", static_cast<unsigned long>(count),
++                 unsigned(request >> 16), unsigned(request & 0xffff),
++                 static_cast<unsigned long>(lastReplyResult.load(std::memory_order_relaxed)));
++        reportedCount = count;
++    }
++    if (state.load(std::memory_order_acquire) != State::Pending)
++        return;
++    state.store(State::Working, std::memory_order_release);
++    const uint32_t remaining = Throttle::remainingMs(acceptedAt, ACK_SETTLE_MS);
++    if (remaining)
++        delay(remaining);
++    PeerData peer;
++    memcpy(&peer, &pendingPeer, sizeof(peer));
++    const uint16_t connHandle = pendingConnection;
++
++    LOG_INFO("Legion DFU: waiting for SPI");
++    if (!spiLock->lock(5000)) {
++        LOG_ERROR("Legion DFU: SPI busy; OTA entry cancelled without reset");
++        state.store(State::Idle, std::memory_order_release);
++        return;
++    }
++    if (pendingSecured) {
++        LOG_INFO("Legion DFU: loading bond");
++        bond_keys_t keys = {};
++        if (!bond_load_keys(BLE_GAP_ROLE_PERIPH, &peer.address, &keys)) {
++            LOG_ERROR("Legion DFU: bond unavailable; OTA entry cancelled without reset");
+             spiLock->unlock();
++            state.store(State::Idle, std::memory_order_release);
+             return;
+         }
++        peer.address = keys.peer_id.id_addr_info;
++        peer.irk = keys.peer_id.id_info;
++        peer.encryptionKey = keys.own_enc;
++    }
++    peer.crc = peerCrc(reinterpret_cast<const uint8_t *>(&peer), offsetof(PeerData, crc));
+ 
+-        // This retained-RAM address and layout are part of the Adafruit bootloader ABI.
+-        auto *peer = reinterpret_cast<PeerData *>(0x20007f80UL);
+-        memset(peer, 0, sizeof(*peer));
+-        uint16_t attributeLength = sizeof(peer->systemAttributes);
+-        sd_ble_gatts_sys_attr_get(connHandle, peer->systemAttributes, &attributeLength, BLE_GATTS_SYS_ATTR_FLAG_SYS_SRVCS);
+-        peer->address = connection->getPeerAddr();
+-        if (connection->secured()) {
+-            bond_keys_t keys;
+-            if (connection->loadBondKey(&keys)) {
+-                peer->address = keys.peer_id.id_addr_info;
+-                peer->irk = keys.peer_id.id_info;
+-                peer->encryptionKey = keys.own_enc;
+-            }
+-        }
+-        peer->crc = peerCrc(reinterpret_cast<const uint8_t *>(peer), offsetof(PeerData, crc));
++    LOG_INFO("Legion DFU: waiting for filesystem");
++    InternalFS._lockFS();
++    LOG_INFO("Legion DFU: flushing flash");
++    flash_nrf5x_flush();
++    Bluefruit.Advertising.restartOnDisconnect(false);
++    const uint32_t disconnect = sd_ble_gap_disconnect(connHandle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
++    LOG_INFO("Legion DFU: disconnect=0x%lx; resetting to BLE bootloader (0xa8)", static_cast<unsigned long>(disconnect));
++    delay(100);
+ 
+-        Bluefruit.Advertising.restartOnDisconnect(false);
+-        connection->disconnect();
+-        // 0xA8 requests a fresh OTA boot; no C frame survives a PSP-to-MSP switch.
+-        enterOTADfu();
+-        __builtin_unreachable();
+-    }
+-    sd_ble_gatts_rw_authorize_reply(connHandle, &reply);
++    // The bootloader scratch area aliases application RAM: freeze tasks before writing it, not while waiting for flash.
++    vTaskSuspendAll();
++    memcpy(reinterpret_cast<void *>(0x20007f80UL), &peer, sizeof(peer));
++    enterOTADfu();
++    __builtin_unreachable();
+ }
+ 
+ #endif
+diff --git a/src/platform/nrf52/LegionDfu.h b/src/platform/nrf52/LegionDfu.h
+index 0f1eb52..f881655 100644
+--- a/src/platform/nrf52/LegionDfu.h
++++ b/src/platform/nrf52/LegionDfu.h
+@@ -3,3 +3,5 @@
+ #include <bluefruit.h>
+ 
+ extern "C" void legionDfuControlWrite(uint16_t connHandle, BLECharacteristic *characteristic, ble_gatts_evt_write_t *request);
++extern "C" void legionDfuInstall(BLECharacteristic *characteristic);
++extern "C" void legionDfuProcess();
+diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
+index 07b4b31..059b831 100644
+--- a/src/platform/nrf52/NRF52Bluetooth.cpp
++++ b/src/platform/nrf52/NRF52Bluetooth.cpp
+@@ -60,8 +60,13 @@ class QuiescingBLEDfu : public BLEDfu
+     err_t begin() override
+     {
+         err_t err = BLEDfu::begin();
++#if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
++        if (err == ERROR_NONE)
++            legionDfuInstall(&_chr_control);
++#else
+         libraryCb = _chr_control.*(&Peek::_wr_authorize_cb);
+         _chr_control.setWriteAuthorizeCallback(onControlWrite);
++#endif
+         return err;
+     }
+ };
+diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
+index cb6a513..cdc928e 100644
+--- a/src/platform/nrf52/main-nrf52.cpp
++++ b/src/platform/nrf52/main-nrf52.cpp
+@@ -1,5 +1,8 @@
+ #include "UptimeClock.h"
+ #include "configuration.h"
++#if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
++#include "LegionDfu.h"
++#endif
+ #include "mesh/Throttle.h"
+ #include <Adafruit_TinyUSB.h>
+ #include <Adafruit_nRFCrypto.h>
+@@ -405,6 +408,9 @@ void nrf52Loop()
+ 
+     checkSDEvents();
+     reportLittleFSCorruptionOnce();
++#if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
++    legionDfuProcess();
++#endif
+ 
+     variant_nrf52LoopHook(); // Optional variant hook called each nrf52Loop();
+ }

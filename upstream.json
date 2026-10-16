@@ -2,7 +2,20 @@
   "repository": "https://github.com/meshtastic/firmware.git",
   "commit": "04cb8885118b959a9f538cd5881bd7d595758911",
   "meshtastic_version": "2.8.2",
-  "legion_version": "0.4.0",
+  "legion_version": "0.4.2",
+  "release_stage": "experimental",
+  "ota_hardware_observation": {
+    "date": "2026-10-16",
+    "source": "owner report",
+    "method": "nRF Connect for Android",
+    "bootloader": "RAK4631 0.4.3 / S140 6.1.1",
+    "source_version": "0.4.2",
+    "target_version": "0.4.2",
+    "transfer_confirmed": true,
+    "completion_confirmed": false,
+    "repeat_confirmed": false,
+    "ios_status": "Not validated; updater remained at Initializing DFU"
+  },
   "patches": [
     "patches/0001-rak3401-bulk-spi.patch",
     "patches/0002-rak3401-energy-recovery.patch",
@@ -11,6 +24,8 @@
     "patches/0005-rak3401-private-telemetry.patch",
     "patches/0006-rak3401-firmware-identification.patch",
     "patches/0007-rak3401-ble-dfu-reset.patch",
-    "patches/0008-rak3401-manual-recovery.patch"
+    "patches/0008-rak3401-manual-recovery.patch",
+    "patches/0009-rak3401-direct-dfu.patch",
+    "patches/0010-rak3401-dfu-write-authorization.patch"
   ]
 }

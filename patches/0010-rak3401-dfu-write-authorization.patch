@@ -1,0 +1,87 @@
+diff --git a/src/platform/nrf52/LegionDfu.cpp b/src/platform/nrf52/LegionDfu.cpp
+index 3acca1d..ab11378 100644
+--- a/src/platform/nrf52/LegionDfu.cpp
++++ b/src/platform/nrf52/LegionDfu.cpp
+@@ -63,12 +63,20 @@ uint32_t acceptedAt;
+ std::atomic<uint32_t> requestCount{0}, lastRequest{0}, lastReplyResult{0};
+ constexpr uint32_t ACK_SETTLE_MS = 500;
+ 
+-uint32_t authorize(uint16_t connHandle, uint8_t opcode, uint16_t status)
++uint32_t authorize(uint16_t connHandle, const ble_gatts_evt_write_t *request, uint16_t status)
+ {
+     ble_gatts_rw_authorize_reply_params_t reply = {};
+     reply.type = BLE_GATTS_AUTHORIZE_TYPE_WRITE;
+     reply.params.write.gatt_status = status;
++    if (status == BLE_GATT_STATUS_SUCCESS) {
++        // S140 rejects successful writes without the mandatory attribute update and data.
++        reply.params.write.update = 1;
++        reply.params.write.offset = request->offset;
++        reply.params.write.len = request->len;
++        reply.params.write.p_data = request->data;
++    }
+     const uint32_t result = sd_ble_gatts_rw_authorize_reply(connHandle, &reply);
++    const uint8_t opcode = request->len ? request->data[0] : 0;
+     lastRequest.store((uint32_t(opcode) << 16) | status, std::memory_order_relaxed);
+     lastReplyResult.store(result, std::memory_order_relaxed);
+     requestCount.fetch_add(1, std::memory_order_release);
+@@ -98,38 +106,38 @@ extern "C" __attribute__((noinline)) void legionDfuControlWrite(uint16_t connHan
+ {
+     const uint8_t opcode = request->len ? request->data[0] : 0;
+     if (request->handle != characteristic->handles().value_handle) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INVALID_HANDLE);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_INVALID_HANDLE);
+         return;
+     }
+     if (request->op != BLE_GATTS_OP_WRITE_REQ) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_WRITE_NOT_PERMITTED);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_WRITE_NOT_PERMITTED);
+         return;
+     }
+     if (request->offset) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INVALID_OFFSET);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_INVALID_OFFSET);
+         return;
+     }
+     if (!characteristic->notifyEnabled(connHandle)) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR);
+         return;
+     }
+     if (!request->len) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INVALID_ATT_VAL_LENGTH);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_INVALID_ATT_VAL_LENGTH);
+         return;
+     }
+     if (opcode != 1) {
+         // Preserve the legacy application-mode probe behavior; only START_DFU arms a reset.
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_SUCCESS);
++        authorize(connHandle, request, BLE_GATT_STATUS_SUCCESS);
+         return;
+     }
+     State expected = State::Idle;
+     if (!state.compare_exchange_strong(expected, State::Capturing, std::memory_order_acquire)) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_INSUF_RESOURCES);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_INSUF_RESOURCES);
+         return;
+     }
+     BLEConnection *connection = Bluefruit.Connection(connHandle);
+     if (!connection) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_UNLIKELY_ERROR);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_UNLIKELY_ERROR);
+         state.store(State::Idle, std::memory_order_release);
+         return;
+     }
+@@ -143,11 +151,11 @@ extern "C" __attribute__((noinline)) void legionDfuControlWrite(uint16_t connHan
+     const uint32_t result =
+         sd_ble_gatts_sys_attr_get(connHandle, pendingPeer.systemAttributes, &attributeLength, BLE_GATTS_SYS_ATTR_FLAG_SYS_SRVCS);
+     if (result != NRF_SUCCESS || attributeLength != sizeof(pendingPeer.systemAttributes)) {
+-        authorize(connHandle, opcode, BLE_GATT_STATUS_ATTERR_UNLIKELY_ERROR);
++        authorize(connHandle, request, BLE_GATT_STATUS_ATTERR_UNLIKELY_ERROR);
+         state.store(State::Idle, std::memory_order_release);
+         return;
+     }
+-    if (authorize(connHandle, opcode, BLE_GATT_STATUS_SUCCESS) != NRF_SUCCESS) {
++    if (authorize(connHandle, request, BLE_GATT_STATUS_SUCCESS) != NRF_SUCCESS) {
+         state.store(State::Idle, std::memory_order_release);
+         return;
+     }

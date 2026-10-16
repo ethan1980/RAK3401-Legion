@@ -258,6 +258,111 @@ class ReleaseValidationTests(unittest.TestCase):
         ):
             self.assertIn(text, metadata["notes"])
 
+    def v041_manifest(self):
+        self.v040_manifest()
+        self.manifest.update(
+            legion_version="0.4.1",
+            advertised_firmware_version="2.8.2.Legion0.4.1",
+            release_stage="dfu-candidate-hardware-unverified",
+            source_tree_dirty=False,
+        )
+        self.manifest["ble_dfu_validation"].update(
+            registration_emulated=True,
+            ada_callback_dispatch=False,
+            main_loop_handoff=True,
+            write_authorization_enabled=True,
+            dfu_dispatch_emulated=True,
+        )
+
+    def test_v041_requires_direct_registration_and_preserved_rescue_checks(self):
+        for field, value in (
+            ("registration_emulated", False),
+            ("ada_callback_dispatch", True),
+            ("main_loop_handoff", False),
+            ("write_authorization_enabled", False),
+            ("dfu_dispatch_emulated", False),
+        ):
+            with self.subTest(field=field):
+                self.v041_manifest()
+                self.manifest["ble_dfu_validation"][field] = value
+                self.write_manifest()
+                with self.assertRaisesRegex(ValueError, "immediate DFU"):
+                    release.prepare_release(self.directory, self.commit)
+        self.v041_manifest()
+        self.manifest.pop("update_validation")
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "verified update boundaries"):
+            release.prepare_release(self.directory, self.commit)
+
+    def test_v041_notes_are_usb_first_and_do_not_claim_hardware_success(self):
+        self.v041_manifest()
+        self.write_manifest()
+        result = release.prepare_release(self.directory, self.commit)
+        for term in (
+            "candidate",
+            "Install over USB first",
+            "hardware OTA unverified",
+            "DFU.md",
+            "0.4.0 manual rescue",
+            "2.8.2.Legion0.4.1",
+        ):
+            self.assertIn(term, result["notes"])
+
+    def test_uncommitted_candidate_cannot_be_published_as_a_clean_commit(self):
+        self.v041_manifest()
+        self.manifest["source_tree_dirty"] = True
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "Commit the candidate sources"):
+            release.prepare_release(self.directory, self.commit)
+
+    def test_v042_requires_the_write_parameter_contract_check(self):
+        self.v041_manifest()
+        self.manifest.update(
+            legion_version="0.4.2", advertised_firmware_version="2.8.2.Legion0.4.2"
+        )
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "checked DFU write authorization"):
+            release.prepare_release(self.directory, self.commit)
+        self.manifest["ble_dfu_validation"][
+            "write_authorization_contract_checked"
+        ] = True
+        self.write_manifest()
+        notes = release.prepare_release(self.directory, self.commit)["notes"]
+        for term in ("0x7", "update=1", "Install over USB first", "2.8.2.Legion0.4.2"):
+            self.assertIn(term, notes)
+
+    def test_v042_requires_explicit_clean_provenance(self):
+        self.v041_manifest()
+        self.manifest.update(
+            legion_version="0.4.2", advertised_firmware_version="2.8.2.Legion0.4.2"
+        )
+        self.manifest.pop("source_tree_dirty")
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "explicitly clean"):
+            release.prepare_release(self.directory, self.commit)
+
+    def test_v042_transfer_report_does_not_become_completed_hardware_test(self):
+        self.v041_manifest()
+        self.manifest.update(
+            legion_version="0.4.2",
+            advertised_firmware_version="2.8.2.Legion0.4.2",
+            ota_hardware_observation={
+                "transfer_confirmed": True,
+                "completion_confirmed": False,
+            },
+        )
+        self.manifest["ble_dfu_validation"][
+            "write_authorization_contract_checked"
+        ] = True
+        self.write_manifest()
+        notes = release.prepare_release(self.directory, self.commit)["notes"]
+        self.assertIn("nRF Connect for Android", notes)
+        self.assertIn("iPhone OTA remains unresolved", notes)
+        self.assertIn(
+            "Completion/restart and a repeated update have not yet been reported", notes
+        )
+        self.assertNotIn("reports a completed", notes)
+
 
 if __name__ == "__main__":
     unittest.main()

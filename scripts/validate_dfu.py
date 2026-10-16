@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Check the active BLE callback and emulate the compiled OTA reset entry.
 
-The old callback switched from the FreeRTOS PSP to MSP before a C epilogue
-read beyond RAM. Publishing requires the Legion callback to reach enterOTADfu,
-and that entry to request a hardware reset with GPREGRET=0xA8 on the same PSP.
+The immediate callback must be registered without AdaCallback dispatch, the
+main-loop handoff must reach enterOTADfu, and the latter must request a hardware
+reset with GPREGRET=0xA8 on the same PSP.
 The emulator stubs successful SoftDevice disable; it is not a radio/bootloader
 or physical OTA test.
 """
@@ -31,11 +31,125 @@ from unicorn.arm_const import (
     UC_ARM_REG_PC,
     UC_ARM_REG_PSP,
     UC_ARM_REG_R0,
+    UC_ARM_REG_R1,
     UC_ARM_REG_XPSR,
 )
 
 RAM_START, RAM_END = 0x20000000, 0x20040000
 GPREGRET, AIRCR = 0x4000051C, 0xE000ED0C
+
+
+def validate_write_authorization(reply, payload, offset, read_memory):
+    """Check the pinned S140 write-reply ABI, including the mandatory data update."""
+    if len(reply) != 16 or reply[0] != 2:
+        raise ValueError("DFU authorization must reply to the pending write")
+    status = struct.unpack_from("<H", reply, 4)[0]
+    if status == 0:
+        if not reply[6] & 1:
+            raise ValueError(
+                "NRF_ERROR_INVALID_PARAM (0x7): successful write requires update=1"
+            )
+        supplied_offset, length, pointer = struct.unpack_from("<HHI", reply, 8)
+        if supplied_offset != offset or length != len(payload) or not pointer:
+            raise ValueError(
+                "Successful DFU write must supply its offset, length and data"
+            )
+        if bytes(read_memory(pointer, length)) != payload:
+            raise ValueError(
+                "Successful DFU write must supply the pending request data"
+            )
+    return status
+
+
+def emulate_registration(
+    segments, entry, callback, *, handler=None, notify=None, ada=None
+):
+    """Execute the real setter; offsets belong to the pinned 0fd295f1 SDK ABI."""
+    cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
+    cpu.mem_map(0, 0x100000)
+    cpu.mem_map(RAM_START, RAM_END - RAM_START)
+    for address, data in segments:
+        cpu.mem_write(address, data)
+    characteristic = 0x20030000
+    cpu.mem_write(characteristic, b"\xff" * 88)
+    cpu.mem_write(characteristic + 49, b"\0")
+    cpu.reg_write(UC_ARM_REG_XPSR, 0x01000000)
+    cpu.reg_write(UC_ARM_REG_MSP, RAM_END - 0x100)
+    cpu.reg_write(UC_ARM_REG_R0, characteristic)
+    cpu.reg_write(UC_ARM_REG_LR, 0x1001)
+    returned = []
+    probe = {"notifications": True, "replies": [], "payload": b""}
+
+    def stop(machine, address, _size, _):
+        if address == 0x1000:
+            returned.append(True)
+            machine.emu_stop()
+        elif handler is not None and address == (ada & ~1):
+            raise ValueError("Compiled DFU authorization tried to use AdaCallback")
+        elif handler is not None and address == (notify & ~1):
+            machine.reg_write(UC_ARM_REG_R0, int(probe["notifications"]))
+            machine.reg_write(UC_ARM_REG_PC, machine.reg_read(UC_ARM_REG_LR))
+        elif handler is not None and bytes(machine.mem_read(address, 2)) == b"\xb0\xdf":
+            reply = bytes(machine.mem_read(machine.reg_read(UC_ARM_REG_R1), 16))
+            probe["replies"].append(
+                validate_write_authorization(
+                    reply, probe["payload"], 0, machine.mem_read
+                )
+            )
+            machine.reg_write(UC_ARM_REG_R0, 0)
+            machine.reg_write(UC_ARM_REG_PC, (address + 2) | 1)
+
+    cpu.hook_add(UC_HOOK_CODE, stop)
+    cpu.emu_start(entry | 1, 0, count=200)
+    pointer = struct.unpack("<I", cpu.mem_read(characteristic + 76, 4))[0]
+    deferred = cpu.mem_read(characteristic + 68, 1)[0] & 8
+    authorization = cpu.mem_read(characteristic + 49, 1)[0] & 16
+    if not returned or pointer != callback or deferred or not authorization:
+        raise ValueError(
+            "Compiled DFU registration must install the immediate callback"
+        )
+    result = {
+        "registration_emulated": True,
+        "ada_callback_dispatch": False,
+        "write_authorization_enabled": True,
+    }
+    if handler is not None:
+        # Run the actual SDK dispatcher and compiled probe handler, with notify/SVC stubs.
+        event = characteristic + 0x200
+        cpu.mem_write(characteristic + 50, struct.pack("<H", 0x12))
+        for payload, notifications, expected in (
+            (b"\x02", True, 0),
+            (b"\x02\x01", True, 0),
+            (b"\x02" + bytes(range(1, 23)), True, 0),
+            (b"\x02", False, 0x1FD),
+            (b"", True, 0x10D),
+            (b"\x01\x04", False, 0x1FD),
+        ):
+            request = bytearray(14)
+            struct.pack_into("<H", request, 0, 0x12)
+            request[6] = 1
+            struct.pack_into("<H", request, 10, len(payload))
+            request[12 : 12 + len(payload)] = payload
+            cpu.mem_write(
+                event, struct.pack("<HHHBB", 0x51, 22, 0, 2, 0) + bytes(request)
+            )
+            probe["notifications"] = notifications
+            probe["payload"] = payload
+            probe["replies"] = []
+            returned.clear()
+            cpu.reg_write(UC_ARM_REG_R0, characteristic)
+            cpu.reg_write(UC_ARM_REG_R1, event)
+            cpu.reg_write(UC_ARM_REG_LR, 0x1001)
+            cpu.emu_start(handler | 1, 0, count=2000)
+            if not returned or probe["replies"] != [expected]:
+                raise ValueError(
+                    "Compiled DFU event did not produce one immediate ATT reply"
+                )
+        result["dfu_dispatch_emulated"] = True
+        result["compiled_probe_cases"] = 6
+        result["write_authorization_contract_checked"] = True
+        result["write_authorization_service_stubbed"] = True
+    return result
 
 
 def emulate_reset_entry(segments, entry, expected_magic=0xA8):
@@ -145,15 +259,23 @@ def validate_dfu(path):
 
         callback = function("legionDfuControlWrite")
         entry = function("enterOTADfu")
-        wrappers = [
-            s for n, s in functions.items() if "QuiescingBLEDfu14onControlWrite" in n
-        ]
-        if len(wrappers) != 1 or targets(wrappers[0]) != {callback["st_value"] & ~1}:
+        install = function("legionDfuInstall")
+        process = function("legionDfuProcess")
+        begins = [s for n, s in functions.items() if "QuiescingBLEDfu5begin" in n]
+        if len(begins) != 1 or install["st_value"] & ~1 not in targets(begins[0]):
             raise ValueError(
-                "BLE DFU is not exclusively routed through the Legion callback"
+                "Active BLE DFU service does not install the immediate callback"
             )
-        if entry["st_value"] & ~1 not in targets(callback):
-            raise ValueError("Legion callback does not call the safe OTA reset entry")
+        # LTO inlines nrf52Loop into Arduino's C-linkage loop in this pinned build.
+        loop = function("loop")
+        if process["st_value"] & ~1 not in targets(loop):
+            raise ValueError("Main loop does not service the deferred DFU handoff")
+        if entry["st_value"] & ~1 not in targets(process):
+            raise ValueError(
+                "Deferred DFU handoff does not reach the safe OTA reset entry"
+            )
+        if {entry["st_value"] & ~1, process["st_value"] & ~1} & targets(callback):
+            raise ValueError("Immediate authorization must not run the reset handoff")
         if any(
             i.mnemonic == "msr" and i.op_str.startswith(("control", "msp"))
             for i in instructions(callback)
@@ -166,7 +288,20 @@ def validate_dfu(path):
             if segment["p_type"] == "PT_LOAD" and segment["p_filesz"]
         ]
         result = emulate_reset_entry(segments, entry["st_value"])
+        result.update(
+            emulate_registration(
+                segments,
+                install["st_value"],
+                callback["st_value"],
+                handler=function("_ZN17BLECharacteristic13_eventHandlerEP9ble_evt_t")[
+                    "st_value"
+                ],
+                notify=function("_ZN17BLECharacteristic13notifyEnabledEt")["st_value"],
+                ada=function("ada_callback_invoke")["st_value"],
+            )
+        )
         result["callback_routes_to_ota_reset"] = True
+        result["main_loop_handoff"] = True
         return result
 
 

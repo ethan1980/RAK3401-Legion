@@ -74,6 +74,7 @@ jobs:
         id: metadata
         run: python3 scripts/prepare_release.py --directory dist/legion --commit "$GITHUB_SHA"
       - name: Publish UF2, OTA ZIP and corresponding source
+        id: publication
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -85,6 +86,7 @@ jobs:
           if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > release-state.txt; then
             if [[ "$(cat release-state.txt)" == "false" ]]; then
               echo "Release already published; preserving its assets."
+              echo "preserved=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           else
@@ -94,8 +96,25 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" dist/legion/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
-      - name: Withdraw releases with defective BLE DFU entry
-        if: startsWith(steps.metadata.outputs.tag, 'legion-v0.3.5-')
+          echo "preserved=false" >> "$GITHUB_OUTPUT"
+      - name: Verify published asset sizes, hashes and source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          PRESERVED: ${{ steps.publication.outputs.preserved }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" > published-release.json
+          gh release download "$RELEASE_TAG" --dir published-assets
+          if [[ "$PRESERVED" != "true" ]]; then
+            cmp dist/legion/SHA256SUMS published-assets/SHA256SUMS
+          fi
+          python3 scripts/verify_published_release.py \
+            --directory published-assets --commit "$GITHUB_SHA" < published-release.json
+      - name: Withdraw superseded download releases
+        if: success() && startsWith(steps.metadata.outputs.tag, 'legion-v0.4.2-')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -105,7 +124,7 @@ jobs:
           set -euo pipefail
           [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" == "false" ]]
           gh api --paginate "repos/$GH_REPO/releases" \
-            --jq '.[] | select(.tag_name == "legion-v0.2.0-e27b9db" or .tag_name == "legion-v0.3.0-d828b8d") | .id' \
+            --jq '.[] | select(.tag_name | test("^legion-v0[.](1[.]0|2[.]0|3[.]0|3[.]5|4[.]0|4[.]1)-[0-9a-f]{7}$")) | .id' \
             > withdrawn-release-ids.txt
           while IFS= read -r release_id; do
             [[ "$release_id" =~ ^[0-9]+$ ]]

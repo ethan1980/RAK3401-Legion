@@ -65,6 +65,57 @@ def run_tests(firmware, *, leak_check=True):
     run_telemetry_tests(firmware, compiler, leak_check=leak_check)
     run_recovery_tests(firmware, compiler, leak_check=leak_check)
     run_engine_tests(firmware, compiler, leak_check=leak_check)
+    run_dfu_tests(firmware, compiler, leak_check=leak_check)
+
+
+def run_dfu_tests(firmware, compiler, *, leak_check=True):
+    with tempfile.TemporaryDirectory(prefix="legion-dfu-") as folder:
+        directory = Path(folder)
+        for name in ("LegionDfu.cpp", "LegionDfu.h"):
+            destination = directory / "platform/nrf52" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(firmware) / "src/platform/nrf52" / name, destination)
+        shutil.copytree(ROOT / "tests/dfu/stubs", directory, dirs_exist_ok=True)
+        binary = directory / "dfu-tests"
+        subprocess.run(
+            [
+                compiler,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-g",
+                "-fsanitize=address,undefined",
+                "-fno-omit-frame-pointer",
+                "-I",
+                str(directory),
+                str(directory / "platform/nrf52/LegionDfu.cpp"),
+                str(ROOT / "tests/dfu/test_dfu.cpp"),
+                "-o",
+                str(binary),
+            ],
+            check=True,
+        )
+        for case in (
+            "write_contract",
+            "probes",
+            "rejected",
+            "busy_spi",
+            "missing_bond",
+            "accepted",
+            "rollover",
+            "unsecured",
+            "concurrent",
+        ):
+            subprocess.run(
+                [str(binary), case],
+                check=True,
+                env={
+                    **os.environ,
+                    "ASAN_OPTIONS": f"detect_leaks={int(leak_check)}",
+                    "UBSAN_OPTIONS": "halt_on_error=1",
+                },
+            )
 
 
 def run_engine_tests(firmware, compiler, *, leak_check=True):

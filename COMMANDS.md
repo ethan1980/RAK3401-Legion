@@ -1,7 +1,7 @@
 # Legion commands
 
 Telemetry requires **Legion 0.3.0 or later**; the backup commands below require
-**Legion 0.4.0** on the responding RAK3401.
+**Legion 0.4.0 or later** on the responding RAK3401. The current release is **0.4.2**.
 The phone app and the requesting/receiving node can use standard Meshtastic.
 Commands are ordinary text messages; no app plugin or remote-admin key is needed.
 
@@ -50,7 +50,7 @@ app, so the RAK does not need another node to echo its own report.
 Example report; values are illustrative:
 
 ~~~text
-Legion0.4.0 !abcdef01 up:194400s
+Legion0.4.2 !abcdef01 up:194400s
 CPU:29.25 / max 34.50C BAT:82% 4.01 / min 3.96V
 N:-116 peak:-88dBm n:600
 RX:450 BAD:7 TX:32 REL:24 DROP:2

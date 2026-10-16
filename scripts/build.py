@@ -54,7 +54,7 @@ def package(firmware, target, output):
     dfu_validation = validate_dfu(elf) if target == "legion" else None
     if dfu_validation:
         print(
-            "Verified active BLE DFU callback and compiled OTA reset in Cortex-M4 emulation"
+            "Verified compiled immediate DFU registration, main-loop route and OTA reset (not hardware OTA)"
         )
     artifacts = []
     for suffix in ("uf2", "zip", "elf", "hex", "mt.json", "map", "ld"):
@@ -102,6 +102,8 @@ def package(firmware, target, output):
             "README.md",
             "COMMANDS.md",
             "RECOVERY.md",
+            "DFU.md",
+            "CHANGELOG.md",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {
@@ -123,6 +125,16 @@ def package(firmware, target, output):
         "telemetry_cooldown_seconds": 60 if target == "legion" else None,
         "telemetry_automatic_reports": False,
         "hardware_tested": False,
+        "ota_hardware_tested": bool(
+            target == "legion"
+            and config.get("ota_hardware_observation", {}).get("completion_confirmed")
+        ),
+        "ota_hardware_observation": (
+            config.get("ota_hardware_observation") if target == "legion" else None
+        ),
+        "source_tree_dirty": bool(
+            run("git", "status", "--porcelain", cwd=ROOT, capture=True).strip()
+        ),
         "energy_savings_measured": False,
         "overlay_commit": run(
             "git", "rev-parse", "HEAD", cwd=ROOT, capture=True

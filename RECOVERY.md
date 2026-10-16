@@ -1,8 +1,8 @@
-# Manual rescue backup — Legion 0.4.0
+# Manual rescue backup — Legion 0.4.2
 
 Legion can save one rescue point on the configured node and restore it if a
 later boot confirms missing or corrupt essential preferences. **Nothing is
-backed up automatically.** Installing 0.4.0, restarting, changing settings or
+backed up automatically.** Installing firmware, restarting, changing settings or
 updating over OTA does not create or refresh a rescue point.
 
 ## Create the rescue point
@@ -119,17 +119,21 @@ not invalidate a successful recovery or trigger another restoration.
 Two 4096-byte raw-flash pages at **0xE8000–0xEA000** hold alternate complete
 generations, including integrity checks and transaction state. They are outside
 LittleFS (0xED000–0xF4000) and do not take the warm-node region
-(0xEA000–0xED000). The 0.4.0 linker caps the application at 0xE8000.
+(0xEA000–0xED000). The Legion linker caps the application at 0xE8000.
 The two-page record keeps the previous valid generation during a torn write.
 
 Packaging rejects an ELF, OTA BIN or UF2 that overlaps this reserve and checks
 that all three describe the same application. The OTA ZIP contains only an
-application; the 0.3.5 DFU reset callback and Cortex-M4 validation are retained.
+application. Version 0.4.2 corrects DFU write authorization and defers the
+flash/bond handoff to the main loop while preserving the safe `0xA8` reset.
+Compiled Cortex-M4 callback/reset validation remains mandatory.
 The reviewed Adafruit bootloader uses image-sized application erases for the
 single-bank path and addressed page writes for application UF2.
 
-Use the 0.4.0 OTA ZIP from an installed **0.3.5**. Physical end-to-end BLE OTA on
-the user's bootloader remains a hardware test, not a result of software emulation.
+Migrate from older Legion builds to 0.4.2 using the UF2 over USB. For later BLE
+updates, use the application-only OTA ZIP with **nRF Connect for Android**;
+iPhone DFU is not validated. The owner has reported transfer from 0.4.2 to
+0.4.2; see [DFU.md](DFU.md) for the exact hardware evidence and remaining checks.
 Normal Legion application updates that respect this boundary preserve the reserve.
 Other firmware, a full chip erase, a bootloader/SoftDevice update or failed flash
 hardware can destroy it. Installing vanilla or another fork is outside that guarantee.
@@ -149,8 +153,8 @@ The telemetry transport is tested against simulated channels. Build/package gate
 check the active DFU callback, emulated OTA reset, image boundaries and file integrity.
 These checks do not substitute for physical power-cut or RF-delivery tests.
 
-After the update, confirm **`2.8.2.Legion0.4.0`** in device information and MQTT,
-and **`Legion0.4.0`** in `/telemetry`. Check normal operation, create a manual rescue
+After the update, confirm **`2.8.2.Legion0.4.2`** in device information and MQTT,
+and **`Legion0.4.2`** in `/telemetry`. Check normal operation, create a manual rescue
 point, and verify `status`. Test restoration first on an accessible bench node.
-Keep the working 0.3.5 release for rollback; no 0.4.0 recovery is armed until
+Keep the 0.4.2 UF2 for USB recovery; no rescue point is armed until
 the owner explicitly creates the rescue point.

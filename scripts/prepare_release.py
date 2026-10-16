@@ -16,6 +16,8 @@ def prepare_release(directory, commit):
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("A full build commit SHA is required")
     manifest = json.loads((directory / "legion-build.json").read_text())
+    if manifest.get("source_tree_dirty") is True:
+        raise ValueError("Commit the candidate sources and rebuild before publication")
     if manifest["overlay_commit"] != commit:
         raise ValueError("Artifact was built from a different commit")
     if manifest["target"] != "legion" or manifest["environment"] != "rak3401-legion":
@@ -59,7 +61,9 @@ def prepare_release(directory, commit):
 
     version = manifest["legion_version"]
     upstream = manifest["meshtastic_version"]
-    if version in ("0.2.0", "0.3.0", "0.3.5", "0.4.0") and not all(
+    if version == "0.4.2" and manifest.get("source_tree_dirty") is not False:
+        raise ValueError("Legion 0.4.2 requires an explicitly clean source tree")
+    if version in ("0.2.0", "0.3.0", "0.3.5", "0.4.0", "0.4.1", "0.4.2") and not all(
         manifest.get(name) is True
         for name in (
             "bulk_spi",
@@ -69,7 +73,7 @@ def prepare_release(directory, commit):
         )
     ):
         raise ValueError(f"Legion {version} requires all declared firmware features")
-    if version in ("0.3.0", "0.3.5", "0.4.0") and not (
+    if version in ("0.3.0", "0.3.5", "0.4.0", "0.4.1", "0.4.2") and not (
         manifest.get("private_telemetry") is True
         and manifest.get("spi_hz") == 8000000
         and manifest.get("telemetry_channel") == "LegionRF"
@@ -79,7 +83,7 @@ def prepare_release(directory, commit):
         raise ValueError(
             f"Legion {version} requires 8 MHz SPI and private on-demand telemetry"
         )
-    if version in ("0.3.5", "0.4.0"):
+    if version in ("0.3.5", "0.4.0", "0.4.1", "0.4.2"):
         dfu = manifest.get("ble_dfu_validation") or {}
         if not (
             dfu.get("method") == "compiled-cortex-m4-emulation"
@@ -93,7 +97,7 @@ def prepare_release(directory, commit):
             raise ValueError(
                 f"Legion {version} requires verified compiled BLE DFU reset"
             )
-    if version == "0.4.0":
+    if version in ("0.4.0", "0.4.1", "0.4.2"):
         update = manifest.get("update_validation") or {}
         if not (
             manifest.get("manual_recovery") is True
@@ -105,10 +109,79 @@ def prepare_release(directory, commit):
             and update.get("image_margin_bytes", -1) >= 0
         ):
             raise ValueError(
-                "Legion 0.4.0 requires manual recovery and verified update boundaries"
+                f"Legion {version} requires manual recovery and verified update boundaries"
             )
+    if version in ("0.4.1", "0.4.2"):
+        dfu = manifest.get("ble_dfu_validation") or {}
+        if not (
+            dfu.get("registration_emulated") is True
+            and dfu.get("ada_callback_dispatch") is False
+            and dfu.get("main_loop_handoff") is True
+            and dfu.get("write_authorization_enabled") is True
+            and dfu.get("dfu_dispatch_emulated") is True
+        ):
+            raise ValueError(
+                f"Legion {version} requires immediate DFU registration and main-loop handoff"
+            )
+    if (
+        version == "0.4.2"
+        and dfu.get("write_authorization_contract_checked") is not True
+    ):
+        raise ValueError(
+            "Legion 0.4.2 requires checked DFU write authorization parameters"
+        )
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
+    if version == "0.4.2":
+        observation = manifest.get("ota_hardware_observation") or {}
+        if observation.get("completion_confirmed") is True:
+            hardware_status = (
+                "The owner reports a completed 0.4.2-to-0.4.2 OTA and application restart "
+                "using nRF Connect for Android. "
+            )
+        elif observation.get("transfer_confirmed") is True:
+            hardware_status = (
+                "The owner reports 0.4.2-to-0.4.2 firmware transfer with nRF Connect for Android. "
+                "Completion/restart and a repeated update have not yet been reported. "
+            )
+        else:
+            hardware_status = "A completed hardware OTA has not been recorded. "
+        features += (
+            "**DFU maintenance release. Install over USB first when migrating from older Legion.** "
+            "For BLE updates, use **nRF Connect for Android** with the application-only OTA ZIP. "
+            "**iPhone OTA remains unresolved and is not validated.** "
+            f"{hardware_status}"
+            f"See [DFU.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/DFU.md).\n\n"
+            "Correct the rejected authorization reply (NRF_ERROR_INVALID_PARAM, 0x7): "
+            "successful writes now set update=1 and supply their original offset, length and data. "
+            "Authorization runs immediately in the BLE task; flash/bond preparation runs in "
+            "the main loop. The safe 0xA8 reset and saved-peer handoff are retained. "
+            "Native and compiled ARM checks enforce the write contract; emulation alone is "
+            "not a hardware OTA test. No bootloader or SoftDevice update is included.\n\n"
+            "The 0.4.0 manual rescue engine/layout, radio, power policy, persistence and "
+            "private telemetry are preserved. Use `/backup !xxxxxxxx` to create a rescue "
+            "point explicitly; status, replace and delete require the same target ID. "
+            "No automatic snapshot is created. "
+            f"Read [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/RECOVERY.md). "
+            "Physical recovery/power-cut tests remain pending. The compiled version is "
+            "2.8.2.Legion0.4.2 in telemetry, MQTT, device metadata and Bluetooth.\n\n"
+            "Superseded download releases are withdrawn after uploaded assets are verified; "
+            "their source tags and Git history remain available.\n\n"
+        )
+    if version == "0.4.1":
+        features += (
+            "**DFU candidate, hardware OTA unverified. Install over USB first.** "
+            "Installed 0.3.5 has a confirmed ATT timeout during DFU entry; 0.4.0 "
+            "retains that entry implementation. This candidate replies directly from "
+            "the BLE task and prepares the safe 0xA8 reset in the main loop. "
+            "Native SDK/RTOS-stub tests and compiled ARM checks are not a physical OTA test. "
+            "Complete and repeat OTA on an accessible node before remounting it. "
+            f"See [DFU.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/DFU.md).\n\n"
+            "The 0.4.0 manual rescue engine, channel commands, configuration and reserved "
+            "flash layout are unchanged. No bootloader or SoftDevice update is included. "
+            "The compiled version is 2.8.2.Legion0.4.1, also used in telemetry, MQTT "
+            "and Bluetooth. Root cause and full OTA recovery remain hardware-test pending.\n\n"
+        )
     if version == "0.4.0":
         features += (
             "Manual rescue backup: `/backup !xxxxxxxx`, `/backup status !xxxxxxxx`, "

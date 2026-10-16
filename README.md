@@ -5,7 +5,7 @@
 # RAK3401 Legion
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current version: **Legion 0.3.5**, based on **Meshtastic 2.8.2 develop/nightly**,
+Current version: **Legion 0.4.0**, based on **Meshtastic 2.8.2 develop/nightly**,
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
 
@@ -65,14 +65,31 @@ bus locking and transaction boundaries are preserved. This optimization is enabl
 only in `rak3401-legion`.
 
 The goal is to reduce transfer time and CPU overhead. **Battery savings and
-8 MHz hardware stability have not been measured yet.** Initial user testing of
-0.2.0 reported normal operation; it does not validate the new clock or commands.
+8 MHz hardware stability have not been measured in a controlled bench test.**
+The owner reports stable normal operation with 0.3.5; the observed name-change
+restart was scheduled, not a confirmed spontaneous reset. This is not validation
+of the new 0.4.0 recovery feature or end-to-end OTA.
 During continuous reception,
 the RF front end will still account for a significant share of total power use.
 
 The selected upstream revision's AGC and radio recovery fixes are preserved.
 The profile inherits the official pin assignments and RAK3401 hardware identity.
 Normal operation retains the configured TX power, channels, role and Bluetooth.
+
+### Manual rescue backup in 0.4.0
+
+Create a rescue point explicitly with `/backup !xxxxxxxx` on the private LegionRF
+channel. Only the node matching that full Node ID acts. The rescue point stores
+names, identity key, channels, device/radio and module settings, and fixed position.
+No automatic backup is made. Use `status`, `replace` and `delete` with the same
+destination; see [RECOVERY.md](RECOVERY.md) for the exact commands and reset behavior.
+
+Two raw-flash generations outside LittleFS protect against a torn replacement.
+At boot, confirmed essential preference loss can restore the saved configuration;
+normal restart, name changes and application OTA with healthy preferences do not.
+A successful recovery queues the requested “Ashes to ashes…” notice on LegionRF.
+Factory reset restores an armed rescue point; delete the rescue point first to
+deliberately return to blank settings. Hardware recovery/power-cut tests are pending.
 
 ### Private telemetry on demand
 
@@ -173,7 +190,7 @@ Download ready-to-flash firmware from
 [Releases](https://github.com/ethan1980/RAK3401-Legion/releases).
 After both profiles build successfully, pushes to `main` and manual workflow runs
 on `main` automatically publish an **experimental prerelease** of Legion.
-Each release has a tag such as `legion-v0.3.5-<commit>` and includes:
+Each release has a tag such as `legion-v0.4.0-<commit>` and includes:
 
 - `firmware-rak3401-legion-*.uf2` for USB/bootloader flashing.
 - `firmware-rak3401-legion-*-ota.zip` for OTA/DFU updates.
@@ -186,19 +203,24 @@ manually, open **Actions → Build RAK3401 Legion → Run workflow** and select 
 
 The comparison baseline is also available in Actions.
 
-### USB recovery and BLE OTA in 0.3.5
+### Updating to 0.4.0 and the preserved DFU correction
 
-**If Legion 0.2.0 or 0.3.0 is installed, update to 0.3.5 using the UF2 over USB.**
+**From installed 0.3.5, use this release's application OTA ZIP.** The DFU entry
+correction from 0.3.5 is preserved. Physical end-to-end OTA is still a pending
+hardware test; compiled callback/reset validation runs before packaging.
+
+**If Legion 0.2.0 or 0.3.0 is installed, install 0.4.0 using its UF2 over USB.**
 Those builds contain a defective BLE DFU entry that can immediately restart the
 normal firmware instead of staying in the bootloader. Selecting another OTA ZIP
 does not repair the entry in the installed firmware. Their releases are withdrawn
-when 0.3.5 is published; source tags and Git history are retained.
+following the 0.3.5 hotfix; source tags and Git history are retained.
 
 Connect a USB data cable, double-press Reset to expose the bootloader drive, and
 copy this release's `firmware-rak3401-legion-*.uf2` onto it. Allow the node to
-restart and check that the app reports **`2.8.2.Legion0.3.5`**. Use a normal UF2
+restart and check that the app reports **`2.8.2.Legion0.4.0`**. Use a normal UF2
 update, without factory erase/reset. The firmware keeps the existing configuration
-format and flash layout. Export the node configuration beforehand if possible.
+format and keeps the preference/warm-store boundaries. It reserves two previously
+unused pages below the warm store. Export the configuration beforehand if possible.
 
 The hotfix retains flash-write coordination and Bluetooth peer/bond handoff,
 then uses the nRF52 core's full OTA reset (`GPREGRET=0xA8`). This avoids switching
@@ -214,7 +236,7 @@ and download its artifacts:
 
 | Artifact | Profile | Purpose |
 | --- | --- | --- |
-| `RAK3401-legion-…` | `rak3401-legion` | 8 MHz bulk SPI, energy recovery, persistence checks and private telemetry |
+| `RAK3401-legion-…` | `rak3401-legion` | 8 MHz bulk SPI, energy recovery, persistence checks, private telemetry and manual rescue backup |
 | `RAK3401-baseline-…` | `rak3401-1watt` | Reference with the original behavior |
 
 Each package contains the **UF2**, **DFU ZIP**, ELF, HEX, metadata, `SHA256SUMS`,
@@ -225,8 +247,10 @@ This version requires hardware testing before use on an unattended node.
 
 ### Firmware identification
 
-The firmware identifies itself as **`2.8.2.Legion0.3.5`** in MQTT map reports,
+The firmware identifies itself as **`2.8.2.Legion0.4.0`** in MQTT map reports,
 device metadata read by the app, Bluetooth Device Information and startup logs.
+The `/telemetry` header derives `Legion0.4.0` from that same compiled version;
+temperature maximum and battery minimum labels include readable spacing.
 The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
 the firmware version. Maps update after receiving the next MQTT map report.
 
@@ -246,9 +270,12 @@ baseline keeps the original upstream firmware identification.
 
 ## Build locally
 
-Requirements: Git, Python 3.12 and a C++17 host compiler, with access to PlatformIO
-dependencies. The build runs the Legion host regression checks with ASan/UBSan
-and leak detection before compiling each firmware target.
+Requirements: a Linux host/container, Git, Python 3.12, a C++17 host compiler and
+OpenSSL development headers/library (`libssl-dev` on Debian/Ubuntu), with access
+to PlatformIO dependencies. The script installs the pinned PlatformIO dependencies,
+then runs host regression checks with ASan/UBSan and leak detection before
+compiling each firmware target. The recovery integration test uses the real
+generated messages/nanopb runtime and OpenSSL as its X25519 test oracle.
 
 ```bash
 git clone https://github.com/ethan1980/RAK3401-Legion.git
@@ -291,11 +318,13 @@ delivery, private-key checks, duplicate suppression, cooldown/rollover, changed
 keys, low-power cancellation, concurrent sample updates and report size.
 They do not emulate the analog circuit or prove radio stability.
 
-For 0.3.0, test both command forms from a second node and from the app connected
+For 0.4.0, test the command forms from a second node and from the app connected
 to the RAK. Check missing/wrong/public keys, other channels, repeated requests,
 multiple Legion responders and a key change while a reply is pending. Compare
-SPI errors, reception and consumption with 0.2.0 at 4 MHz, including low battery
-and recovery. Keep 0.2.0 available for rollback.
+SPI errors, reception and consumption with the reference at 4 MHz, including low
+battery and recovery. Keep 0.3.5 available for rollback. Follow [RECOVERY.md](RECOVERY.md)
+for manual backup and controlled restoration tests. The host runner also checks
+interrupted journal writes, transaction resume, deletion and bounded retry state.
 
 ## Update the upstream base
 

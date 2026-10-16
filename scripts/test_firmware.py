@@ -63,6 +63,121 @@ def run_tests(firmware, *, leak_check=True):
             },
         )
     run_telemetry_tests(firmware, compiler, leak_check=leak_check)
+    run_recovery_tests(firmware, compiler, leak_check=leak_check)
+    run_engine_tests(firmware, compiler, leak_check=leak_check)
+
+
+def run_engine_tests(firmware, compiler, *, leak_check=True):
+    runtime = next((Path(firmware) / ".pio/libdeps").glob("*/Nanopb/pb.h"), None)
+    if runtime is None:
+        raise RuntimeError(
+            "Install the pinned PlatformIO dependencies before the recovery integration test"
+        )
+    runtime = runtime.parent
+    sources = (
+        "src/mesh/LegionRecovery.cpp",
+        "src/mesh/LegionRecovery.h",
+        "src/mesh/LegionRecoveryPolicy.h",
+        "src/mesh/LegionRecoveryRunner.h",
+        "src/mesh/LegionRecoveryStore.h",
+        "src/mesh/LegionCrc32.h",
+        "src/mesh/LegionPersistence.h",
+        "src/mesh/LegionPersistence.cpp",
+        "src/SafeFile.h",
+        "src/SafeFile.cpp",
+    )
+    with tempfile.TemporaryDirectory(prefix="legion-engine-") as folder:
+        directory = Path(folder)
+        for name in sources:
+            destination = directory / Path(name).relative_to("src")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(firmware) / name, destination)
+        shutil.copytree(
+            Path(firmware) / "src/mesh/generated", directory / "mesh/generated"
+        )
+        for name in ("SPILock.h", "concurrency/LockGuard.h", "FSCommon.h"):
+            destination = directory / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "tests/native/stubs" / name, destination)
+        shutil.copytree(ROOT / "tests/recovery/stubs", directory, dirs_exist_ok=True)
+        binary = directory / "engine-tests"
+        subprocess.run(
+            [
+                compiler,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wno-missing-field-initializers",
+                "-O1",
+                "-g",
+                "-fsanitize=address,undefined",
+                "-fno-omit-frame-pointer",
+                "-I",
+                str(directory),
+                "-I",
+                str(directory / "mesh/generated"),
+                "-I",
+                str(runtime),
+                str(ROOT / "tests/recovery/test_engine.cpp"),
+                str(directory / "SafeFile.cpp"),
+                str(directory / "mesh/LegionPersistence.cpp"),
+                *map(
+                    str,
+                    sorted((directory / "mesh/generated/meshtastic").glob("*.pb.cpp")),
+                ),
+                *[
+                    str(runtime / name)
+                    for name in ("pb_common.c", "pb_encode.c", "pb_decode.c")
+                ],
+                "-lcrypto",
+                "-o",
+                str(binary),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [str(binary)],
+            check=True,
+            env={
+                **os.environ,
+                "ASAN_OPTIONS": f"detect_leaks={int(leak_check)}",
+                "UBSAN_OPTIONS": "halt_on_error=1",
+            },
+        )
+
+
+def run_recovery_tests(firmware, compiler, *, leak_check=True):
+    with tempfile.TemporaryDirectory(prefix="legion-recovery-") as folder:
+        binary = Path(folder) / "recovery-tests"
+        subprocess.run(
+            [
+                compiler,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-O1",
+                "-g",
+                "-fsanitize=address,undefined",
+                "-fno-omit-frame-pointer",
+                "-I",
+                str(Path(firmware) / "src"),
+                str(ROOT / "tests/recovery/test_recovery.cpp"),
+                "-o",
+                str(binary),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [str(binary)],
+            check=True,
+            env={
+                **os.environ,
+                "ASAN_OPTIONS": f"detect_leaks={int(leak_check)}",
+                "UBSAN_OPTIONS": "halt_on_error=1",
+            },
+        )
 
 
 def run_telemetry_tests(firmware, compiler, *, leak_check=True):
@@ -75,6 +190,7 @@ def run_telemetry_tests(firmware, compiler, *, leak_check=True):
         "src/concurrency/LockGuard.h",
         "src/concurrency/LockGuard.cpp",
         "src/platform/nrf52/LegionTelemetryHal.h",
+        "src/mesh/LegionRecoveryPolicy.h",
     )
     with tempfile.TemporaryDirectory(prefix="legion-telemetry-") as folder:
         directory = Path(folder)

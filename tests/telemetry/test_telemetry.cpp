@@ -7,6 +7,7 @@
 #include "PowerStatus.h"
 #include "RadioLibInterface.h"
 #include "UptimeClock.h"
+#include "mesh/LegionRecovery.h"
 #include "modules/LegionTelemetryModule.h"
 #include <cassert>
 #include <iostream>
@@ -21,6 +22,8 @@ uint16_t batteryMv = 4010;
 int16_t temperatureQuarters = 117;
 MeshService meshService;
 MeshService *service = &meshService;
+unsigned backupOperations = 0;
+LegionBackupCommand lastBackup = LegionBackupCommand::None;
 NodeDB database;
 NodeDB *nodeDB = &database;
 PowerStatus power;
@@ -65,6 +68,8 @@ void reset()
     batteryMv = 4010;
     temperatureQuarters = 117;
     meshService.sent.clear();
+    backupOperations = 0;
+    lastBackup = LegionBackupCommand::None;
     power = {};
     radio = {};
     RadioLibInterface::instance = &radio;
@@ -110,6 +115,44 @@ void test_standard_private_reply_and_local_copy()
     assert(sent.packet.priority == meshtastic_MeshPacket_Priority_BACKGROUND);
     assert(sent.source == RX_SRC_LOCAL && sent.toPhone);
     assert(text().find("!abcdef01") != std::string::npos);
+    assert(text().find("Legion0.4.0") != std::string::npos);
+    assert(text().find("Legion0.3.0") == std::string::npos);
+}
+
+void test_backup_commands_are_targeted_and_share_channel_and_duplicate_gates()
+{
+    reset();
+    TestModule module;
+    for (const auto &command : {"/backup", "/backup replace !11111111", "/backup !abcdef0", "/backup status"})
+        deliver(module, request(command));
+    assert(backupOperations == 0 && meshService.sent.empty());
+    auto wrongChannel = request("/backup !abcdef01");
+    wrongChannel.channel = 0;
+    deliver(module, wrongChannel);
+    assert(backupOperations == 0);
+    const auto command = request("/backup !abcdef01");
+    deliver(module, command, 250);
+    assert(backupOperations == 1 && lastBackup == LegionBackupCommand::Create && meshService.sent.size() == 1);
+    Time::now += 61000;
+    deliver(module, command, 250);
+    assert(backupOperations == 1);
+    deliver(module, request("/backup replace !abcdef01", 2), 250);
+    assert(backupOperations == 2 && lastBackup == LegionBackupCommand::Replace);
+}
+
+void test_backup_cancellation_on_key_change_and_unsafe_power()
+{
+    reset();
+    TestModule module;
+    module.handleReceived(request("/backup delete !abcdef01"));
+    channels.entries[2].settings.psk.bytes[0] ^= 1;
+    Time::now += 1000;
+    module.runOnce();
+    assert(backupOperations == 0 && meshService.sent.empty());
+    Time::now += 61000;
+    supplyReady = false;
+    deliver(module, request("/backup !abcdef01", 2), 250);
+    assert(backupOperations == 0);
 }
 
 void test_local_phone_request()
@@ -319,8 +362,8 @@ void test_statistics_current_values_and_extrema()
     radio.txDrop = 2;
     deliver(module, request());
     const auto output = text();
-    assert(output.find("CPU:-0.25/max29.25C") != std::string::npos);
-    assert(output.find("BAT:82% 4.00/min3.90V") != std::string::npos);
+    assert(output.find("CPU:-0.25 / max 29.25C") != std::string::npos);
+    assert(output.find("BAT:82% 4.00 / min 3.90V") != std::string::npos);
     assert(output.find("N:-105 peak:-90dBm n:2") != std::string::npos);
     assert(output.find("RX:450 BAD:7 TX:32 REL:24 DROP:2") != std::string::npos);
 }
@@ -332,7 +375,7 @@ void test_unavailable_sensors_and_unknown_charge()
     temperatureReady = false;
     power.battery = false;
     deliver(module, request());
-    assert(text().find("CPU:NA/maxNAC") != std::string::npos);
+    assert(text().find("CPU:NA / max NAC") != std::string::npos);
     assert(text().find("BAT:NA%") != std::string::npos);
     assert(text().find("N:NA") != std::string::npos);
 }
@@ -357,7 +400,7 @@ void test_failed_temperature_refresh_preserves_only_known_maximum()
     module.runOnce();
     temperatureReady = false;
     deliver(module, request());
-    assert(text().find("CPU:NA/max29.25C") != std::string::npos);
+    assert(text().find("CPU:NA / max 29.25C") != std::string::npos);
 }
 
 void test_gate_wrap_and_duplicate_expiry()
@@ -399,6 +442,8 @@ int main()
     name();                                                                                                                      \
     std::cout << #name << " PASS\n"
     RUN(test_standard_private_reply_and_local_copy);
+    RUN(test_backup_commands_are_targeted_and_share_channel_and_duplicate_gates);
+    RUN(test_backup_cancellation_on_key_change_and_unsafe_power);
     RUN(test_local_phone_request);
     RUN(test_targeted_and_exact_commands);
     RUN(test_rejects_wrong_channel_port_destination_and_oversize);

@@ -34,6 +34,13 @@ jobs:
           cache: pip
       - name: Install build tools
         run: python -m pip install -r requirements.txt
+      - name: Check recovery integration test prerequisites
+        shell: bash
+        run: |
+          if ! pkg-config --exists openssl; then
+            sudo apt-get update
+            sudo apt-get install -y libssl-dev pkg-config
+          fi
       - name: Check checkout protection and release validation
         run: python -m unittest discover -s tests -v
       - name: Build firmware and package source

@@ -29,6 +29,7 @@ class File
     {
     }
     explicit operator bool() const { return bool(bytes); }
+    size_t size() const { return bytes ? bytes->size() : 0; }
     int read() { return bytes && offset < bytes->size() ? (*bytes)[offset++] : -1; }
     int read(uint8_t *out, size_t size)
     {
@@ -54,7 +55,11 @@ struct FakeFilesystem {
     bool appendClose = false;
     bool shortWrites = false;
     size_t mutations = 0;
-    bool exists(const char *name) const { return files.count(name) != 0; }
+    std::string failOpenName;
+    bool exists(const char *name) const { return std::strcmp(name, "/") == 0 || files.count(name) != 0; }
+    void mkdir(const char *) {}
+    void _lockFS() {}
+    void _unlockFS() {}
     bool remove(const char *name)
     {
         ++mutations;
@@ -62,6 +67,8 @@ struct FakeFilesystem {
     }
     File open(const char *name, int mode)
     {
+        if (name == failOpenName)
+            return File();
         if (mode == FILE_O_WRITE && !exists(name))
             files[name] = std::make_shared<std::vector<uint8_t>>();
         const auto it = files.find(name);

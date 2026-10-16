@@ -13,6 +13,7 @@ from pathlib import Path
 
 from prepare import PROFILE_PATH, ROOT, firmware_version, load_config, prepare, run
 from validate_dfu import validate_dfu
+from validate_update import validate_update
 
 TARGETS = {"legion": "rak3401-legion", "baseline": "rak3401-1watt"}
 PIO_ENV = {**os.environ, "PLATFORMIO_SETTING_ENABLE_TELEMETRY": "no"}
@@ -75,6 +76,17 @@ def package(firmware, target, output):
             ):
                 raise RuntimeError(f"Manifest mismatch: {entry['name']}")
 
+    update_validation = None
+    if target == "legion":
+        update_validation = validate_update(
+            elf,
+            next(output.glob("firmware-*.zip")),
+            next(output.glob("firmware-*.uf2")),
+        )
+        print(
+            f"Verified application-only OTA/UF2 and rescue reserve: {update_validation}"
+        )
+
     archive = output / "corresponding-source.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         for path in source_files(firmware):
@@ -89,6 +101,7 @@ def package(firmware, target, output):
             "LICENSE",
             "README.md",
             "COMMANDS.md",
+            "RECOVERY.md",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {
@@ -103,6 +116,9 @@ def package(firmware, target, output):
         "flash_readback_crc32": target == "legion",
         "private_telemetry": target == "legion",
         "ble_dfu_validation": dfu_validation,
+        "manual_recovery": target == "legion",
+        "recovery_automatic_snapshot": False,
+        "update_validation": update_validation,
         "telemetry_channel": "LegionRF" if target == "legion" else None,
         "telemetry_cooldown_seconds": 60 if target == "legion" else None,
         "telemetry_automatic_reports": False,
@@ -144,6 +160,17 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
     firmware = prepare(args.dest)
+    run(
+        sys.executable,
+        "-m",
+        "platformio",
+        "pkg",
+        "install",
+        "-e",
+        TARGETS[args.target],
+        cwd=firmware,
+        env=PIO_ENV,
+    )
     subprocess.run(
         [
             sys.executable,

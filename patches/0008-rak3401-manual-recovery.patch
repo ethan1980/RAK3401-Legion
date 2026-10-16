@@ -1,0 +1,1212 @@
+diff --git a/src/mesh/CryptoEngine.cpp b/src/mesh/CryptoEngine.cpp
+index b89c5a1..d7da5a0 100644
+--- a/src/mesh/CryptoEngine.cpp
++++ b/src/mesh/CryptoEngine.cpp
+@@ -4,6 +4,7 @@
+ #include "architecture.h"
+ #include <SHA256.h>
+ #include <memory>
++#include <cstring>
+ 
+ #if !(MESHTASTIC_EXCLUDE_PKI)
+ #include "HardwareRNG.h"
+@@ -25,6 +26,21 @@
+ 
+ #if !(MESHTASTIC_EXCLUDE_PKI_KEYGEN)
+ 
++#if RAK3401_LEGION_RECOVERY
++bool CryptoEngine::matchesIdentityKey(const uint8_t *privateKey, const uint8_t *publicKey)
++{
++    const auto matches = [&]() {
++        uint8_t derived[32]{};
++        return x25519(derived, privateKey, nullptr) && !Curve25519::isWeakPoint(derived) && std::memcmp(derived, publicKey, 32) == 0;
++    };
++    // NodeDB validates boot preferences before Router creates the shared crypto mutex.
++    if (!cryptLock)
++        return matches();
++    concurrency::LockGuard guard(cryptLock);
++    return matches();
++}
++#endif
++
+ /**
+  * Create a public/private key pair with Curve25519.
+  *
+diff --git a/src/mesh/CryptoEngine.h b/src/mesh/CryptoEngine.h
+index 180c663..d51e6f2 100644
+--- a/src/mesh/CryptoEngine.h
++++ b/src/mesh/CryptoEngine.h
+@@ -182,6 +182,9 @@ class CryptoEngine
+     virtual void encryptPacket(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes);
+     virtual void decrypt(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes);
+     virtual void encryptAESCtr(CryptoKey key, uint8_t *nonce, size_t numBytes, uint8_t *bytes);
++#if RAK3401_LEGION_RECOVERY
++    bool matchesIdentityKey(const uint8_t *privateKey, const uint8_t *publicKey);
++#endif
+ #ifndef PIO_UNIT_TESTING
+   protected:
+ #endif
+diff --git a/src/mesh/LegionRecovery.cpp b/src/mesh/LegionRecovery.cpp
+new file mode 100644
+index 0000000..c27c377
+--- /dev/null
++++ b/src/mesh/LegionRecovery.cpp
+@@ -0,0 +1,483 @@
++#include "LegionRecovery.h"
++
++#if RAK3401_LEGION_RECOVERY
++#include "CryptoEngine.h"
++#include "FSCommon.h"
++#include "LegionPersistence.h"
++#include "NodeDB.h"
++#include "SPILock.h"
++#include "concurrency/LockGuard.h"
++#include "flash/flash_nrf5x.h"
++#include "main.h"
++#include "modules/AdminModule.h"
++#include "power/PowerHAL.h"
++#include <ErriezCRC32.h>
++#include <cstdio>
++#include <pb_decode.h>
++#include <pb_encode.h>
++#ifdef MESHTASTIC_ENCRYPTED_STORAGE
++#include "security/EncryptedStorage.h"
++#endif
++
++namespace
++{
++using legion::RecoveryPage;
++using legion::RecoveryPhase;
++using legion::RecoveryRead;
++
++class Flash final : public legion::RecoveryFlash
++{
++  public:
++    bool read(uint8_t slot, RecoveryPage &page) override
++    {
++        if (slot > 1)
++            return false;
++        std::memcpy(&page, reinterpret_cast<const void *>(legion::RECOVERY_BASE + slot * sizeof(page)), sizeof(page));
++        return true;
++    }
++
++    bool write(uint8_t slot, const RecoveryPage &page) override
++    {
++        if (slot > 1 || !powerHAL_isPowerLevelSafe())
++            return false;
++        concurrency::LockGuard guard(spiLock);
++        FSCom._lockFS();
++        // The framework flush erases/programs a complete page, so only replace the
++        // inactive slot.
++        flash_nrf5x_flush();
++        const bool safe = powerHAL_isPowerLevelSafe();
++        const uint32_t address = legion::RECOVERY_BASE + slot * sizeof(page);
++        const bool written = safe && flash_nrf5x_write(address, &page, sizeof(page)) == sizeof(page);
++        if (written)
++            flash_nrf5x_flush();
++        const bool verified = written && std::memcmp(reinterpret_cast<const void *>(address), &page, sizeof(page)) == 0;
++        FSCom._unlockFS();
++        return verified;
++    }
++};
++
++Flash flash;
++legion::RecoveryStore store(flash);
++bool restoredThisBoot = false;
++bool noticePending = false;
++bool persistenceBlocked = false;
++
++template <typename T> std::unique_ptr<T> allocate()
++{
++    return std::unique_ptr<T>(new (std::nothrow) T{});
++}
++
++bool boundToDevice(const RecoveryPage &page)
++{
++    return page.device[0] == NRF_FICR->DEVICEID[0] && page.device[1] == NRF_FICR->DEVICEID[1];
++}
++
++bool compatibleStorage()
++{
++#ifdef MESHTASTIC_ENCRYPTED_STORAGE
++    if (EncryptedStorage::isLockdownActive())
++        return false;
++#endif
++#if USERPREFS_EVENT_MODE
++    return false;
++#else
++    return true;
++#endif
++}
++
++bool identityValid(const meshtastic_LocalConfig &settings, uint32_t expectedNode = 0)
++{
++    if (!settings.has_security || settings.security.private_key.size != 32 || settings.security.public_key.size != 32)
++        return false;
++    const auto *key = settings.security.private_key.bytes;
++    if ((key[0] & 7) || (key[31] & 0xc0) != 0x40)
++        return false;
++    if (!crypto || !crypto->matchesIdentityKey(key, settings.security.public_key.bytes))
++        return false;
++    const uint32_t node = crc32Buffer(settings.security.public_key.bytes, 32);
++    return node && (!expectedNode || node == expectedNode);
++}
++
++bool snapshotValid(const RecoveryPage &page, meshtastic_BackupPreferences &backup)
++{
++    if (!boundToDevice(page) || page.phase == RecoveryPhase::Deleted)
++        return false;
++    pb_istream_t stream = pb_istream_from_buffer(page.payload, page.payloadSize);
++    return pb_decode(&stream, &meshtastic_BackupPreferences_msg, &backup) && backup.version == DEVICESTATE_CUR_VER &&
++           backup.has_config && backup.has_module_config && backup.has_channels && backup.has_owner &&
++           backup.config.version == DEVICESTATE_CUR_VER && backup.module_config.version >= DEVICESTATE_MIN_VER &&
++           backup.channels.version >= DEVICESTATE_MIN_VER && backup.channels.channels_count > 0 && !backup.owner.is_licensed &&
++           !backup.owner.is_unmessagable && identityValid(backup.config, page.node) &&
++           backup.config.position.fixed_position == static_cast<bool>(page.hasPosition);
++}
++
++using legion::PreferenceRead;
++
++PreferenceRead probe(const char *name, size_t maximum, const pb_msgdesc_t *fields, void *object)
++{
++    concurrency::LockGuard guard(spiLock);
++    if (!FSCom.exists("/"))
++        return PreferenceRead::Temporary;
++    if (!FSCom.exists(name))
++        return PreferenceRead::Missing;
++    auto file = FSCom.open(name, FILE_O_READ);
++    if (!file)
++        return PreferenceRead::Temporary;
++    const size_t size = file.size();
++    if (!size || size > maximum) {
++        file.close();
++        return PreferenceRead::Corrupt;
++    }
++    std::unique_ptr<uint8_t[]> bytes(new (std::nothrow) uint8_t[size]);
++    if (!bytes)
++        return PreferenceRead::Temporary;
++    const bool read = file.read(bytes.get(), size) == static_cast<int>(size);
++    file.close();
++    if (!read)
++        return PreferenceRead::Temporary;
++    pb_istream_t stream = pb_istream_from_buffer(bytes.get(), size);
++    const bool decoded = pb_decode(&stream, fields, object);
++    // Config buffers include private keys; clear temporary encoded bytes before
++    // releasing them.
++    volatile uint8_t *wipe = bytes.get();
++    for (size_t i = 0; i < size; ++i)
++        wipe[i] = 0;
++    return decoded ? PreferenceRead::Valid : PreferenceRead::Corrupt;
++}
++
++PreferenceRead versioned(PreferenceRead result, uint32_t version, uint32_t maximum = DEVICESTATE_CUR_VER)
++{
++    if (result == PreferenceRead::Valid && (version < DEVICESTATE_MIN_VER || version > maximum))
++        return PreferenceRead::Unsupported;
++    return result;
++}
++
++PreferenceRead preferences()
++{
++    auto cfg = allocate<meshtastic_LocalConfig>();
++    auto modules = allocate<meshtastic_LocalModuleConfig>();
++    auto channels = allocate<meshtastic_ChannelFile>();
++    auto device = allocate<meshtastic_DeviceState>();
++    if (!cfg || !modules || !channels || !device)
++        return PreferenceRead::Temporary;
++    PreferenceRead results[4];
++    results[0] = probe(configFileName, meshtastic_LocalConfig_size, &meshtastic_LocalConfig_msg, cfg.get());
++    results[0] = versioned(results[0], cfg->version);
++    results[1] = probe(moduleConfigFileName, meshtastic_LocalModuleConfig_size, &meshtastic_LocalModuleConfig_msg, modules.get());
++    results[1] = versioned(results[1], modules->version, POSITION_TELEMETRY_OPTIN_VER);
++    results[2] = probe(channelFileName, meshtastic_ChannelFile_size, &meshtastic_ChannelFile_msg, channels.get());
++    results[2] = versioned(results[2], channels->version, POSITION_TELEMETRY_OPTIN_VER);
++    results[3] = probe(deviceStateFileName, meshtastic_DeviceState_size, &meshtastic_DeviceState_msg, device.get());
++    results[3] = versioned(results[3], device->version);
++    if (results[0] == PreferenceRead::Valid && (!cfg->has_lora || !identityValid(*cfg)))
++        results[0] = PreferenceRead::Corrupt;
++    if (results[2] == PreferenceRead::Valid && !channels->channels_count)
++        results[2] = PreferenceRead::Corrupt;
++    if (results[3] == PreferenceRead::Valid && !device->has_owner)
++        results[3] = PreferenceRead::Corrupt;
++    // Temporary/unsupported storage must never be classified as confirmed loss of
++    // preferences.
++    for (auto result : results)
++        if (result == PreferenceRead::Temporary || result == PreferenceRead::Unsupported)
++            return result;
++    for (auto result : results)
++        if (result != PreferenceRead::Valid)
++            return result;
++    return PreferenceRead::Valid;
++}
++
++bool persist(const char *name, size_t maximum, const pb_msgdesc_t *fields, const void *object)
++{
++    if (!powerHAL_isPowerLevelSafe() || !legionSaveProto(name, maximum, fields, object, true))
++        return false;
++    {
++        concurrency::LockGuard guard(spiLock);
++        FSCom._lockFS();
++        flash_nrf5x_flush();
++        FSCom._unlockFS();
++    }
++    return legionProtoMatchesFile(name, maximum, fields, object);
++}
++
++bool restore(const RecoveryPage &page, const meshtastic_BackupPreferences &backup)
++{
++    auto device = allocate<meshtastic_DeviceState>();
++    if (!device)
++        return false;
++    device->version = DEVICESTATE_CUR_VER;
++    device->has_owner = true;
++    device->owner = backup.owner;
++    device->has_my_node = true;
++    device->my_node.my_node_num = page.node;
++    {
++        concurrency::LockGuard guard(spiLock);
++        FSCom.mkdir("/prefs");
++    }
++    return persist(configFileName, meshtastic_LocalConfig_size, &meshtastic_LocalConfig_msg, &backup.config) &&
++           persist(moduleConfigFileName, meshtastic_LocalModuleConfig_size, &meshtastic_LocalModuleConfig_msg,
++                   &backup.module_config) &&
++           persist(channelFileName, meshtastic_ChannelFile_size, &meshtastic_ChannelFile_msg, &backup.channels) &&
++           persist(deviceStateFileName, meshtastic_DeviceState_size, &meshtastic_DeviceState_msg, device.get());
++}
++} // namespace
++
++LegionBootRecovery legionRecoveryBoot()
++{
++    auto page = allocate<RecoveryPage>();
++    if (!page)
++        return LegionBootRecovery::Blocked;
++    const auto state = store.load(*page);
++    if (state == RecoveryRead::Empty || (state == RecoveryRead::Valid && page->phase == RecoveryPhase::Deleted))
++        return LegionBootRecovery::None;
++    if (state != RecoveryRead::Valid || !compatibleStorage() || !boundToDevice(*page))
++        return LegionBootRecovery::None;
++    auto backup = allocate<meshtastic_BackupPreferences>();
++    if (!backup || !snapshotValid(*page, *backup))
++        return LegionBootRecovery::Blocked;
++    noticePending = page->phase == RecoveryPhase::NoticePending && page->noticeAttempts < legion::RECOVERY_MAX_ATTEMPTS;
++    const auto outcome =
++        legion::runRecovery(store, *page, preferences, [&]() { return restore(*page, *backup); }, []() { delay(100); });
++    restoredThisBoot = outcome == LegionBootRecovery::Restored;
++    if (restoredThisBoot)
++        LOG_WARN("Legion restored rescue preferences; completing identity and fixed position");
++    return outcome;
++}
++
++bool legionRecoveryPosition(meshtastic_PositionLite &position, bool &present)
++{
++    present = false;
++    if (!restoredThisBoot)
++        return false;
++    auto page = allocate<RecoveryPage>();
++    if (!page || store.load(*page) != RecoveryRead::Valid)
++        return false;
++    present = page->hasPosition != 0;
++    if (!present)
++        return true;
++    position = meshtastic_PositionLite_init_zero;
++    position.latitude_i = page->latitude;
++    position.longitude_i = page->longitude;
++    position.altitude = page->altitude;
++    position.location_source = meshtastic_Position_LocSource_LOC_MANUAL;
++    return true;
++}
++
++bool legionRecoveryFinish()
++{
++    auto page = allocate<RecoveryPage>();
++    if (!restoredThisBoot || !page || store.load(*page) != RecoveryRead::Valid || page->phase != RecoveryPhase::Restoring ||
++        !identityValid(config, page->node) || preferences() != PreferenceRead::Valid)
++        return false;
++    page->phase = RecoveryPhase::NoticePending;
++    page->noticeAttempts = 0;
++    const bool committed = store.commit(*page);
++    if (committed) {
++        restoredThisBoot = false;
++        noticePending = true;
++    }
++    return committed;
++}
++
++void legionRecoveryCommand(LegionBackupCommand command, char *reply, size_t size)
++{
++    const uint32_t node = nodeDB->getNodeNum();
++    const auto respond = [&](const char *message) {
++        std::snprintf(reply, size, "Backup !%08lx: %s", (unsigned long)node, message);
++    };
++    auto page = allocate<RecoveryPage>();
++    if (!page) {
++        respond("not enough memory");
++        return;
++    }
++    const auto state = store.load(*page);
++    const bool exists = state == RecoveryRead::Valid && page->phase != RecoveryPhase::Deleted;
++    if (command == LegionBackupCommand::Status) {
++        auto backup = allocate<meshtastic_BackupPreferences>();
++        if (exists && backup && snapshotValid(*page, *backup)) {
++            if (page->phase == RecoveryPhase::Restoring)
++                respond("recovery incomplete; inspect logs before retrying");
++            else
++                respond("valid rescue point; recovery armed");
++        } else
++            respond(state == RecoveryRead::Empty || (state == RecoveryRead::Valid && !exists)
++                        ? "no rescue point; recovery disabled"
++                        : "rescue point invalid or incompatible");
++        return;
++    }
++    if (state != RecoveryRead::Valid && state != RecoveryRead::Empty) {
++        respond("storage invalid or incompatible; no changes");
++        return;
++    }
++    if (command == LegionBackupCommand::Create && exists) {
++        respond("already exists; use /backup replace !xxxxxxxx");
++        return;
++    }
++    if ((adminModule && adminModule->isEditingSettings()) || rebootAtMsec || !compatibleStorage()) {
++        respond("configuration busy or unsupported; no changes");
++        return;
++    }
++    if (command == LegionBackupCommand::Delete) {
++        if (!exists) {
++            respond("no rescue point; recovery disabled");
++            return;
++        }
++        const uint32_t generation = page->generation;
++        std::memset(page.get(), 0, sizeof(*page));
++        page->generation = generation;
++        page->phase = RecoveryPhase::Deleted;
++        respond(store.commit(*page) ? "deleted; recovery disabled" : "delete failed; previous state retained");
++        return;
++    }
++    auto backup = allocate<meshtastic_BackupPreferences>();
++    if (!backup || !identityValid(config, node) || owner.is_licensed || !config.has_lora) {
++        respond("identity/configuration not ready; no changes");
++        return;
++    }
++    backup->version = DEVICESTATE_CUR_VER;
++    backup->has_config = backup->has_module_config = backup->has_channels = backup->has_owner = true;
++    backup->config = config;
++    backup->module_config = moduleConfig;
++    backup->channels = channelFile;
++    std::memcpy(backup->owner.long_name, owner.long_name, sizeof(owner.long_name));
++    std::memcpy(backup->owner.short_name, owner.short_name, sizeof(owner.short_name));
++    backup->owner.public_key = owner.public_key;
++    const uint32_t generation = page->generation;
++    auto next = allocate<RecoveryPage>();
++    if (!next) {
++        respond("not enough memory");
++        return;
++    }
++    next->generation = generation;
++    next->device[0] = NRF_FICR->DEVICEID[0];
++    next->device[1] = NRF_FICR->DEVICEID[1];
++    next->node = node;
++    next->phase = RecoveryPhase::Armed;
++    if (config.position.fixed_position) {
++        meshtastic_PositionLite position;
++        if (!nodeDB->copyNodePosition(node, position)) {
++            respond("fixed position unavailable; no changes");
++            return;
++        }
++        next->hasPosition = 1;
++        next->latitude = position.latitude_i;
++        next->longitude = position.longitude_i;
++        next->altitude = position.altitude;
++    }
++    pb_ostream_t output = pb_ostream_from_buffer(next->payload, sizeof(next->payload));
++    if (!pb_encode(&output, &meshtastic_BackupPreferences_msg, backup.get())) {
++        respond("configuration too large or invalid; no changes");
++        return;
++    }
++    next->payloadSize = output.bytes_written;
++    if (exists && page->payloadSize == next->payloadSize && page->hasPosition == next->hasPosition &&
++        page->latitude == next->latitude && page->longitude == next->longitude && page->altitude == next->altitude &&
++        std::memcmp(page->payload, next->payload, next->payloadSize) == 0) {
++        respond("already up to date; no flash write");
++        return;
++    }
++    respond(store.commit(*next) ? "saved and verified; recovery armed" : "save failed; previous rescue point retained");
++}
++
++bool legionRecoveryNotice(char *text, size_t size, uint8_t channel)
++{
++    if (!noticePending || !config.lora.tx_enabled || config.lora.region == meshtastic_Config_LoRaConfig_RegionCode_UNSET)
++        return false;
++    auto page = allocate<RecoveryPage>();
++    if (!page || store.load(*page) != RecoveryRead::Valid || page->phase != RecoveryPhase::NoticePending ||
++        page->noticeAttempts >= legion::RECOVERY_MAX_ATTEMPTS || !identityValid(config, page->node))
++        return false;
++    auto backup = allocate<meshtastic_BackupPreferences>();
++    if (!backup || !snapshotValid(*page, *backup) || channel >= backup->channels.channels_count ||
++        channel >= channelFile.channels_count)
++        return false;
++    const auto &saved = backup->channels.channels[channel];
++    const auto &current = channelFile.channels[channel];
++    if (saved.role != meshtastic_Channel_Role_SECONDARY || !saved.has_settings || !current.has_settings ||
++        std::strcmp(saved.settings.name, "LegionRF") || std::strcmp(current.settings.name, "LegionRF") ||
++        saved.settings.psk.size != current.settings.psk.size || saved.settings.use_aead != current.settings.use_aead ||
++        std::memcmp(saved.settings.psk.bytes, current.settings.psk.bytes, saved.settings.psk.size))
++        return false;
++    char id[10];
++    std::snprintf(id, sizeof(id), "!%08lx", (unsigned long)page->node);
++    const char *name = *owner.long_name ? owner.long_name : *owner.short_name ? owner.short_name : id;
++    const int length = std::snprintf(text, size, "Ashes to ashes, dust to dust, the node %s has risen again", name);
++    return length > 0 && static_cast<size_t>(length) < size;
++}
++
++bool legionRecoveryNoticeAttempt()
++{
++    auto page = allocate<RecoveryPage>();
++    if (!page || store.load(*page) != RecoveryRead::Valid || page->phase != RecoveryPhase::NoticePending ||
++        page->noticeAttempts >= legion::RECOVERY_MAX_ATTEMPTS)
++        return false;
++    ++page->noticeAttempts;
++    return store.commit(*page);
++}
++
++void legionRecoveryNoticeQueued()
++{
++    noticePending = false;
++    auto page = allocate<RecoveryPage>();
++    if (page && store.load(*page) == RecoveryRead::Valid && page->phase == RecoveryPhase::NoticePending) {
++        page->phase = RecoveryPhase::NoticeSent;
++        store.commit(*page);
++    }
++}
++
++bool legionRecoveryForgetIdentity()
++{
++    auto page = allocate<RecoveryPage>();
++    if (!page)
++        return false;
++    const auto state = store.load(*page);
++    if (state == RecoveryRead::Empty || (state == RecoveryRead::Valid && page->phase == RecoveryPhase::Deleted))
++        return true;
++    if (state != RecoveryRead::Valid)
++        return false;
++    const uint32_t generation = page->generation;
++    std::memset(page.get(), 0, sizeof(*page));
++    page->generation = generation;
++    page->phase = RecoveryPhase::Deleted;
++    return store.commit(*page);
++}
++
++bool legionRecoveryAcceptIdentity(uint32_t node)
++{
++    auto page = allocate<RecoveryPage>();
++    if (!page)
++        return false;
++    const auto state = store.load(*page);
++    if (state == RecoveryRead::Empty)
++        return true;
++    if (state != RecoveryRead::Valid)
++        return false;
++    return page->phase == RecoveryPhase::Deleted || page->node == node || legionRecoveryForgetIdentity();
++}
++
++bool legionRecoveryIsBlocked()
++{
++    return persistenceBlocked;
++}
++
++void legionRecoveryBlock()
++{
++    persistenceBlocked = true;
++}
++
++int legionRecoveryFactoryReset()
++{
++    auto page = allocate<RecoveryPage>();
++    if (!page)
++        return -1;
++    const auto state = store.load(*page);
++    if (state == RecoveryRead::Empty || (state == RecoveryRead::Valid && page->phase == RecoveryPhase::Deleted))
++        return 0;
++    auto backup = allocate<meshtastic_BackupPreferences>();
++    if (state != RecoveryRead::Valid || !backup || !snapshotValid(*page, *backup))
++        return -1;
++    page->phase = RecoveryPhase::Restoring;
++    page->restoreAttempts = 0;
++    page->noticeAttempts = 0;
++    return store.commit(*page) ? 1 : -1;
++}
++#endif
+diff --git a/src/mesh/LegionRecovery.h b/src/mesh/LegionRecovery.h
+new file mode 100644
+index 0000000..78ab80a
+--- /dev/null
++++ b/src/mesh/LegionRecovery.h
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_RECOVERY
++#include "LegionRecoveryPolicy.h"
++#include "LegionRecoveryRunner.h"
++#include "LegionRecoveryStore.h"
++#include "mesh/generated/meshtastic/deviceonly.pb.h"
++
++LegionBootRecovery legionRecoveryBoot();
++bool legionRecoveryFinish();
++bool legionRecoveryPosition(meshtastic_PositionLite &position, bool &present);
++void legionRecoveryCommand(LegionBackupCommand command, char *reply, size_t size);
++bool legionRecoveryNotice(char *text, size_t size, uint8_t channel);
++bool legionRecoveryNoticeAttempt();
++void legionRecoveryNoticeQueued();
++bool legionRecoveryForgetIdentity();
++bool legionRecoveryAcceptIdentity(uint32_t node);
++bool legionRecoveryIsBlocked();
++void legionRecoveryBlock();
++int legionRecoveryFactoryReset();
++#endif
+diff --git a/src/mesh/LegionRecoveryPolicy.h b/src/mesh/LegionRecoveryPolicy.h
+new file mode 100644
+index 0000000..e918d96
+--- /dev/null
++++ b/src/mesh/LegionRecoveryPolicy.h
+@@ -0,0 +1,66 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++enum class LegionBackupCommand { None, Create, Status, Replace, Delete };
++
++inline LegionBackupCommand legionParseBackup(const uint8_t *data, size_t size, uint32_t ownNode)
++{
++    const auto space = [](uint8_t c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
++    if (!data || !ownNode)
++        return LegionBackupCommand::None;
++    while (size && space(*data)) {
++        ++data;
++        --size;
++    }
++    while (size && space(data[size - 1]))
++        --size;
++    constexpr char prefix[] = "/backup";
++    if (size <= sizeof(prefix) - 1 || std::memcmp(data, prefix, sizeof(prefix) - 1) || !space(data[sizeof(prefix) - 1]))
++        return LegionBackupCommand::None;
++    data += sizeof(prefix) - 1;
++    size -= sizeof(prefix) - 1;
++    while (size && space(*data)) {
++        ++data;
++        --size;
++    }
++    auto command = LegionBackupCommand::Create;
++    if (size && *data != '!') {
++        size_t token = 0;
++        while (token < size && !space(data[token]))
++            ++token;
++        if (token == 6 && !std::memcmp(data, "status", 6))
++            command = LegionBackupCommand::Status;
++        else if (token == 7 && !std::memcmp(data, "replace", 7))
++            command = LegionBackupCommand::Replace;
++        else if (token == 6 && !std::memcmp(data, "delete", 6))
++            command = LegionBackupCommand::Delete;
++        else
++            return LegionBackupCommand::None;
++        data += token;
++        size -= token;
++        while (size && space(*data)) {
++            ++data;
++            --size;
++        }
++    }
++    if (size != 9 || *data != '!')
++        return LegionBackupCommand::None;
++    uint32_t node = 0;
++    for (size_t i = 1; i < size; ++i) {
++        const uint8_t c = data[i];
++        uint8_t digit;
++        if (c >= '0' && c <= '9')
++            digit = c - '0';
++        else if (c >= 'a' && c <= 'f')
++            digit = c - 'a' + 10;
++        else if (c >= 'A' && c <= 'F')
++            digit = c - 'A' + 10;
++        else
++            return LegionBackupCommand::None;
++        node = (node << 4) | digit;
++    }
++    return node == ownNode ? command : LegionBackupCommand::None;
++}
+diff --git a/src/mesh/LegionRecoveryRunner.h b/src/mesh/LegionRecoveryRunner.h
+new file mode 100644
+index 0000000..8cc49b1
+--- /dev/null
++++ b/src/mesh/LegionRecoveryRunner.h
+@@ -0,0 +1,36 @@
++#pragma once
++
++#include "LegionRecoveryStore.h"
++
++enum class LegionBootRecovery { None, Restored, Blocked };
++
++namespace legion
++{
++enum class PreferenceRead { Valid, Missing, Corrupt, Temporary, Unsupported };
++
++template <typename Probe, typename Restore, typename Pause>
++LegionBootRecovery runRecovery(RecoveryStore &store, RecoveryPage &page, Probe probe, Restore restore, Pause pause)
++{
++    if (page.phase != RecoveryPhase::Restoring) {
++        const auto result = probe();
++        if (result == PreferenceRead::Valid)
++            return LegionBootRecovery::None;
++        if (result == PreferenceRead::Temporary || result == PreferenceRead::Unsupported)
++            return LegionBootRecovery::Blocked;
++        for (uint8_t retry = 0; retry < 2; ++retry) {
++            pause();
++            if (probe() != result)
++                return LegionBootRecovery::Blocked;
++        }
++        page.restoreAttempts = 0;
++        page.noticeAttempts = 0;
++    }
++    if (page.restoreAttempts >= RECOVERY_MAX_ATTEMPTS)
++        return LegionBootRecovery::Blocked;
++    page.phase = RecoveryPhase::Restoring;
++    ++page.restoreAttempts;
++    if (!store.commit(page) || !restore())
++        return LegionBootRecovery::Blocked;
++    return LegionBootRecovery::Restored;
++}
++} // namespace legion
+diff --git a/src/mesh/LegionRecoveryStore.h b/src/mesh/LegionRecoveryStore.h
+new file mode 100644
+index 0000000..25abfcb
+--- /dev/null
++++ b/src/mesh/LegionRecoveryStore.h
+@@ -0,0 +1,139 @@
++#pragma once
++
++#include "LegionCrc32.h"
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <memory>
++#include <new>
++
++namespace legion
++{
++constexpr uint32_t RECOVERY_BASE = 0xe8000;
++constexpr size_t RECOVERY_PAGE_SIZE = 4096;
++constexpr size_t RECOVERY_PAYLOAD_SIZE = 3072;
++constexpr uint32_t RECOVERY_MAGIC = 0x3147524c;
++constexpr uint32_t RECOVERY_SCHEMA = 0x04cb8881;
++constexpr uint32_t RECOVERY_MAX_ATTEMPTS = 3;
++
++enum class RecoveryPhase : uint32_t { Deleted, Armed, Restoring, NoticePending, NoticeSent };
++enum class RecoveryRead { Empty, Valid, Incompatible, Failed };
++
++struct RecoveryPage {
++    uint32_t magic;
++    uint32_t schema;
++    uint32_t generation;
++    uint32_t device[2];
++    uint32_t node;
++    RecoveryPhase phase;
++    uint32_t restoreAttempts;
++    uint32_t noticeAttempts;
++    uint32_t payloadSize;
++    uint32_t hasPosition;
++    int32_t latitude;
++    int32_t longitude;
++    int32_t altitude;
++    uint32_t crc;
++    uint8_t payload[RECOVERY_PAYLOAD_SIZE];
++    uint8_t reserved[RECOVERY_PAGE_SIZE - 60 - RECOVERY_PAYLOAD_SIZE];
++};
++static_assert(sizeof(RecoveryPage) == RECOVERY_PAGE_SIZE, "Recovery page layout changed");
++
++inline uint32_t recoveryCrc(const RecoveryPage &page)
++{
++    const auto *bytes = reinterpret_cast<const uint8_t *>(&page);
++    uint32_t crc = UINT32_MAX;
++    for (size_t i = 0; i < sizeof(page); ++i) {
++        if (i < offsetof(RecoveryPage, crc) || i >= offsetof(RecoveryPage, crc) + sizeof(page.crc))
++            crc = legionCrc32Update(crc, bytes[i]);
++    }
++    return ~crc;
++}
++
++class RecoveryFlash
++{
++  public:
++    virtual ~RecoveryFlash() = default;
++    virtual bool read(uint8_t slot, RecoveryPage &page) = 0;
++    virtual bool write(uint8_t slot, const RecoveryPage &page) = 0;
++};
++
++// Every transition replaces a complete alternate page; neither page needs an
++// in-place commit word.
++class RecoveryStore
++{
++  public:
++    explicit RecoveryStore(RecoveryFlash &backend) : flash(backend) {}
++
++    RecoveryRead load(RecoveryPage &page)
++    {
++        active = -1;
++        std::unique_ptr<RecoveryPage> candidate(new (std::nothrow) RecoveryPage);
++        if (!candidate)
++            return RecoveryRead::Failed;
++        for (uint8_t slot = 0; slot < 2; ++slot) {
++            if (!flash.read(slot, *candidate))
++                return RecoveryRead::Failed;
++            if (!validEnvelope(*candidate))
++                continue;
++            if (active < 0 || candidate->generation > page.generation) {
++                page = *candidate;
++                active = slot;
++            } else if (candidate->generation == page.generation && std::memcmp(candidate.get(), &page, sizeof(page))) {
++                return RecoveryRead::Failed;
++            }
++        }
++        if (active < 0) {
++            std::memset(&page, 0, sizeof(page));
++            return RecoveryRead::Empty;
++        }
++        if (page.schema != RECOVERY_SCHEMA)
++            return RecoveryRead::Incompatible;
++        return validContents(page) ? RecoveryRead::Valid : RecoveryRead::Failed;
++    }
++
++    bool commit(RecoveryPage &page)
++    {
++        if (page.generation >= UINT32_MAX - 1)
++            return false;
++        std::unique_ptr<RecoveryPage> next(new (std::nothrow) RecoveryPage(page));
++        if (!next)
++            return false;
++        next->magic = RECOVERY_MAGIC;
++        next->schema = RECOVERY_SCHEMA;
++        ++next->generation;
++        next->crc = recoveryCrc(*next);
++        if (!validContents(*next))
++            return false;
++        const uint8_t slot = active == 0 ? 1 : 0;
++        if (!flash.write(slot, *next))
++            return false;
++        // Read through the backend only after physical flush, never through its
++        // page cache.
++        std::unique_ptr<RecoveryPage> verified(new (std::nothrow) RecoveryPage);
++        if (!verified || !flash.read(slot, *verified) || std::memcmp(next.get(), verified.get(), sizeof(page)))
++            return false;
++        page = *next;
++        active = slot;
++        return true;
++    }
++
++    static bool validEnvelope(const RecoveryPage &page)
++    {
++        return page.magic == RECOVERY_MAGIC && page.generation && page.generation != UINT32_MAX && page.crc == recoveryCrc(page);
++    }
++
++    static bool validContents(const RecoveryPage &page)
++    {
++        if (page.schema != RECOVERY_SCHEMA || page.phase > RecoveryPhase::NoticeSent ||
++            page.restoreAttempts > RECOVERY_MAX_ATTEMPTS || page.noticeAttempts > RECOVERY_MAX_ATTEMPTS ||
++            page.payloadSize > RECOVERY_PAYLOAD_SIZE || page.hasPosition > 1)
++            return false;
++        return page.phase == RecoveryPhase::Deleted ? page.payloadSize == 0 : page.payloadSize > 0 && page.node != 0;
++    }
++
++  private:
++    RecoveryFlash &flash;
++    int active = -1;
++};
++} // namespace legion
+diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
+index 5e77f7c..e480f73 100644
+--- a/src/mesh/NodeDB.cpp
++++ b/src/mesh/NodeDB.cpp
+@@ -50,6 +50,9 @@
+ #if RAK3401_LEGION_FLASH
+ #include "LegionPersistence.h"
+ #endif
++#if RAK3401_LEGION_RECOVERY
++#include "LegionRecovery.h"
++#endif
+ #include <vector>
+ 
+ #ifdef MESHTASTIC_ENCRYPTED_STORAGE
+@@ -482,6 +485,23 @@ NodeDB::NodeDB()
+ {
+     LOG_INFO("Init NodeDB");
+     rebootObserver.observe(&notifyReboot);
++#if RAK3401_LEGION_RECOVERY
++    const auto recovery = legionRecoveryBoot();
++    if (recovery == LegionBootRecovery::Blocked) {
++        legionRecoveryBlock();
++        installDefaultNodeDatabase();
++        installDefaultDeviceState();
++        installDefaultConfig(false);
++        installDefaultModuleConfig();
++        installDefaultChannels();
++        configDecodeFailed = true;
++        config.lora.region = meshtastic_Config_LoRaConfig_RegionCode_UNSET;
++        config.lora.tx_enabled = false;
++        LOG_ERROR("Legion recovery blocked; preserving flash, identity frozen and "
++                  "radio silent");
++        return;
++    }
++#endif
+     loadFromDisk();
+     cleanupMeshDB();
+ 
+@@ -734,6 +754,28 @@ NodeDB::NodeDB()
+     // resetRadioConfig() above loaded config and channels, so this records the slot we booted on.
+     refreshCommittedLoraSlot();
+     saveToDisk(saveWhat);
++#if RAK3401_LEGION_RECOVERY
++    if (recovery == LegionBootRecovery::Restored) {
++        meshtastic_PositionLite position;
++        bool hasPosition = false;
++        const bool positionReady = legionRecoveryPosition(position, hasPosition);
++        if (positionReady && hasPosition) {
++            {
++                concurrency::LockGuard guard(&satelliteMutex);
++                nodePositions[getNodeNum()] = position;
++            }
++            setLocalPosition(TypeConversions::ConvertToPosition(position));
++        }
++        if (!positionReady || !saveToDiskNoRetry(SEGMENT_NODEDATABASE) || !legionRecoveryFinish()) {
++            legionRecoveryBlock();
++            configDecodeFailed = true;
++            config.lora.region = meshtastic_Config_LoRaConfig_RegionCode_UNSET;
++            config.lora.tx_enabled = false;
++            LOG_ERROR("Legion restore completion failed; radio silent, transaction "
++                      "retained");
++        }
++    }
++#endif
+     bootInitializationInProgress = false;
+ }
+ 
+@@ -923,6 +965,14 @@ void NodeDB::refreshCommittedLoraSlot()
+ 
+ bool NodeDB::factoryReset(bool eraseBleBonds)
+ {
++#if RAK3401_LEGION_RECOVERY
++    const int recovery = legionRecoveryFactoryReset();
++    if (recovery != 0) {
++        if (recovery > 0)
++            rebootAtMsec = Time::timerEndsAtMillis(DEFAULT_REBOOT_SECONDS * 1000);
++        return recovery > 0;
++    }
++#endif
+     LOG_INFO("Factory reset");
+     // first, remove the "/prefs" (this removes most prefs)
+     spiLock->lock();
+@@ -3123,6 +3173,10 @@ bool NodeDB::disableLockdownToPlaintext()
+ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *dest_struct,
+                        bool fullAtomic)
+ {
++#if RAK3401_LEGION_RECOVERY
++    if (legionRecoveryIsBlocked())
++        return false;
++#endif
+ 
+     // Only the radio profile is at risk from an unverified config load, so only defer those writes.
+     // Devicestate/nodedb/module writes must still land, otherwise boot-time recovery (e.g. loadFromDisk()
+@@ -3484,6 +3538,10 @@ static bool filesystemStillReadable()
+ 
+ bool NodeDB::saveToDisk(int saveWhat)
+ {
++#if RAK3401_LEGION_RECOVERY
++    if (legionRecoveryIsBlocked())
++        return false;
++#endif
+     LOG_DEBUG("Save to disk %d", saveWhat);
+ 
+     // do not try to save anything if power level is not safe. In many cases flash will be lock-protected
+@@ -4764,6 +4822,16 @@ bool NodeDB::generateCryptoKeyPair(const uint8_t *privateKey)
+ 
+     // Update sizes and copy to owner if successful
+     if (keygenSuccess) {
++#if RAK3401_LEGION_RECOVERY
++        if (!legionRecoveryAcceptIdentity(crc32Buffer(config.security.public_key.bytes, 32))) {
++            legionRecoveryBlock();
++            configDecodeFailed = true;
++            config.lora.region = meshtastic_Config_LoRaConfig_RegionCode_UNSET;
++            config.lora.tx_enabled = false;
++            LOG_ERROR("Legion cannot retire the previous rescue identity; radio silent");
++            return false;
++        }
++#endif
+         owner.public_key.size = 32;
+         memcpy(owner.public_key.bytes, config.security.public_key.bytes, 32);
+ 
+diff --git a/src/modules/AdminModule.cpp b/src/modules/AdminModule.cpp
+index 7e10a3e..3429015 100644
+--- a/src/modules/AdminModule.cpp
++++ b/src/modules/AdminModule.cpp
+@@ -21,6 +21,9 @@
+ #endif
+ #include "Router.h"
+ #include "configuration.h"
++#if RAK3401_LEGION_RECOVERY
++#include "mesh/LegionRecovery.h"
++#endif
+ #include "main.h"
+ #ifdef ARCH_NRF52
+ #include "main.h"
+@@ -780,6 +783,12 @@ void AdminModule::handleGetModuleConfigResponse(const meshtastic_MeshPacket &mp,
+ 
+ void AdminModule::handleSetOwner(const meshtastic_User &o)
+ {
++#if RAK3401_LEGION_RECOVERY
++    if (o.is_licensed && !owner.is_licensed && !legionRecoveryForgetIdentity()) {
++        sendWarning("Unable to disable rescue point before licensed-mode change");
++        return;
++    }
++#endif
+     int changed = 0;
+     bool identityUpdated = false;
+     bool channelsSanitized = false;
+@@ -1202,6 +1211,15 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c, bool fromOthers)
+             LOG_WARN(warning);
+             sendWarning(warning);
+         }
++#endif
++#if RAK3401_LEGION_RECOVERY
++        if (incoming.private_key.size == 32 &&
++            (config.security.private_key.size != 32 ||
++             std::memcmp(incoming.private_key.bytes, config.security.private_key.bytes, 32)) &&
++            !legionRecoveryForgetIdentity()) {
++            sendWarning("Unable to disable rescue point before identity change");
++            return;
++        }
+ #endif
+         config.security = incoming;
+         // A remote admin does not get to drop the host's own admin keys.
+@@ -1939,6 +1957,12 @@ static bool isBlankName(const char *start)
+ 
+ bool AdminModule::handleSetHamMode(const meshtastic_HamParameters &p)
+ {
++#if RAK3401_LEGION_RECOVERY
++    if (!legionRecoveryForgetIdentity()) {
++        sendWarning("Unable to disable rescue point before licensed-mode change");
++        return false;
++    }
++#endif
+     // Validate ham parameters before setting since this would bypass validation in the owner struct.
+ 
+     // The call sign is the station ID the whole licensed mode is built around, so it is required;
+diff --git a/src/modules/AdminModule.h b/src/modules/AdminModule.h
+index 0fbc8ac..6986371 100644
+--- a/src/modules/AdminModule.h
++++ b/src/modules/AdminModule.h
+@@ -31,6 +31,8 @@ class AdminModule : public ProtobufModule<meshtastic_AdminMessage>, public Obser
+      */
+     AdminModule();
+ 
++    bool isEditingSettings() const { return hasOpenEditTransaction; }
++
+   protected:
+     /** Called to handle a particular incoming message
+ 
+diff --git a/src/modules/LegionTelemetryModule.cpp b/src/modules/LegionTelemetryModule.cpp
+index c1a44f5..54d73e8 100644
+--- a/src/modules/LegionTelemetryModule.cpp
++++ b/src/modules/LegionTelemetryModule.cpp
+@@ -10,6 +10,9 @@
+ #include "main.h"
+ #include "platform/nrf52/LegionTelemetryHal.h"
+ #include "power/RAK3401LegionPower.h"
++#if RAK3401_LEGION_RECOVERY
++#include "mesh/LegionRecovery.h"
++#endif
+ #include <cstdio>
+ #include <cstring>
+ 
+@@ -60,14 +63,28 @@ ProcessMessage LegionTelemetryModule::handleReceived(const meshtastic_MeshPacket
+         mp.decoded.payload.size > sizeof(mp.decoded.payload.bytes))
+         return ProcessMessage::CONTINUE;
+     Channel channel;
+-    bool targeted;
+-    if (!findChannel(channel) || mp.channel != channel.index ||
+-        !legion::parseTelemetryCommand(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum(), targeted))
++    bool targeted = false;
++    if (!findChannel(channel) || mp.channel != channel.index)
++        return ProcessMessage::CONTINUE;
++    bool accepted =
++        legion::parseTelemetryCommand(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum(), targeted);
++#if RAK3401_LEGION_RECOVERY
++    const auto backup = legionParseBackup(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum());
++    if (backup != LegionBackupCommand::None) {
++        accepted = true;
++        targeted = true;
++    }
++#endif
++    if (!accepted)
+         return ProcessMessage::CONTINUE;
+     const uint32_t delayMs = targeted ? random(250, 1001) : random(1000, 10001);
+     concurrency::LockGuard guard(&stateLock);
+-    if (requests.reserve(getFrom(&mp), mp.id, Time::getMillis(), delayMs))
++    if (requests.reserve(getFrom(&mp), mp.id, Time::getMillis(), delayMs)) {
+         pendingChannel = channel;
++#if RAK3401_LEGION_RECOVERY
++        pendingBackup = backup;
++#endif
++    }
+     return ProcessMessage::CONTINUE;
+ }
+ 
+@@ -130,7 +147,7 @@ void LegionTelemetryModule::sendReport(uint8_t channel)
+         char percent[5] = "NA";
+         if (powerStatus && powerStatus->getHasBattery() && powerStatus->getBatteryChargePercent() <= 100)
+             std::snprintf(percent, sizeof(percent), "%u", (unsigned)powerStatus->getBatteryChargePercent());
+-        std::snprintf(battery, sizeof(battery), "%s%% %u.%02u/min%u.%02uV", percent, snapshot.battery / 1000,
++        std::snprintf(battery, sizeof(battery), "%s%% %u.%02u / min %u.%02uV", percent, snapshot.battery / 1000,
+                       (snapshot.battery % 1000) / 10, snapshot.batteryMin / 1000, (snapshot.batteryMin % 1000) / 10);
+     }
+     if (snapshot.noiseCount)
+@@ -138,24 +155,37 @@ void LegionTelemetryModule::sendReport(uint8_t channel)
+                       (unsigned long)snapshot.noiseCount);
+     auto radio = RadioLibInterface::instance;
+     char report[200];
+-    const int length = std::snprintf(
+-        report, sizeof(report), "Legion0.3.0 !%08lx up:%lus\nCPU:%s/max%sC BAT:%s\nN:%s\nRX:%lu BAD:%lu TX:%lu REL:%lu DROP:%u",
+-        (unsigned long)nodeDB->getNodeNum(), (unsigned long)Time::getUptimeSecs(), temperature, maximum, battery, noise,
+-        (unsigned long)(radio ? radio->rxGood : 0), (unsigned long)(radio ? radio->rxBad : 0),
+-        (unsigned long)(radio ? radio->txGood : 0), (unsigned long)(radio ? radio->txRelay : 0), radio ? radio->txDrop : 0);
++    const char *version = std::strstr(optstr(APP_VERSION), "Legion");
++    if (!version)
++        version = optstr(APP_VERSION);
++    const int length = std::snprintf(report, sizeof(report),
++                                     "%s !%08lx up:%lus\nCPU:%s / max %sC BAT:%s\nN:%s\nRX:%lu BAD:%lu TX:%lu "
++                                     "REL:%lu DROP:%u",
++                                     version, (unsigned long)nodeDB->getNodeNum(), (unsigned long)Time::getUptimeSecs(),
++                                     temperature, maximum, battery, noise, (unsigned long)(radio ? radio->rxGood : 0),
++                                     (unsigned long)(radio ? radio->rxBad : 0), (unsigned long)(radio ? radio->txGood : 0),
++                                     (unsigned long)(radio ? radio->txRelay : 0), radio ? radio->txDrop : 0);
+     if (length <= 0 || static_cast<size_t>(length) >= sizeof(report))
+         return;
++    sendText(channel, report);
++}
++
++bool LegionTelemetryModule::sendText(uint8_t channel, const char *text)
++{
++    const size_t length = std::strlen(text);
++    if (length > 199)
++        return false;
+     auto packet = allocDataPacket();
+     if (!packet)
+-        return;
++        return false;
+     packet->channel = channel;
+     packet->to = NODENUM_BROADCAST;
+     packet->want_ack = false;
+     packet->decoded.want_response = false;
+     packet->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+     packet->decoded.payload.size = length;
+-    std::memcpy(packet->decoded.payload.bytes, report, length);
+-    service->sendToMesh(packet, RX_SRC_LOCAL, true);
++    std::memcpy(packet->decoded.payload.bytes, text, length);
++    return service->sendToMesh(packet, RX_SRC_LOCAL, true) == 0;
+ }
+ 
+ int32_t LegionTelemetryModule::runOnce()
+@@ -169,17 +199,45 @@ int32_t LegionTelemetryModule::runOnce()
+         sampled = true;
+     }
+     bool respond = false;
++#if RAK3401_LEGION_RECOVERY
++    LegionBackupCommand backup = LegionBackupCommand::None;
++#endif
+     {
+         concurrency::LockGuard guard(&stateLock);
+         if (requests.ready(now)) {
+             respond = configured && sameChannel(channel, pendingChannel);
+             requests.finish(now);
++#if RAK3401_LEGION_RECOVERY
++            backup = pendingBackup;
++            pendingBackup = LegionBackupCommand::None;
++#endif
+         }
+     }
+     if (respond && legionPowerTxReady()) {
+-        sample();
+-        sendReport(channel.index);
++#if RAK3401_LEGION_RECOVERY
++        if (backup != LegionBackupCommand::None) {
++            char reply[200]{};
++            legionRecoveryCommand(backup, reply, sizeof(reply));
++            sendText(channel.index, reply);
++        } else
++#endif
++        {
++            sample();
++            sendReport(channel.index);
++        }
+     }
++#if RAK3401_LEGION_RECOVERY
++    if (configured && RadioLibInterface::instance && legionPowerTxReady() &&
++        (!noticeAttempted || Throttle::hasElapsed(lastNoticeAttempt, 60000))) {
++        noticeAttempted = true;
++        lastNoticeAttempt = now;
++        char notice[200];
++        if (legionRecoveryNotice(notice, sizeof(notice), channel.index)) {
++            if (legionRecoveryNoticeAttempt() && sendText(channel.index, notice))
++                legionRecoveryNoticeQueued();
++        }
++    }
++#endif
+     return 1000;
+ }
+ #endif
+diff --git a/src/modules/LegionTelemetryModule.h b/src/modules/LegionTelemetryModule.h
+index a012bcf..00c34c3 100644
+--- a/src/modules/LegionTelemetryModule.h
++++ b/src/modules/LegionTelemetryModule.h
+@@ -7,6 +7,9 @@
+ #error "Legion telemetry requires the RAK3401 + RAK13302 energy profile"
+ #endif
+ #include "LegionTelemetryPolicy.h"
++#if RAK3401_LEGION_RECOVERY
++#include "mesh/LegionRecoveryPolicy.h"
++#endif
+ #include "SinglePortModule.h"
+ #include "concurrency/Lock.h"
+ #include "concurrency/OSThread.h"
+@@ -33,6 +36,7 @@ class LegionTelemetryModule : public SinglePortModule, private concurrency::OSTh
+     static bool sameChannel(const Channel &a, const Channel &b);
+     void sample();
+     void sendReport(uint8_t channel);
++    bool sendText(uint8_t channel, const char *text);
+ 
+     concurrency::Lock stateLock;
+     legion::TelemetryRequestGate requests;
+@@ -40,6 +44,11 @@ class LegionTelemetryModule : public SinglePortModule, private concurrency::OSTh
+     Channel pendingChannel;
+     uint32_t lastSample = 0;
+     bool sampled = false;
++#if RAK3401_LEGION_RECOVERY
++    LegionBackupCommand pendingBackup = LegionBackupCommand::None;
++    uint32_t lastNoticeAttempt = 0;
++    bool noticeAttempted = false;
++#endif
+ };
+ 
+ extern LegionTelemetryModule *legionTelemetryModule;
+diff --git a/src/platform/nrf52/nrf52840_s140_v6.ld b/src/platform/nrf52/nrf52840_s140_v6.ld
+index a956c65..89f1c5c 100644
+--- a/src/platform/nrf52/nrf52840_s140_v6.ld
++++ b/src/platform/nrf52/nrf52840_s140_v6.ld
+@@ -13,7 +13,7 @@ MEMORY
+    *
+    * S140 v6.x app region starts at 0x26000 (152 KB SoftDevice); v7.x uses
+    * 0x27000. All other boundaries are identical — see nrf52840_s140_v7.ld. */
+-  FLASH (rx)     : ORIGIN = 0x26000, LENGTH = 0xEA000 - 0x26000
++  FLASH (rx)     : ORIGIN = 0x26000, LENGTH = DEFINED(__legion_recovery) ? 0xE8000 - 0x26000 : 0xEA000 - 0x26000
+ 
+   /* SRAM required by Softdevice depend on
+    * - Attribute Table Size (Number of Services and Characteristics)

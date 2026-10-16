@@ -1,6 +1,7 @@
 # Legion commands
 
-These commands require **Legion 0.3.0 or later on the responding RAK3401**.
+Telemetry requires **Legion 0.3.0 or later**; the backup commands below require
+**Legion 0.4.0** on the responding RAK3401.
 The phone app and the requesting/receiving node can use standard Meshtastic.
 Commands are ordinary text messages; no app plugin or remote-admin key is needed.
 
@@ -49,8 +50,8 @@ app, so the RAK does not need another node to echo its own report.
 Example report; values are illustrative:
 
 ~~~text
-Legion0.3.0 !abcdef01 up:194400s
-CPU:29.25/max34.50C BAT:82% 4.01/min3.96V
+Legion0.4.0 !abcdef01 up:194400s
+CPU:29.25 / max 34.50C BAT:82% 4.01 / min 3.96V
 N:-116 peak:-88dBm n:600
 RX:450 BAD:7 TX:32 REL:24 DROP:2
 ~~~
@@ -74,6 +75,27 @@ Battery voltage uses Legion's physical RAK19007 divider, independently of the
 app's ADC multiplier override. The voltage and the app's estimated percentage
 can therefore disagree. This is a voltage monitor, not a fuel gauge or charging
 current measurement.
+
+## /backup — manual rescue point (0.4.0)
+
+| Message | Behavior |
+| --- | --- |
+| `/backup !abcdef01` | Create if absent; never silently overwrite. |
+| `/backup status !abcdef01` | Report whether a valid rescue point exists. |
+| `/backup replace !abcdef01` | Explicitly replace with current settings. |
+| `/backup delete !abcdef01` | Disable recovery with a durable deletion marker. |
+
+All four commands require the full destination ID. Other nodes remain silent.
+They use the same channel validation, cooldown and duplicate cache as telemetry.
+No key or backup contents are sent in the reply. Wait for the explicit saved or
+deleted response; a delivery icon is not proof of persistence.
+
+Installing firmware, rebooting or changing settings never creates a rescue point.
+Names, keys, radio/module/channel settings and fixed position are captured only
+after the owner's command. Read [RECOVERY.md](RECOVERY.md) before using factory
+reset: an armed rescue point is restored; delete it first to deliberately remain blank.
+The successful-recovery notice is separate from routine telemetry and is emitted
+only after a completed recovery.
 
 ## Sampling and response limits
 
@@ -114,7 +136,7 @@ standard periodic telemetry packets.
 ## If no report arrives
 
 Check the exact channel name, SECONDARY role, private PSK, matching modem settings
-and that the target runs Legion 0.3.0. Wait at least a minute after a previous
+and that the target runs a compatible Legion version. Wait at least a minute after a previous
 attempt, and allow for the response delay and a busy channel. A muted channel may
 hide notifications. Keep a receiver/app connected if you need a continuous record:
 ordinary nodes do not provide a guaranteed archive of earlier reports.

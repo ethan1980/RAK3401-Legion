@@ -59,7 +59,7 @@ def prepare_release(directory, commit):
 
     version = manifest["legion_version"]
     upstream = manifest["meshtastic_version"]
-    if version in ("0.2.0", "0.3.0", "0.3.5") and not all(
+    if version in ("0.2.0", "0.3.0", "0.3.5", "0.4.0") and not all(
         manifest.get(name) is True
         for name in (
             "bulk_spi",
@@ -69,7 +69,7 @@ def prepare_release(directory, commit):
         )
     ):
         raise ValueError(f"Legion {version} requires all declared firmware features")
-    if version in ("0.3.0", "0.3.5") and not (
+    if version in ("0.3.0", "0.3.5", "0.4.0") and not (
         manifest.get("private_telemetry") is True
         and manifest.get("spi_hz") == 8000000
         and manifest.get("telemetry_channel") == "LegionRF"
@@ -79,7 +79,7 @@ def prepare_release(directory, commit):
         raise ValueError(
             f"Legion {version} requires 8 MHz SPI and private on-demand telemetry"
         )
-    if version == "0.3.5":
+    if version in ("0.3.5", "0.4.0"):
         dfu = manifest.get("ble_dfu_validation") or {}
         if not (
             dfu.get("method") == "compiled-cortex-m4-emulation"
@@ -90,9 +90,47 @@ def prepare_release(directory, commit):
             and dfu.get("softdevice_disable_stubbed") is True
             and dfu.get("hardware_tested") is False
         ):
-            raise ValueError("Legion 0.3.5 requires verified compiled BLE DFU reset")
+            raise ValueError(
+                f"Legion {version} requires verified compiled BLE DFU reset"
+            )
+    if version == "0.4.0":
+        update = manifest.get("update_validation") or {}
+        if not (
+            manifest.get("manual_recovery") is True
+            and manifest.get("recovery_automatic_snapshot") is False
+            and update.get("application_only") is True
+            and update.get("elf_ota_uf2_match") is True
+            and update.get("reserve_start") == "0xe8000"
+            and update.get("reserve_end") == "0xea000"
+            and update.get("image_margin_bytes", -1) >= 0
+        ):
+            raise ValueError(
+                "Legion 0.4.0 requires manual recovery and verified update boundaries"
+            )
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
+    if version == "0.4.0":
+        features += (
+            "Manual rescue backup: `/backup !xxxxxxxx`, `/backup status !xxxxxxxx`, "
+            "`/backup replace !xxxxxxxx` and `/backup delete !xxxxxxxx` on private LegionRF. "
+            "Only the addressed node acts. No automatic snapshot is created. The rescue point "
+            "includes names, private identity, channels, radio/module configuration and fixed position. "
+            "Confirmed essential preference loss can restore it; ordinary boots, name changes and OTA "
+            "with healthy preferences do not. A successful recovery queues the requested "
+            "Ashes to ashes notice. Factory reset restores an armed rescue point: delete the "
+            "rescue point first to deliberately remain blank.\n\n"
+            f"Read [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/RECOVERY.md) "
+            "for commands, deletion, power-cut behavior and limits. Recovery/power-cut hardware "
+            "testing is pending.\n\n"
+            "The 0.3.5 BLE DFU correction is preserved. From installed **0.3.5**, select this "
+            "release's **OTA ZIP**. From 0.2.0/0.3.0, use this release's UF2 over USB. "
+            "Compiled callback and Cortex-M4 reset validation remain mandatory. The ELF, "
+            "application-only OTA BIN and UF2 are cross-checked and must end before the "
+            "0xE8000–0xEA000 rescue reserve. Physical end-to-end OTA remains unverified.\n\n"
+            "Telemetry displays the compiled Legion version and spaces its min/max labels. "
+            "MQTT, BLE and device metadata advertise 2.8.2.Legion0.4.0. "
+            "The owner reports stable normal operation with 0.3.5; keep it for rollback.\n\n"
+        )
     if version == "0.3.5":
         features += (
             "**USB recovery from Legion 0.2.0 or 0.3.0:** install this release's UF2 "

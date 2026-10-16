@@ -202,6 +202,46 @@ class ReleaseValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "verified compiled BLE DFU"):
                     release.prepare_release(self.directory, self.commit)
 
+    def v040_manifest(self):
+        self.v035_manifest()
+        self.manifest.update(
+            legion_version="0.4.0",
+            advertised_firmware_version="2.8.2.Legion0.4.0",
+            manual_recovery=True,
+            recovery_automatic_snapshot=False,
+            update_validation={
+                "application_only": True,
+                "elf_ota_uf2_match": True,
+                "reserve_start": "0xe8000",
+                "reserve_end": "0xea000",
+                "image_margin_bytes": 50000,
+            },
+        )
+
+    def test_v040_requires_dfu_and_rescue_boundaries(self):
+        for field in ("ble_dfu_validation", "update_validation", "manual_recovery"):
+            with self.subTest(field=field):
+                self.v040_manifest()
+                self.manifest.pop(field)
+                self.write_manifest()
+                with self.assertRaises(ValueError):
+                    release.prepare_release(self.directory, self.commit)
+
+    def test_v040_notes_explain_manual_backup_and_preserved_ota(self):
+        self.v040_manifest()
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.4.0-aaaaaaa")
+        for term in (
+            "/backup",
+            "RECOVERY.md",
+            "0xE8000",
+            "0.3.5",
+            "No automatic snapshot",
+            "2.8.2.Legion0.4.0",
+        ):
+            self.assertIn(term, metadata["notes"])
+
     def test_v035_notes_require_usb_recovery_and_distinguish_hardware_validation(self):
         self.v035_manifest()
         self.write_manifest()

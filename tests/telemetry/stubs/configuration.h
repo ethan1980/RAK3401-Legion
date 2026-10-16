@@ -8,6 +8,11 @@
 
 #define RAK3401_LEGION_TELEMETRY 1
 #define RAK3401_LEGION_POWER 1
+#define RAK3401_LEGION_RECOVERY 1
+#define APP_VERSION 2.8.2.Legion0.4.0
+#define str(s) #s
+#define xstr(s) str(s)
+#define optstr(s) xstr(s)
 #define ARCH_NRF52 1
 #define RAK3401 1
 #define RAK13302 1

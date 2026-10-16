@@ -9,10 +9,11 @@ class MeshService
 {
   public:
     std::vector<SentPacket> sent;
-    void sendToMesh(meshtastic_MeshPacket *p, int source, bool toPhone)
+    int sendToMesh(meshtastic_MeshPacket *p, int source, bool toPhone)
     {
         sent.push_back({*p, source, toPhone});
         delete p;
+        return 0;
     }
 };
 extern MeshService *service;

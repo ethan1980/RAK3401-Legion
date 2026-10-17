@@ -328,7 +328,7 @@ class ReleaseValidationTests(unittest.TestCase):
         ] = True
         self.write_manifest()
         notes = release.prepare_release(self.directory, self.commit)["notes"]
-        for term in ("Install over USB first", "2.8.2.Legion0.4.2"):
+        for term in ("manual rescue backup", "2.8.2.Legion0.4.2"):
             self.assertIn(term, notes)
 
     def test_v042_requires_explicit_clean_provenance(self):
@@ -341,30 +341,23 @@ class ReleaseValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicitly clean"):
             release.prepare_release(self.directory, self.commit)
 
-    def test_v042_transfer_report_does_not_become_completed_hardware_test(self):
+    def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(
-            legion_version="0.4.2",
-            advertised_firmware_version="2.8.2.Legion0.4.2",
-            ota_hardware_observation={
-                "transfer_confirmed": True,
-                "completion_confirmed": False,
-            },
+            legion_version="0.4.2", advertised_firmware_version="2.8.2.Legion0.4.2"
         )
         self.manifest["ble_dfu_validation"][
             "write_authorization_contract_checked"
         ] = True
         self.write_manifest()
         notes = release.prepare_release(self.directory, self.commit)["notes"]
-        self.assertIn("BLE OTA completion remains pending hardware verification", notes)
-        self.assertNotIn("BLE OTA updates have been verified", notes)
-        self.manifest["ota_hardware_observation"]["completion_confirmed"] = True
-        self.write_manifest()
-        notes = release.prepare_release(self.directory, self.commit)["notes"]
-        self.assertIn("BLE OTA updates have been verified using **nRF Connect**", notes)
-        self.assertNotIn("iPhone", notes)
-        self.assertNotIn("owner reports", notes)
-        self.assertIn("Emergency restoration from a saved backup", notes)
+        self.assertIn(
+            "status, replacement and deletion—are verified on hardware", notes
+        )
+        self.assertIn("Automatic emergency restoration from a saved backup", notes)
+        self.assertIn("remain pending hardware verification", notes)
+        for term in ("dfu", "ota", "bootloader", "owner reports", "0.5.0"):
+            self.assertNotIn(term, notes.lower())
 
 
 if __name__ == "__main__":

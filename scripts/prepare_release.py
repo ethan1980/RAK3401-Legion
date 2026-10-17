@@ -133,29 +133,18 @@ def prepare_release(directory, commit):
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
     if version == "0.4.2":
-        observation = manifest.get("ota_hardware_observation") or {}
-        if observation.get("completion_confirmed") is True:
-            hardware_status = (
-                "BLE OTA updates have been verified using **nRF Connect**. "
-            )
-        else:
-            hardware_status = (
-                "BLE OTA completion remains pending hardware verification. "
-            )
         features += (
-            f"{hardware_status}"
-            "Install over USB first when migrating from older Legion releases; "
-            "subsequent BLE updates use the application-only OTA ZIP. "
-            "No bootloader or SoftDevice update is included.\n\n"
-            "This maintenance release fixes BLE OTA entry and preserves manual rescue "
-            "backup, radio behavior, power policy, persistence and private telemetry. "
-            "Telemetry, current firmware version and min/max formatting, backup creation "
-            "with its success confirmation, status and deletion are verified on hardware. "
-            "Emergency restoration from a saved backup, its announcement, backup replacement "
-            "and physical power-cut recovery remain pending hardware verification.\n\n"
+            "Legion includes manual rescue backup, radio optimizations, energy recovery, "
+            "verified preference writes and private telemetry. "
+            "Telemetry, current firmware version and min/max formatting are verified "
+            "on hardware. All backup commands—creation with its success confirmation, "
+            "status, replacement and deletion—are verified on hardware. "
+            "Automatic emergency restoration from a saved backup, its recovery "
+            "announcement and physical power-cut recovery remain pending hardware "
+            "verification.\n\n"
             "Use `/backup !xxxxxxxx` to create a rescue point explicitly. Status, replace "
             "and delete require the same full target ID. No automatic snapshot is created. "
-            f"Read [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md) "
+            "Read [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md) "
             "and [COMMANDS.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md). "
             "The compiled version is 2.8.2.Legion0.4.2 in telemetry, MQTT, device metadata "
             "and Bluetooth.\n\n"
@@ -244,6 +233,11 @@ def prepare_release(directory, commit):
         )
     if manifest.get("flash_readback_crc32"):
         features += "Temporary writes are verified with CRC32 and exact length before rename.\n\n"
+    downloads = (
+        "- Firmware packages: see the release assets.\n\n"
+        if version == "0.4.2"
+        else f"- USB firmware: `{uf2[0]}`\n- Wireless firmware: `{ota[0]}`\n\n"
+    )
     return {
         "tag": f"legion-v{version}-{commit[:7]}",
         "title": f"Legion {version} - Meshtastic {upstream} ({commit[:7]})",
@@ -253,8 +247,7 @@ def prepare_release(directory, commit):
             f"- Meshtastic base: `{upstream}`, commit `{manifest['commit']}`\n"
             f"- Legion build commit: `{commit}`\n"
             f"- Advertised firmware: `{advertised_version}` (MQTT, device metadata and BLE)\n"
-            f"- USB/bootloader firmware: `{uf2[0]}`\n"
-            f"- OTA/DFU firmware: `{ota[0]}`\n\n"
+            f"{downloads}"
             f"{features}"
             "The advertised version is generated from `upstream.json`. Firmware filenames "
             "retain the upstream version and source hash; both complete source commits "

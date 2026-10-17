@@ -3,7 +3,7 @@
 Legion can save one rescue point on the configured node and restore it if a
 later boot confirms missing or corrupt essential preferences. **Nothing is
 backed up automatically.** Installing firmware, restarting, changing settings or
-updating over OTA does not create or refresh a rescue point.
+updating firmware does not create or refresh a rescue point.
 
 ## Create the rescue point
 
@@ -71,7 +71,7 @@ do not authorize an overwrite. Losing only peer history or position history does
 not trigger a complete restoration.
 
 Normal restart, name-change restart, battery-switch power-off/on and application
-OTA with intact preferences do not restore the rescue point or send an announcement.
+firmware updates with intact preferences do not restore the rescue point or send an announcement.
 If an event actually destroys essential preferences, that damage can trigger recovery.
 
 Restoration writes and verifies the essential files before normal boot continues.
@@ -79,7 +79,7 @@ It reconstructs identity from the saved private key, restores fixed position and
 persists completion before enabling the recovery notice. A power cut during the
 transaction causes a later boot to resume it rather than accept a mixed configuration.
 At most three restore attempts are persisted. An incomplete/blocked restoration
-holds the radio silent and prevents preference saves; BLE DFU remains available.
+holds the radio silent and prevents preference saves.
 Repeated hardware/storage failure needs operator diagnosis rather than an endless
 erase/reboot loop. No autonomous reboot loop is introduced.
 
@@ -103,7 +103,7 @@ private LegionRF channel:
 > Ashes to ashes, dust to dust, the node [node_name] has risen again
 
 The restored long name replaces `[node_name]`; short name and Node ID are fallbacks.
-The notice is never sent for an ordinary boot, OTA, backup creation or failed restore.
+The notice is never sent for an ordinary boot, firmware update, backup creation or failed restore.
 It never falls back to a public channel. If the private channel/key changes, it
 does not send into that replacement channel.
 
@@ -122,15 +122,10 @@ LittleFS (0xED000–0xF4000) and do not take the warm-node region
 (0xEA000–0xED000). The Legion linker caps the application at 0xE8000.
 The two-page record keeps the previous valid generation during a torn write.
 
-Packaging rejects an ELF, OTA BIN or UF2 that overlaps this reserve and checks
-that all three describe the same application. The OTA ZIP contains only an
-application. No bootloader or SoftDevice update is included.
-
-BLE OTA updates have been verified using **nRF Connect**. Migration from older
-Legion releases uses the 0.4.2 UF2 over USB. See [DFU.md](DFU.md) for installation.
-Normal Legion application updates that respect this boundary preserve the reserve.
-Other firmware, a full chip erase, a bootloader/SoftDevice update or failed flash
-hardware can destroy it. Installing vanilla or another fork is outside that guarantee.
+Packaging rejects application images that overlap the rescue reserve and checks
+that all firmware packages describe the same application. Normal Legion firmware
+updates that respect this boundary preserve the reserve. A full chip erase,
+incompatible firmware or failed flash hardware can destroy it.
 Encrypted-storage lockdown and event-profile builds do not create/use this rescue
 format. BLE bonding is separate and is not restored by the LoRa identity snapshot.
 
@@ -144,11 +139,11 @@ Meshtastic messages and nanopb, simulated storage, and an OpenSSL X25519 oracle.
 It checks identity/settings/position serialization, preflight, restoration, notices,
 replacement, deletion, v26 migration markers and temporary/unsupported reads.
 The telemetry transport is tested against simulated channels. Build/package gates
-check the active DFU callback, emulated OTA reset, image boundaries and file integrity.
+check application boundaries and file integrity.
 These checks do not substitute for physical power-cut or RF-delivery tests.
 
-On 0.4.2, telemetry responses and formatting, manual backup creation with its
-success confirmation, backup status and deletion have been verified on hardware.
-Emergency restoration from a saved backup, the recovery announcement, replacement
-of an existing backup and physical power-cut recovery remain pending hardware
-verification. No rescue point is armed until an explicit backup command succeeds.
+On 0.4.2, telemetry responses and formatting and all backup commands—creation
+with its success confirmation, status, replacement and deletion—have been verified
+on hardware. Automatic emergency restoration from a saved backup, the recovery
+announcement and physical power-cut recovery remain pending hardware verification.
+No rescue point is armed until an explicit backup command succeeds.

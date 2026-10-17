@@ -144,6 +144,7 @@ ordinary nodes do not provide a guaranteed archive of earlier reports.
 ## Validation status in 0.4.2
 
 Telemetry responses, current firmware version and min/max formatting are verified
-on hardware. Backup creation with its success confirmation, status and deletion
-are also verified. Backup replacement, emergency restoration from the saved copy
-and the recovery announcement remain pending hardware verification.
+on hardware. All backup commands—creation with its success confirmation, status,
+replacement and deletion—are also verified on hardware. Automatic emergency
+restoration from the saved copy and the recovery announcement remain pending
+hardware verification.

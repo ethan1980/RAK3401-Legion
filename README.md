@@ -9,12 +9,11 @@ Current release: **Legion 0.4.2**, based on **Meshtastic 2.8.2 develop/nightly**
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
 
-**BLE OTA updates have been verified using nRF Connect.** Telemetry responses,
-firmware version display and min/max formatting, manual backup creation with a
-success confirmation, backup status and deletion have also been verified on 0.4.2.
-Emergency restoration from a saved backup has not yet been tested on hardware.
-See [installation and updates](DFU.md) and [manual rescue backup](RECOVERY.md).
-Older release downloads are withdrawn; their source tags and Git history remain available.
+Telemetry responses, firmware version display and min/max formatting are verified
+on 0.4.2. All manual backup commands—create, status, replace and delete—are also
+verified on hardware. Automatic emergency restoration from a saved backup and
+its recovery announcement remain pending hardware verification.
+See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).
 
 This repository contains a small set of patches and a build profile. The build
 downloads the upstream source pinned in `upstream.json`, applies the changes,
@@ -90,7 +89,7 @@ destination; see [RECOVERY.md](RECOVERY.md) for the exact commands and reset beh
 
 Two raw-flash generations outside LittleFS protect against a torn replacement.
 At boot, confirmed essential preference loss can restore the saved configuration;
-normal restart, name changes and application OTA with healthy preferences do not.
+normal restart, name changes and firmware updates with healthy preferences do not.
 A successful recovery queues the requested “Ashes to ashes…” notice on LegionRF.
 Factory reset restores an armed rescue point; delete the rescue point first to
 deliberately return to blank settings. Hardware recovery/power-cut tests are pending.
@@ -192,13 +191,11 @@ measured on this kit yet.
 
 Download ready-to-flash firmware from
 [Releases](https://github.com/ethan1980/RAK3401-Legion/releases).
-After both profiles build successfully, pushes to `main` and manual workflow runs
-on `main` automatically publish an **experimental prerelease** of Legion.
-Each release has a tag such as `legion-v0.4.2-<commit>` and includes:
-
-- `firmware-rak3401-legion-*.uf2` for USB/bootloader flashing.
-- `firmware-rak3401-legion-*-ota.zip` for OTA/DFU updates.
-- Corresponding source, build metadata, debug files, and `SHA256SUMS`.
+After both profiles build successfully, firmware changes pushed to `main` and manual
+workflow runs on `main` publish an **experimental prerelease** of Legion. Documentation
+updates preserve the existing firmware release.
+Each release has a tag such as `legion-v0.4.2-<commit>` and includes firmware
+packages, corresponding source, build metadata, debug files and `SHA256SUMS`.
 
 Release assets are direct downloads and have no Actions artifact retention limit.
 Published releases are preserved when the same commit is rebuilt. Pull requests
@@ -206,17 +203,6 @@ build and test the firmware without publishing a release. To build and publish
 manually, open **Actions → Build RAK3401 Legion → Run workflow** and select `main`.
 
 The comparison baseline is also available in Actions.
-
-### Installing and updating 0.4.2
-
-BLE OTA operation is verified using **nRF Connect** with the release's
-`firmware-rak3401-legion-*-ota.zip`. See [DFU.md](DFU.md) for the procedure.
-
-Migration from older Legion releases uses the **0.4.2 UF2 over USB**. Connect a
-USB data cable, double-press Reset to expose the bootloader drive, and copy the
-release's `firmware-rak3401-legion-*.uf2` onto it. The firmware identifies itself
-as **`2.8.2.Legion0.4.2`** after restart. A normal UF2 update preserves the existing
-configuration; no factory erase/reset is required.
 
 Open a successful run in
 [Actions](https://github.com/ethan1980/RAK3401-Legion/actions/workflows/build.yml)
@@ -227,11 +213,8 @@ and download its artifacts:
 | `RAK3401-legion-…` | `rak3401-legion` | 8 MHz bulk SPI, energy recovery, persistence checks, private telemetry and manual rescue backup |
 | `RAK3401-baseline-…` | `rak3401-1watt` | Reference with the original behavior |
 
-Each package contains the **UF2**, **DFU ZIP**, ELF, HEX, metadata, `SHA256SUMS`,
-and an archive of the source used for the build. The Actions artifact ZIP contains
-another ZIP, which is the DFU package. Artifacts are retained for 30 days.
-
-The hardware validation status is listed below.
+Each package contains firmware files, metadata, `SHA256SUMS` and an archive of
+the source used for the build. Actions artifacts are retained for 30 days.
 
 ### Firmware identification
 
@@ -286,12 +269,11 @@ upstream revision or unexpected local changes. To use another destination:
 
 | Area | Status in 0.4.2 |
 | --- | --- |
-| BLE OTA using nRF Connect | Verified on hardware. |
 | `/telemetry` response, current version and min/max formatting | Verified on hardware. |
 | `/backup !xxxxxxxx` | Backup creation and success confirmation verified on hardware. |
 | `/backup status !xxxxxxxx` | Verified on hardware. |
 | `/backup delete !xxxxxxxx` | Verified on hardware. |
-| `/backup replace !xxxxxxxx` | Covered by automated tests; hardware verification pending. |
+| `/backup replace !xxxxxxxx` | Verified on hardware. |
 | Emergency restoration and recovery announcement | Covered by automated tests; restoration from a saved backup has not yet been tested on hardware. |
 | Recovery during interrupted writes or power loss | Covered by simulated storage tests; physical power-cut testing pending. |
 | Energy savings, voltage thresholds and complete-kit sleep current | Controlled hardware measurements pending. |
@@ -299,7 +281,7 @@ upstream revision or unexpected local changes. To use another destination:
 
 Automated tests cover the prepared power policy, protobuf comparison, verified
 file writes, telemetry transport, recovery journal and restoration engine.
-Native DFU tests and compiled ARM checks cover update entry and image boundaries.
+Build checks verify application boundaries and package integrity.
 Both Legion and baseline profiles compile successfully. Simulated tests do not
 measure the analog circuit, real flash timing, RF delivery or energy consumption.
 

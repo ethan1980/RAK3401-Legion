@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 - 2026-10-19
+
+- Confirm low battery with eight checks every 20 seconds, keeping 3.50 V.
+- Preserve 5-second battery refresh and independent VDD/TX/flash protection.
+- Document hardware validation of all six 0.5.0 commands, observed energy
+  sleep/wake and manual backup restoration; announcement delivery unverified.
+- Advertise `2.8.2.Legion0.5.1`; retain the 0.5.0 features and recovery format.
+- Move all agreed 0.6.0 work into this release and reopen an empty 0.6.0 plan.
+
 ## 0.5.0 - 2026-10-19
 
 - Add `/msg !nodeid <channel> <message>` with channel revalidation, bounded UTF-8

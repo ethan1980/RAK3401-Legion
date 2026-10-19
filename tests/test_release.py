@@ -437,6 +437,19 @@ class ReleaseValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "checked REG1"):
                     release.prepare_release(self.directory, self.commit)
 
+    def test_v051_release_keeps_validation_and_reports_new_battery_policy(self):
+        self.v050_manifest()
+        self.manifest.update(legion_version="0.5.1", advertised_firmware_version="2.8.2.Legion0.5.1")
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.5.1-aaaaaaa")
+        for term in ("eight consecutive", "20 seconds", "3.50 V", "erase.uf2", "not verified"):
+            self.assertIn(term, metadata["notes"])
+        self.manifest["reg1_dcdc"] = False
+        self.write_manifest()
+        with self.assertRaises(ValueError):
+            release.prepare_release(self.directory, self.commit)
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

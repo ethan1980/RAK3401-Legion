@@ -1,4 +1,4 @@
-# Manual rescue backup - Legion 0.5.0
+# Manual rescue backup - Legion 0.5.1
 
 Legion can save one rescue point on the configured node and restore it if a
 later boot confirms missing or corrupt essential preferences. **Nothing is
@@ -144,8 +144,13 @@ These checks do not substitute for physical power-cut or RF-delivery tests.
 
 On 0.4.2, telemetry responses and formatting and all backup commands—creation
 with its success confirmation, status, replacement and deletion—have been verified
-on hardware. Automatic emergency restoration from a saved backup, the recovery
-announcement and physical power-cut recovery remain pending hardware verification.
+on hardware. All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
+Manual backup restoration was observed on the test RAK after applying an erase.uf2,
+installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
+UF2: the saved configuration returned. This validates that procedure with the file
+used; it does not establish survival of a full-chip erase. Reception of the recovery
+announcement was not verified because no connected receiver was available.
+Physical interrupted-write/power-cut recovery testing remains pending.
 No rescue point is armed until an explicit backup command succeeds.
 
 The 0.5.0 commands retain this rescue format and activation policy. NodeDB

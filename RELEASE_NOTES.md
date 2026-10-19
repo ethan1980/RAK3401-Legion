@@ -1,43 +1,25 @@
 Experimental firmware for the **RAK3401 1W with RAK13302**.
 
-- Legion version: **0.5.0**
-- Meshtastic base: **2.8.2**, commit `04cb8885118b959a9f538cd5881bd7d595758911`
-- Advertised firmware: **`2.8.2.Legion0.5.0`** in MQTT, device metadata and Bluetooth; **`Legion0.5.0`** in telemetry.
-- Complete source commits and package checksums are recorded in `legion-build.json` and `SHA256SUMS`.
+- Legion version: **0.5.1**; advertised firmware: **`2.8.2.Legion0.5.1`**.
+- Same pinned Meshtastic 2.8.2 base and existing features as 0.5.0.
+- Battery sleep requires **eight consecutive readings below 3.50 V**, checked every
+  **20 seconds**. A healthy reading or USB power clears the counter. First-to-eighth
+  checks are nominally 140 seconds apart; this is sampled confirmation.
+- Battery refresh remains every 5 seconds for existing flash/TX protection.
+  Independent VDD protection, boot/wake thresholds and REG1 DC/DC are unchanged.
+- New timing requires hardware validation; no measured battery-saving claim.
 
-| New command | Behavior |
-| --- | --- |
-| `/msg !nodeid <channel> <message>` | Originate text from the selected Legion on an enabled channel; confirm queue acceptance. |
-| `/reboot !nodeid` | Schedule a normal restart 20 seconds after acceptance. |
-| `/zerohop !nodeid [page]` | Report direct RF nodes with full IDs, short names and SNR. |
-| `/ignore !peerid` | Every receiving Legion independently ignores the peer. |
-| `/unignore !peerid` | Every receiving Legion independently unignores the peer. |
-| `/ignorelist [page]` | Each receiving Legion reports its effective ignore list. |
+Energy hibernation and automatic return to operation have been observed on hardware:
+the production node went offline overnight and resumed after sunrise. The exact
+entry voltage and triggering protection were not recorded. The new 0.5.1 timing
+still requires hardware validation.
 
-Commands use the existing private LegionRF channel. Directory snapshots preserve
-page order for 15 minutes and return one page per request. New commands have a
-separate five-second cooldown and bounded duplicate suppression. Ignore changes
-use the normal persistent NodeDB and legacy LoRa state; pending writes are
-identified explicitly. Queue acceptance does not confirm RF reception.
+All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
+Manual backup restoration was observed on the test RAK after applying an erase.uf2,
+installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
+UF2: the saved configuration returned. This validates that procedure with the file
+used; it does not establish survival of a full-chip erase. Reception of the recovery
+announcement was not verified because no connected receiver was available.
+Physical interrupted-write/power-cut recovery testing remains pending.
 
-**REG1 DC/DC** is enabled automatically through the SoftDevice API after successful
-initialization. Activation was verified on the diagnostic RAK with USB power and
-after a battery-powered restart. REG0 and UICR retain their existing configuration.
-Whole-node current reduction and battery-life improvement have not been measured.
-
-The release retains 8 MHz bulk SPI, energy recovery, verified preference writes,
-private telemetry and manual rescue backup. Telemetry and all backup commands
-were verified on 0.4.2 hardware. The new commands have automated coverage; their
-hardware validation, automatic emergency restoration, recovery announcement and
-physical power-cut testing remain pending.
-
-Both firmware profiles compile successfully. Automated checks cover targeting,
-channel changes, queue results, SNR provenance, pagination, ignore persistence,
-REG1 API use, recovery and package integrity.
-
-See [README](https://github.com/ethan1980/RAK3401-Legion/blob/main/README.md),
-[commands](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md) and
-[manual rescue backup](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md).
-
-Downloads include firmware packages, corresponding source, build metadata,
-debug files and `SHA256SUMS`.
+See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).

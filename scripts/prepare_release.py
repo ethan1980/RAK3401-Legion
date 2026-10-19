@@ -61,7 +61,7 @@ def prepare_release(directory, commit):
 
     version = manifest["legion_version"]
     upstream = manifest["meshtastic_version"]
-    if version in ("0.4.2", "0.5.0") and manifest.get("source_tree_dirty") is not False:
+    if version in ("0.4.2", "0.5.0", "0.5.1") and manifest.get("source_tree_dirty") is not False:
         raise ValueError(f"Legion {version} requires an explicitly clean source tree")
     if version in (
         "0.2.0",
@@ -71,6 +71,7 @@ def prepare_release(directory, commit):
         "0.4.1",
         "0.4.2",
         "0.5.0",
+        "0.5.1",
     ) and not all(
         manifest.get(name) is True
         for name in (
@@ -81,7 +82,7 @@ def prepare_release(directory, commit):
         )
     ):
         raise ValueError(f"Legion {version} requires all declared firmware features")
-    if version in ("0.3.0", "0.3.5", "0.4.0", "0.4.1", "0.4.2", "0.5.0") and not (
+    if version in ("0.3.0", "0.3.5", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.5.1") and not (
         manifest.get("private_telemetry") is True
         and manifest.get("spi_hz") == 8000000
         and manifest.get("telemetry_channel") == "LegionRF"
@@ -91,7 +92,7 @@ def prepare_release(directory, commit):
         raise ValueError(
             f"Legion {version} requires 8 MHz SPI and private on-demand telemetry"
         )
-    if version in ("0.3.5", "0.4.0", "0.4.1", "0.4.2", "0.5.0"):
+    if version in ("0.3.5", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.5.1"):
         dfu = manifest.get("ble_dfu_validation") or {}
         if not (
             dfu.get("method") == "compiled-cortex-m4-emulation"
@@ -105,7 +106,7 @@ def prepare_release(directory, commit):
             raise ValueError(
                 f"Legion {version} requires verified compiled BLE DFU reset"
             )
-    if version in ("0.4.0", "0.4.1", "0.4.2", "0.5.0"):
+    if version in ("0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.5.1"):
         update = manifest.get("update_validation") or {}
         if not (
             manifest.get("manual_recovery") is True
@@ -119,7 +120,7 @@ def prepare_release(directory, commit):
             raise ValueError(
                 f"Legion {version} requires manual recovery and verified update boundaries"
             )
-    if version in ("0.4.1", "0.4.2", "0.5.0"):
+    if version in ("0.4.1", "0.4.2", "0.5.0", "0.5.1"):
         dfu = manifest.get("ble_dfu_validation") or {}
         if not (
             dfu.get("registration_emulated") is True
@@ -132,13 +133,13 @@ def prepare_release(directory, commit):
                 f"Legion {version} requires immediate DFU registration and main-loop handoff"
             )
     if (
-        version in ("0.4.2", "0.5.0")
+        version in ("0.4.2", "0.5.0", "0.5.1")
         and dfu.get("write_authorization_contract_checked") is not True
     ):
         raise ValueError(
             f"Legion {version} requires checked DFU write authorization parameters"
         )
-    if version == "0.5.0":
+    if version in ("0.5.0", "0.5.1"):
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -158,7 +159,7 @@ def prepare_release(directory, commit):
             )
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
-    if version == "0.5.0":
+    if version in ("0.5.0", "0.5.1"):
         features += (
             "### New commands\n\n"
             "| Command | Behavior |\n| --- | --- |\n"
@@ -256,7 +257,7 @@ def prepare_release(directory, commit):
             "Legion 0.2.0 and 0.3.0 downloads are withdrawn after this release "
             "is published; their source tags and Git history are retained.\n\n"
         )
-    if manifest.get("private_telemetry") and version != "0.5.0":
+    if manifest.get("private_telemetry") and version not in ("0.5.0", "0.5.1"):
         features += (
             "Private on-demand diagnostics: create a SECONDARY channel named exactly "
             "`LegionRF` with your own random 16- or 32-byte PSK. No shared key is built "
@@ -272,22 +273,24 @@ def prepare_release(directory, commit):
             "for setup, fields and limits. The private channel shares the existing "
             "LoRa frequency and airtime. Requests cannot wake an energy-sleeping node.\n\n"
         )
-    if manifest.get("energy_recovery") and version != "0.5.0":
+    if manifest.get("energy_recovery") and version not in ("0.5.0", "0.5.1"):
         features += (
             "RAK-specific battery recovery and TX reserve are enabled. Battery sleep: below "
             "3.50 V for three readings; boot reserve: 3.60 V. Hardware wake: approximately "
             "3.78 V nominal before hysteresis/tolerances. Normal TX power, region, channels "
             "and role remain configured by Meshtastic.\n\n"
         )
-    if manifest.get("flash_write_deduplication") and version != "0.5.0":
+    if manifest.get("flash_write_deduplication") and version not in ("0.5.0", "0.5.1"):
         features += (
             "Identical encoded protobuf files are preserved without another write.\n\n"
         )
-    if manifest.get("flash_readback_crc32") and version != "0.5.0":
+    if manifest.get("flash_readback_crc32") and version not in ("0.5.0", "0.5.1"):
         features += "Temporary writes are verified with CRC32 and exact length before rename.\n\n"
+    if version == "0.5.1":
+        features = (Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md").read_text() + "\n\n"
     downloads = (
         "- Firmware packages: see the release assets.\n\n"
-        if version in ("0.4.2", "0.5.0")
+        if version in ("0.4.2", "0.5.0", "0.5.1")
         else f"- USB firmware: `{uf2[0]}`\n- Wireless firmware: `{ota[0]}`\n\n"
     )
     return {

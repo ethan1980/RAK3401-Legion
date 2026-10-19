@@ -5,15 +5,13 @@
 # RAK3401 Legion
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.5.0**, based on **Meshtastic 2.8.2 develop/nightly**,
+Current release: **Legion 0.5.1**, based on **Meshtastic 2.8.2 develop/nightly**,
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
 
-Version 0.5.0 adds remote messaging, scheduled reboot, direct-link SNR reports,
-group-wide ignored-node management and REG1 DC/DC activation. Telemetry and all
-manual backup commands were verified on 0.4.2. REG1 activation was verified on
-the test RAK with USB and battery power. The new commands have automated coverage;
-their hardware validation and automatic emergency restoration remain pending.
+Version 0.5.1 confirms low battery over eight checks at 20-second intervals,
+retaining the 3.50 V threshold and existing REG1 DC/DC and remote commands.
+All six 0.5.0 commands and manual backup restoration have now been tested on hardware.
 See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).
 
 This repository contains a small set of patches and a build profile. The build
@@ -139,7 +137,8 @@ At boot, confirmed essential preference loss can restore the saved configuration
 normal restart, name changes and firmware updates with healthy preferences do not.
 A successful recovery queues the requested “Ashes to ashes…” notice on LegionRF.
 Factory reset restores an armed rescue point; delete the rescue point first to
-deliberately return to blank settings. Hardware recovery/power-cut tests are pending.
+deliberately return to blank settings. Restoration has been observed on hardware;
+recovery-announcement reception and physical power-cut tests remain pending.
 
 ### Private telemetry on demand
 
@@ -186,7 +185,7 @@ Four parallel 18650 cells are still one cell in voltage terms.
 | Check | Default behavior |
 | --- | --- |
 | Boot reserve | Require VBAT >= 3.60 V and MCU VDD >= 3.00 V in four checks, 250 ms apart; repeat after enabling IO2. |
-| Battery reserve | Enter energy sleep after three consecutive VBAT readings below 3.50 V, sampled every 5 s. |
+| Battery reserve | Enter energy sleep after eight consecutive VBAT readings below 3.50 V, checked every 20 s. A reading at or above 3.50 V or USB power clears the counter. |
 | MCU brownout | Check VDD every second; enter energy sleep after six unsafe checks, with 2.90/3.00 V hysteresis. |
 | TX protection | Measure the supply before CAD; allow TX only at VBAT >= 3.50 V and VDD >= 3.00 V. Recheck the cached decision before launch. |
 | Hardware wake | LPCOMP on AIN3 with 11/16 VDD reference and hysteresis: about 3.78 V nominal before comparator hysteresis and component tolerances. |
@@ -265,9 +264,9 @@ the source used for the build. Actions artifacts are retained for 30 days.
 
 ### Firmware identification
 
-The release identifies itself as **`2.8.2.Legion0.5.0`** in MQTT map reports,
+The release identifies itself as **`2.8.2.Legion0.5.1`** in MQTT map reports,
 device metadata read by the app, Bluetooth Device Information and startup logs.
-The `/telemetry` header derives `Legion0.5.0` from that same compiled version;
+The `/telemetry` header derives `Legion0.5.1` from that same compiled version;
 temperature maximum and battery minimum labels include readable spacing.
 The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
 the firmware version. Maps update after receiving the next MQTT map report.
@@ -316,14 +315,14 @@ upstream revision or unexpected local changes. To use another destination:
 
 | Area | Validation status |
 | --- | --- |
-| Six commands introduced in 0.5.0 | Automated parser, transport, pagination, SNR provenance and persistence tests pass; hardware validation pending. |
+| Six commands introduced in 0.5.0 | Tested on hardware and working; automated parser, transport, pagination, SNR provenance and persistence tests pass. |
 | REG1 DC/DC | Activation verified on the diagnostic RAK with USB and battery power; production implementation covered by API and compiled-binary checks. |
 | `/telemetry` response, current version and min/max formatting | Verified on hardware. |
 | `/backup !xxxxxxxx` | Backup creation and success confirmation verified on hardware. |
 | `/backup status !xxxxxxxx` | Verified on hardware. |
 | `/backup delete !xxxxxxxx` | Verified on hardware. |
 | `/backup replace !xxxxxxxx` | Verified on hardware. |
-| Emergency restoration and recovery announcement | Covered by automated tests; restoration from a saved backup has not yet been tested on hardware. |
+| Emergency restoration and recovery announcement | Restoration observed after erase.uf2, bootloader 0.4.4 and Legion D1 UF2 installation; announcement reception remains unverified. |
 | Recovery during interrupted writes or power loss | Covered by simulated storage tests; physical power-cut testing pending. |
 | Energy savings, voltage thresholds and complete-kit sleep current | Controlled hardware measurements pending. |
 | Long-term radio stability at 8 MHz | Controlled comparison with the 4 MHz baseline pending. |
@@ -387,3 +386,23 @@ header below uses its original live badge URLs; the counters update at source.
 	-
 	<a href="https://meshtastic.org/docs/">Documentation</a>
 </div>
+
+### Hardware observations for 0.5.1
+
+Energy hibernation and automatic return to operation have been observed on hardware:
+the production node went offline overnight and resumed after sunrise. The exact
+entry voltage and triggering protection were not recorded. The new 0.5.1 timing
+still requires hardware validation.
+
+All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
+Manual backup restoration was observed on the test RAK after applying an erase.uf2,
+installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
+UF2: the saved configuration returned. This validates that procedure with the file
+used; it does not establish survival of a full-chip erase. Reception of the recovery
+announcement was not verified because no connected receiver was available.
+Physical interrupted-write/power-cut recovery testing remains pending.
+
+Battery measurements remain refreshed every 5 seconds for existing protections;
+only the sleep decision uses the 20-second interval. The first and eighth low
+checks are nominally 140 seconds apart; scheduling affects actual latency.
+Independent VDD protection, boot/wake thresholds and TX/flash limits are unchanged.

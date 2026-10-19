@@ -48,12 +48,10 @@ void test_tx_reserve()
 void test_consecutive_battery_readings()
 {
     legion::PowerPolicy policy;
-    assert(!policy.observeBattery(3400, false));
-    assert(!policy.observeBattery(3400, false));
+    for (int i = 0; i < 7; ++i) assert(!policy.observeBattery(3499, false));
     assert(!policy.observeBattery(3500, false));
-    assert(!policy.observeBattery(3400, false));
-    assert(!policy.observeBattery(3400, false));
-    assert(policy.observeBattery(3400, false));
+    for (int i = 0; i < 7; ++i) assert(!policy.observeBattery(3499, false));
+    assert(policy.observeBattery(3499, false));
     assert(policy.observeBattery(3400, false));
     assert(!policy.observeBattery(3600, false));
 }
@@ -61,19 +59,17 @@ void test_consecutive_battery_readings()
 void test_exhausted_battery_is_not_absent()
 {
     legion::PowerPolicy policy;
-    assert(!policy.observeBattery(0, false));
-    assert(!policy.observeBattery(0, false));
+    for (int i = 0; i < 7; ++i) assert(!policy.observeBattery(0, false));
     assert(policy.observeBattery(0, false));
 }
 
 void test_usb_cancels_battery_shutdown()
 {
     legion::PowerPolicy policy;
-    assert(!policy.observeBattery(3400, false));
-    assert(!policy.observeBattery(3400, false));
+    for (int i = 0; i < 7; ++i) assert(!policy.observeBattery(3400, false));
     assert(!policy.observeBattery(0, true));
-    assert(!policy.observeBattery(3400, false));
-    assert(!policy.observeBattery(3400, false));
+    for (int i = 0; i < 7; ++i) assert(!policy.observeBattery(3400, false));
+    assert(policy.observeBattery(3400, false));
 }
 
 void test_vdd_hysteresis_and_duration()

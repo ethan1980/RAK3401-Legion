@@ -1,0 +1,44 @@
+diff --git a/src/power/LegionPowerPolicy.h b/src/power/LegionPowerPolicy.h
+--- a/src/power/LegionPowerPolicy.h
++++ b/src/power/LegionPowerPolicy.h
+@@ -9,7 +9,7 @@
+ constexpr uint16_t BATTERY_POLL_RECOVERY_MV = 3800;
+ constexpr uint16_t VDD_SLEEP_MV = 2900;
+ constexpr uint16_t VDD_RECOVERY_MV = 3000;
+-constexpr uint8_t BATTERY_LOW_SAMPLES = 3;
++constexpr uint8_t BATTERY_LOW_SAMPLES = 8;
+ constexpr uint8_t VDD_LOW_SAMPLES = 6;
+ constexpr uint8_t RECOVERY_SAMPLES = 4;
+ 
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -22,6 +22,7 @@
+ namespace
+ {
+ constexpr uint32_t BATTERY_CHECK_MS = 5000;
++constexpr uint32_t BATTERY_SLEEP_CHECK_MS = 20000;
+ constexpr uint32_t VDD_CHECK_MS = 1000;
+ constexpr uint32_t RECOVERY_CHECK_MS = 30000;
+ std::atomic<uint16_t> lastBatteryMv{0};
+@@ -212,6 +213,7 @@
+     static bool sampled = false;
+     static uint32_t lastVddCheck = 0;
+     static uint32_t lastBatteryCheck = 0;
++    static uint32_t lastBatterySleepCheck = 0;
+     static uint32_t lastStats = 0;
+     if (!sampled || Throttle::hasElapsed(lastVddCheck, VDD_CHECK_MS)) {
+         lastVddCheck = Time::getMillis();
+@@ -222,7 +224,11 @@
+     }
+     if (!sampled || Throttle::hasElapsed(lastBatteryCheck, BATTERY_CHECK_MS)) {
+         lastBatteryCheck = Time::getMillis();
+-        if (policy.observeBattery(readBatteryMv(), powerHAL_isVBUSConnected()))
++        readBatteryMv();
++    }
++    if (!sampled || Throttle::hasElapsed(lastBatterySleepCheck, BATTERY_SLEEP_CHECK_MS)) {
++        lastBatterySleepCheck = Time::getMillis();
++        if (policy.observeBattery(lastBatteryMv.load(), powerHAL_isVBUSConnected()))
+             enterEnergySleep();
+     }
+     sampled = true;

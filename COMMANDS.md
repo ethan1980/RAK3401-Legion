@@ -1,6 +1,6 @@
 # Legion commands
 
-The current release is **Legion 0.5.0**. Remote messaging, reboot, zero-hop reports
+The current release is **Legion 0.5.1**. Remote messaging, reboot, zero-hop reports
 and ignored-node management require 0.5.0 on the executing RAK3401. Telemetry
 requires 0.3.0 or later; manual rescue backup requires 0.4.0 or later.
 The phone app and the requesting/receiving node can use standard Meshtastic.
@@ -198,7 +198,7 @@ app, so the RAK does not need another node to echo its own report.
 Example report; values are illustrative:
 
 ~~~text
-Legion0.5.0 !abcdef01 up:194400s
+Legion0.5.1 !abcdef01 up:194400s
 CPU:29.25 / max 34.50C BAT:82% 4.01 / min 3.96V
 N:-116 peak:-88dBm n:600
 RX:450 BAD:7 TX:32 REL:24 DROP:2
@@ -293,9 +293,10 @@ ordinary nodes do not provide a guaranteed archive of earlier reports.
 
 Telemetry responses, current firmware version and min/max formatting were verified
 on 0.4.2 hardware. All backup commands—creation with its success confirmation, status,
-replacement and deletion—are also verified on hardware. Automatic emergency
-restoration from the saved copy and the recovery announcement remain pending
-hardware verification.
-The six commands introduced in 0.5.0 have automated parser, transport, pagination,
-SNR provenance, duplicate and persistence coverage. End-to-end hardware validation
-of these additions is pending.
+replacement and deletion—are also verified on hardware. All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
+Manual backup restoration was observed on the test RAK after applying an erase.uf2,
+installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
+UF2: the saved configuration returned. This validates that procedure with the file
+used; it does not establish survival of a full-chip erase. Reception of the recovery
+announcement was not verified because no connected receiver was available.
+Physical interrupted-write/power-cut recovery testing remains pending.

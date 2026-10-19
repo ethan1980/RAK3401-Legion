@@ -4,6 +4,10 @@
 
 # RAK3401 Legion
 
+<p align="center">
+  <strong><a href="README.md">README</a> · <a href="COMMANDS.md">Commands</a> · <a href="RECOVERY.md">Recovery</a> · <a href="LICENSE">GPL-3.0</a></strong>
+</p>
+
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
 Current release: **Legion 0.5.1**, based on **Meshtastic 2.8.2 develop/nightly**,
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).

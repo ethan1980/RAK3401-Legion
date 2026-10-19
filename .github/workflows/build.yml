@@ -114,23 +114,6 @@ jobs:
           fi
           python3 scripts/verify_published_release.py \
             --directory published-assets --commit "$GITHUB_SHA" < published-release.json
-      - name: Withdraw superseded download releases
-        if: success() && startsWith(steps.metadata.outputs.tag, 'legion-v0.4.2-')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" == "false" ]]
-          gh api --paginate "repos/$GH_REPO/releases" \
-            --jq '.[] | select(.tag_name | test("^legion-v0[.](1[.]0|2[.]0|3[.]0|3[.]5|4[.]0|4[.]1)-[0-9a-f]{7}$")) | .id' \
-            > withdrawn-release-ids.txt
-          while IFS= read -r release_id; do
-            [[ "$release_id" =~ ^[0-9]+$ ]]
-            gh api --method DELETE "repos/$GH_REPO/releases/$release_id"
-          done < withdrawn-release-ids.txt
 
   documentation:
     name: Update existing release documentation
@@ -142,7 +125,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: legion-v0.4.2-aee6ab8
       BEFORE_SHA: ${{ github.event.before }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -175,11 +157,21 @@ jobs:
           new = json.loads(Path("upstream.json").read_text())
           for metadata in (old, new):
               metadata.pop("ota_hardware_observation", None)
-          if old != new or new["legion_version"] != "0.4.2":
+          if old != new:
               raise SystemExit("Firmware inputs changed")
           PYCODE
           python3 -m unittest discover -s tests -p test_release.py -v
           git diff --check "$BEFORE_SHA" HEAD
+      - name: Select the current version's published release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("upstream.json"))["legion_version"])')
+          gh api "repos/$GH_REPO/releases?per_page=100" > current-releases.json
+          release_tag=$(jq -r --arg prefix "legion-v${version}-" \
+            '[.[] | select(.draft == false and (.tag_name | startswith($prefix)))][0].tag_name // empty' current-releases.json)
+          [[ -n "$release_tag" ]]
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
       - name: Update notes and verify existing assets are preserved
         shell: bash
         run: |

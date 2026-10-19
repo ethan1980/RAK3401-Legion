@@ -13,6 +13,7 @@ from pathlib import Path
 
 from prepare import PROFILE_PATH, ROOT, firmware_version, load_config, prepare, run
 from validate_dfu import validate_dfu
+from validate_dcdc import validate_dcdc
 from validate_update import validate_update
 
 TARGETS = {"legion": "rak3401-legion", "baseline": "rak3401-1watt"}
@@ -52,6 +53,7 @@ def package(firmware, target, output):
         raise RuntimeError("Compiled firmware does not contain its advertised version")
     print(f"Verified firmware identification: {advertised_version}")
     dfu_validation = validate_dfu(elf) if target == "legion" else None
+    dcdc_validation = validate_dcdc(elf) if target == "legion" else None
     if dfu_validation:
         print(
             "Verified compiled immediate DFU registration, main-loop route and OTA reset (not hardware OTA)"
@@ -102,7 +104,7 @@ def package(firmware, target, output):
             "README.md",
             "COMMANDS.md",
             "RECOVERY.md",
-            "DFU.md",
+            "RELEASE_NOTES.md",
             "CHANGELOG.md",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
@@ -117,6 +119,16 @@ def package(firmware, target, output):
         "flash_write_deduplication": target == "legion",
         "flash_readback_crc32": target == "legion",
         "private_telemetry": target == "legion",
+        "remote_control": target == "legion",
+        "control_commands": (
+            ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist"]
+            if target == "legion"
+            else []
+        ),
+        "control_text_limit_bytes": 199 if target == "legion" else None,
+        "control_cooldown_seconds": 5 if target == "legion" else None,
+        "reg1_dcdc": target == "legion",
+        "dcdc_validation": dcdc_validation,
         "ble_dfu_validation": dfu_validation,
         "manual_recovery": target == "legion",
         "recovery_automatic_snapshot": False,

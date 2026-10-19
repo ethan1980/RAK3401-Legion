@@ -5,14 +5,15 @@
 # RAK3401 Legion
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.4.2**, based on **Meshtastic 2.8.2 develop/nightly**,
+Current release: **Legion 0.5.0**, based on **Meshtastic 2.8.2 develop/nightly**,
 commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
 This pins a specific 2.8.2 source revision, not a published official nightly binary.
 
-Telemetry responses, firmware version display and min/max formatting are verified
-on 0.4.2. All manual backup commands—create, status, replace and delete—are also
-verified on hardware. Automatic emergency restoration from a saved backup and
-its recovery announcement remain pending hardware verification.
+Version 0.5.0 adds remote messaging, scheduled reboot, direct-link SNR reports,
+group-wide ignored-node management and REG1 DC/DC activation. Telemetry and all
+manual backup commands were verified on 0.4.2. REG1 activation was verified on
+the test RAK with USB and battery power. The new commands have automated coverage;
+their hardware validation and automatic emergency restoration remain pending.
 See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).
 
 This repository contains a small set of patches and a build profile. The build
@@ -62,6 +63,52 @@ those demons and help this particular kit work better.
 **Unleash your demons.**
 
 ## Included changes
+
+### Private remote control (new in 0.5.0)
+
+Send commands as channel messages on the configured private **LegionRF** channel.
+The requesting node can run standard Meshtastic. Replies identify the responding
+Legion and are also copied to its connected app.
+
+| Command | Behavior |
+| --- | --- |
+| `/msg !nodeid <channel> <message>` | The selected Legion originates text on one of its enabled channels and confirms queue acceptance. |
+| `/reboot !nodeid` | Schedule the selected Legion's normal reboot 20 seconds after request acceptance. |
+| `/zerohop !nodeid [page]` | Report direct RF nodes with full IDs, short names and existing SNR. |
+| `/ignore !peerid` | Every receiving Legion independently ignores that peer. |
+| `/unignore !peerid` | Every receiving Legion independently removes that peer from its effective ignore list. |
+| `/ignorelist [page]` | Each receiving Legion reports its own effective ignore list. |
+
+Directory queries return one manually requested page at a time. Temporary
+snapshots keep page order stable for 15 minutes and are bound to the requesting
+node and private channel. Zero-hop reports require coherent direct RF evidence
+from this boot; zero and negative SNR are valid. No RSSI history or periodic
+probing is added.
+
+Ignore management uses Meshtastic's persistent NodeDB and includes legacy ignore
+entries. Replies distinguish saved changes from changes awaiting storage. A node
+that misses a group command cannot apply it. Ignore state filters packet origins;
+it does not remove their transmissions from the air. NodeDB ignore flags are
+outside the manual rescue snapshot.
+
+The new commands have a separate five-second cooldown, one pending request and
+duplicate suppression. Queue acceptance does not confirm reception by another
+node. Full syntax, errors and pagination limits are in [COMMANDS.md](COMMANDS.md).
+
+### REG1 DC/DC (new in 0.5.0)
+
+The Legion profile enables the nRF52840's **REG1 DC/DC converter** through
+`sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE)` after successful SoftDevice
+initialization. DC/DC conversion can reduce the MCU regulator's losses under
+load. Activation is automatic once per boot, with API-result and register-readback
+checks. A failed activation is logged without repeated attempts.
+
+Activation and readback were verified on the matching RAK3401 test unit with USB
+power and after a battery-powered restart. REG0 and UICR retain their existing
+configuration. **Whole-node current reduction and battery-life improvement have
+not been measured.**
+
+### Radio SPI
 
 Legion transfers RadioLib buffers to the SX1262 in blocks through the nRF52
 core's synchronous SPI API, which uses EasyDMA. The baseline transfers these
@@ -194,7 +241,7 @@ Download ready-to-flash firmware from
 After both profiles build successfully, firmware changes pushed to `main` and manual
 workflow runs on `main` publish an **experimental prerelease** of Legion. Documentation
 updates preserve the existing firmware release.
-Each release has a tag such as `legion-v0.4.2-<commit>` and includes firmware
+Each release has a tag such as `legion-v0.5.0-<commit>` and includes firmware
 packages, corresponding source, build metadata, debug files and `SHA256SUMS`.
 
 Release assets are direct downloads and have no Actions artifact retention limit.
@@ -210,7 +257,7 @@ and download its artifacts:
 
 | Artifact | Profile | Purpose |
 | --- | --- | --- |
-| `RAK3401-legion-…` | `rak3401-legion` | 8 MHz bulk SPI, energy recovery, persistence checks, private telemetry and manual rescue backup |
+| `RAK3401-legion-…` | `rak3401-legion` | REG1 DC/DC, remote commands, 8 MHz bulk SPI, energy recovery, persistence checks, private telemetry and manual rescue backup |
 | `RAK3401-baseline-…` | `rak3401-1watt` | Reference with the original behavior |
 
 Each package contains firmware files, metadata, `SHA256SUMS` and an archive of
@@ -218,9 +265,9 @@ the source used for the build. Actions artifacts are retained for 30 days.
 
 ### Firmware identification
 
-The release identifies itself as **`2.8.2.Legion0.4.2`** in MQTT map reports,
+The release identifies itself as **`2.8.2.Legion0.5.0`** in MQTT map reports,
 device metadata read by the app, Bluetooth Device Information and startup logs.
-The `/telemetry` header derives `Legion0.4.2` from that same compiled version;
+The `/telemetry` header derives `Legion0.5.0` from that same compiled version;
 temperature maximum and battery minimum labels include readable spacing.
 The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
 the firmware version. Maps update after receiving the next MQTT map report.
@@ -267,8 +314,10 @@ upstream revision or unexpected local changes. To use another destination:
 
 ## Validation status
 
-| Area | Status in 0.4.2 |
+| Area | Validation status |
 | --- | --- |
+| Six commands introduced in 0.5.0 | Automated parser, transport, pagination, SNR provenance and persistence tests pass; hardware validation pending. |
+| REG1 DC/DC | Activation verified on the diagnostic RAK with USB and battery power; production implementation covered by API and compiled-binary checks. |
 | `/telemetry` response, current version and min/max formatting | Verified on hardware. |
 | `/backup !xxxxxxxx` | Backup creation and success confirmation verified on hardware. |
 | `/backup status !xxxxxxxx` | Verified on hardware. |
@@ -279,8 +328,10 @@ upstream revision or unexpected local changes. To use another destination:
 | Energy savings, voltage thresholds and complete-kit sleep current | Controlled hardware measurements pending. |
 | Long-term radio stability at 8 MHz | Controlled comparison with the 4 MHz baseline pending. |
 
-Automated tests cover the prepared power policy, protobuf comparison, verified
-file writes, telemetry transport, recovery journal and restoration engine.
+The hardware telemetry and backup results above were obtained on 0.4.2. Automated
+tests cover command targeting, queue results, channel changes, pagination, SNR
+provenance, ignore persistence, REG1 activation, the prepared power policy,
+protobuf comparison, verified file writes, telemetry, recovery journal and engine.
 Build checks verify application boundaries and package integrity.
 Both Legion and baseline profiles compile successfully. Simulated tests do not
 measure the analog circuit, real flash timing, RF delivery or energy consumption.

@@ -341,6 +341,102 @@ class ReleaseValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicitly clean"):
             release.prepare_release(self.directory, self.commit)
 
+    def v050_manifest(self):
+        self.v041_manifest()
+        self.manifest.update(
+            legion_version="0.5.0",
+            advertised_firmware_version="2.8.2.Legion0.5.0",
+            release_stage="experimental",
+            remote_control=True,
+            control_commands=[
+                "msg",
+                "reboot",
+                "zerohop",
+                "ignore",
+                "unignore",
+                "ignorelist",
+            ],
+            control_text_limit_bytes=199,
+            control_cooldown_seconds=5,
+            reg1_dcdc=True,
+            dcdc_validation={
+                "method": "compiled-arm-call-inspection",
+                "reg1_svc": "0x3f",
+                "enable_argument": 1,
+                "bluetooth_setup_calls_enable": True,
+                "hardware_tested": False,
+            },
+        )
+        self.manifest["ble_dfu_validation"][
+            "write_authorization_contract_checked"
+        ] = True
+
+    def test_v050_requires_commands_reg1_and_preserved_safeguards(self):
+        for field in (
+            "remote_control",
+            "control_commands",
+            "control_text_limit_bytes",
+            "control_cooldown_seconds",
+            "reg1_dcdc",
+            "dcdc_validation",
+        ):
+            with self.subTest(field=field):
+                self.v050_manifest()
+                self.manifest.pop(field)
+                self.write_manifest()
+                with self.assertRaisesRegex(
+                    ValueError, "remote commands and checked REG1"
+                ):
+                    release.prepare_release(self.directory, self.commit)
+        for field in (
+            "ble_dfu_validation",
+            "update_validation",
+            "manual_recovery",
+            "private_telemetry",
+            "bulk_spi",
+            "source_tree_dirty",
+        ):
+            with self.subTest(field=field):
+                self.v050_manifest()
+                self.manifest.pop(field)
+                self.write_manifest()
+                with self.assertRaises(ValueError):
+                    release.prepare_release(self.directory, self.commit)
+
+    def test_v050_notes_describe_new_scope_and_unmeasured_savings(self):
+        self.v050_manifest()
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.5.0-aaaaaaa")
+        for term in (
+            "/msg",
+            "/reboot",
+            "/zerohop",
+            "/ignore",
+            "/unignore",
+            "/ignorelist",
+            "REG1",
+            "15 minutes",
+            "have not been measured",
+            "pending",
+        ):
+            self.assertIn(term, metadata["notes"])
+        for term in ("owner reports", "bootloader", "DFU", "OTA", "Message delivered"):
+            self.assertNotIn(term, metadata["notes"])
+
+    def test_v050_rejects_wrong_regulator_api_or_enable_argument(self):
+        for field, value in (
+            ("reg1_svc", "0x0"),
+            ("enable_argument", 0),
+            ("bluetooth_setup_calls_enable", False),
+        ):
+            with self.subTest(field=field):
+                self.v050_manifest()
+                self.manifest["dcdc_validation"][field] = value
+                self.write_manifest()
+                with self.assertRaisesRegex(ValueError, "checked REG1"):
+                    release.prepare_release(self.directory, self.commit)
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

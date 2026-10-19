@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 - 2026-10-19
+
+- Add `/msg !nodeid <channel> <message>` with channel revalidation, bounded UTF-8
+  text and queue-acceptance confirmation.
+- Add `/reboot !nodeid` using the normal restart path with a 20-second deadline.
+- Add `/zerohop !nodeid [page]` with current-boot direct RF qualification, existing
+  SNR and stable manually requested pages.
+- Add group-wide `/ignore !peerid`, `/unignore !peerid` and `/ignorelist [page]`.
+  Reuse persistent NodeDB flags, merge legacy entries and report deferred writes.
+- Enable nRF52840 REG1 DC/DC once after successful SoftDevice initialization.
+  Activation was verified on the diagnostic RAK with USB and battery power;
+  whole-node savings remain unmeasured.
+- Advertise `2.8.2.Legion0.5.0` in MQTT, Bluetooth and device metadata, and
+  `Legion0.5.0` in telemetry.
+- Retain 8 MHz bulk SPI, energy recovery, persistence protections and manual
+  rescue format. Extend host and compiled-binary release checks.
+- New-command hardware validation, automatic emergency restoration, recovery
+  announcement and physical power-cut testing remain pending.
+
 ## 0.4.2 — 2026-10-16
 
 - Retain 8 MHz bulk SPI, energy recovery, verified preference writes, private

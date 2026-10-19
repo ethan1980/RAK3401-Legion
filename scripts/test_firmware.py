@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from test_control import run_control_tests, run_dcdc_tests
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = (
@@ -66,6 +67,8 @@ def run_tests(firmware, *, leak_check=True):
     run_recovery_tests(firmware, compiler, leak_check=leak_check)
     run_engine_tests(firmware, compiler, leak_check=leak_check)
     run_dfu_tests(firmware, compiler, leak_check=leak_check)
+    run_control_tests(firmware, compiler, leak_check=leak_check)
+    run_dcdc_tests(firmware, compiler, leak_check=leak_check)
 
 
 def run_dfu_tests(firmware, compiler, *, leak_check=True):

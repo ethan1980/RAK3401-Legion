@@ -105,7 +105,7 @@ void test_standard_private_reply_and_local_copy()
 {
     reset();
     TestModule module;
-    assert(module.localLoopback());
+    assert(!module.localLoopback());
     deliver(module, request());
     assert(meshService.sent.size() == 1);
     const auto &sent = meshService.sent[0];
@@ -115,7 +115,7 @@ void test_standard_private_reply_and_local_copy()
     assert(sent.packet.priority == meshtastic_MeshPacket_Priority_BACKGROUND);
     assert(sent.source == RX_SRC_LOCAL && sent.toPhone);
     assert(text().find("!abcdef01") != std::string::npos);
-    assert(text().find("Legion0.4.0") != std::string::npos);
+    assert(text().find("Legion0.5.0") != std::string::npos);
     assert(text().find("Legion0.3.0") == std::string::npos);
 }
 

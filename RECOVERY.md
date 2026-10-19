@@ -1,4 +1,4 @@
-# Manual rescue backup — Legion 0.4.2
+# Manual rescue backup - Legion 0.5.0
 
 Legion can save one rescue point on the configured node and restore it if a
 later boot confirms missing or corrupt essential preferences. **Nothing is
@@ -147,3 +147,7 @@ with its success confirmation, status, replacement and deletion—have been veri
 on hardware. Automatic emergency restoration from a saved backup, the recovery
 announcement and physical power-cut recovery remain pending hardware verification.
 No rescue point is armed until an explicit backup command succeeds.
+
+The 0.5.0 commands retain this rescue format and activation policy. NodeDB
+ignored-node flags are outside the rescue snapshot. Legacy LoRa ignore entries
+remain part of its captured radio configuration.

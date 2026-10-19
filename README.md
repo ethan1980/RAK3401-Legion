@@ -93,6 +93,8 @@ The new commands have a separate five-second cooldown, one pending request and
 duplicate suppression. Queue acceptance does not confirm reception by another
 node. Full syntax, errors and pagination limits are in [COMMANDS.md](COMMANDS.md).
 
+All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
+
 ### REG1 DC/DC (new in 0.5.0)
 
 The Legion profile enables the nRF52840's **REG1 DC/DC converter** through
@@ -137,8 +139,14 @@ At boot, confirmed essential preference loss can restore the saved configuration
 normal restart, name changes and firmware updates with healthy preferences do not.
 A successful recovery queues the requested “Ashes to ashes…” notice on LegionRF.
 Factory reset restores an armed rescue point; delete the rescue point first to
-deliberately return to blank settings. Restoration has been observed on hardware;
-recovery-announcement reception and physical power-cut tests remain pending.
+deliberately return to blank settings.
+
+Manual backup restoration was observed on the test RAK after applying an erase.uf2,
+installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
+UF2: the saved configuration returned. This validates that procedure with the file
+used; it does not establish survival of a full-chip erase. Reception of the recovery
+announcement was not verified because no connected receiver was available.
+Physical interrupted-write/power-cut recovery testing remains pending.
 
 ### Private telemetry on demand
 
@@ -210,6 +218,16 @@ AIN3=0.6*VBAT. Policy readings and the app's battery display can differ. Validat
 both with a meter before changing the thresholds in `LegionPowerPolicy.h` or the
 LPCOMP reference. The charger continues working while the MCU is in System OFF.
 The firmware measures voltage, not stored energy or solar charging current.
+
+Energy hibernation and automatic return to operation have been observed on hardware:
+the production node went offline overnight and resumed after sunrise. The exact
+entry voltage and triggering protection were not recorded. The new 0.5.1 timing
+still requires hardware validation.
+
+Battery measurements remain refreshed every 5 seconds for existing protections;
+only the sleep decision uses the 20-second interval. The first and eighth low
+checks are nominally 140 seconds apart; scheduling affects actual latency.
+Independent VDD protection, boot/wake thresholds and TX/flash limits are unchanged.
 
 ### Flash persistence
 
@@ -386,23 +404,3 @@ header below uses its original live badge URLs; the counters update at source.
 	-
 	<a href="https://meshtastic.org/docs/">Documentation</a>
 </div>
-
-### Hardware observations for 0.5.1
-
-Energy hibernation and automatic return to operation have been observed on hardware:
-the production node went offline overnight and resumed after sunrise. The exact
-entry voltage and triggering protection were not recorded. The new 0.5.1 timing
-still requires hardware validation.
-
-All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
-Manual backup restoration was observed on the test RAK after applying an erase.uf2,
-installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
-UF2: the saved configuration returned. This validates that procedure with the file
-used; it does not establish survival of a full-chip erase. Reception of the recovery
-announcement was not verified because no connected receiver was available.
-Physical interrupted-write/power-cut recovery testing remains pending.
-
-Battery measurements remain refreshed every 5 seconds for existing protections;
-only the sleep decision uses the 20-second interval. The first and eighth low
-checks are nominally 140 seconds apart; scheduling affects actual latency.
-Independent VDD protection, boot/wake thresholds and TX/flash limits are unchanged.

@@ -408,3 +408,22 @@ header below uses its original live badge URLs; the counters update at source.
 	-
 	<a href="https://meshtastic.org/docs/">Documentation</a>
 </div>
+
+## Credits
+
+<table>
+  <tr>
+    <td align="center" width="120">
+      <a href="https://github.com/EA2OY/NavaTastic"><img src="assets/credits/navatastic-navarra.png" alt="NavaTastic — map of Navarra" width="88"></a><br>
+      <strong><a href="https://github.com/EA2OY/NavaTastic">NavaTastic</a></strong>
+    </td>
+    <td>The resilience system was inspired by the work of NavaTastic.</td>
+  </tr>
+  <tr>
+    <td align="center" width="120">
+      <a href="https://github.com/derpyspike/jentastic"><img src="assets/credits/jentastic-cat.png" alt="Jentastic — cat mascot" width="88"></a><br>
+      <strong><a href="https://github.com/derpyspike/jentastic">Jentastic</a></strong>
+    </td>
+    <td>The command system was inspired by the multiplatform firmware and advanced administrative management of Nexus/Jentastic.</td>
+  </tr>
+</table>

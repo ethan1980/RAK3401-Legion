@@ -1,0 +1,753 @@
+diff --git a/src/mesh/CryptoEngine.cpp b/src/mesh/CryptoEngine.cpp
+index d7da5a0..487a7e6 100644
+--- a/src/mesh/CryptoEngine.cpp
++++ b/src/mesh/CryptoEngine.cpp
+@@ -3,8 +3,8 @@
+ #include "aes-ccm.h"
+ #include "architecture.h"
+ #include <SHA256.h>
+-#include <memory>
+ #include <cstring>
++#include <memory>
+ 
+ #if !(MESHTASTIC_EXCLUDE_PKI)
+ #include "HardwareRNG.h"
+@@ -31,7 +31,8 @@ bool CryptoEngine::matchesIdentityKey(const uint8_t *privateKey, const uint8_t *
+ {
+     const auto matches = [&]() {
+         uint8_t derived[32]{};
+-        return x25519(derived, privateKey, nullptr) && !Curve25519::isWeakPoint(derived) && std::memcmp(derived, publicKey, 32) == 0;
++        return x25519(derived, privateKey, nullptr) && !Curve25519::isWeakPoint(derived) &&
++               std::memcmp(derived, publicKey, 32) == 0;
+     };
+     // NodeDB validates boot preferences before Router creates the shared crypto mutex.
+     if (!cryptLock)
+@@ -389,12 +390,16 @@ bool CryptoEngine::ackProofCompute(const uint8_t *peerPubKey, uint32_t ackFrom,
+     putLE32(header + ACK_PROOF_LABEL_LEN + 8, requestId);
+ 
+     uint8_t digest[32];
++#if RAK3401_LEGION_CC310
++    hmacSha256(shared_key, header, sizeof(header), routing, routingLen, digest);
++#else
+     SHA256 mac;
+     mac.resetHMAC(shared_key, 32);
+     mac.update(header, sizeof(header));
+     if (routing && routingLen)
+         mac.update(routing, routingLen);
+     mac.finalizeHMAC(shared_key, 32, digest, sizeof(digest));
++#endif
+     memcpy(proofOut, digest, ACK_PROOF_SIZE);
+ 
+     memset(digest, 0, sizeof(digest));
+@@ -507,6 +512,19 @@ void CryptoEngine::hash(uint8_t *bytes, size_t numBytes)
+     hash.finalize(bytes, 32);
+ }
+ 
++#if RAK3401_LEGION_CC310
++void CryptoEngine::hmacSha256(const uint8_t *key, const uint8_t *header, size_t headerSize, const uint8_t *data, size_t size,
++                              uint8_t *output)
++{
++    SHA256 mac;
++    mac.resetHMAC(key, 32);
++    mac.update(header, headerSize);
++    if (data && size)
++        mac.update(data, size);
++    mac.finalizeHMAC(key, 32, output, 32);
++}
++#endif
++
+ // aes-ccm.cpp drives the block cipher through these two, and it is compiled in every build,
+ // so they must stay outside the PKI guard or MESHTASTIC_EXCLUDE_PKI=1 fails to link.
+ void CryptoEngine::aesSetKey(const uint8_t *key_bytes, size_t key_len)
+diff --git a/src/mesh/CryptoEngine.h b/src/mesh/CryptoEngine.h
+index d51e6f2..f15e5b1 100644
+--- a/src/mesh/CryptoEngine.h
++++ b/src/mesh/CryptoEngine.h
+@@ -190,6 +190,10 @@ class CryptoEngine
+ #endif
+     /** Our per packet nonce */
+     uint8_t nonce[16] = {0};
++#if RAK3401_LEGION_CC310
++    virtual void hmacSha256(const uint8_t *key, const uint8_t *header, size_t headerSize, const uint8_t *data, size_t size,
++                            uint8_t *output);
++#endif
+     CryptoKey key = {};
+ #if !(MESHTASTIC_EXCLUDE_PKI)
+     uint8_t shared_key[32] = {0};
+@@ -237,4 +241,4 @@ class CryptoEngine
+     void initNonce(uint32_t fromNode, uint64_t packetId, uint32_t extraNonce = 0);
+ };
+ 
+-extern CryptoEngine *crypto;
+\ No newline at end of file
++extern CryptoEngine *crypto;
+diff --git a/src/mesh/HardwareRNG.cpp b/src/mesh/HardwareRNG.cpp
+index 451b8d8..38a9308 100644
+--- a/src/mesh/HardwareRNG.cpp
++++ b/src/mesh/HardwareRNG.cpp
+@@ -13,6 +13,7 @@
+ #if defined(ARCH_NRF54L)
+ #include <nRF54Crypto.h>
+ #elif defined(ARCH_NRF52)
++#include "platform/nrf52/NRF52CryptoSession.h"
+ #include <Adafruit_nRFCrypto.h>
+ extern Adafruit_nRFCrypto nRFCrypto;
+ #elif defined(ARCH_ESP32)
+@@ -116,9 +117,9 @@ bool fill(uint8_t *buffer, size_t length, bool useRadioEntropy)
+     nRF54Crypto.end();
+ #elif defined(ARCH_NRF52)
+     // The Nordic SDK RNG provides cryptographic-quality randomness backed by hardware.
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     auto result = nRFCrypto.Random.generate(buffer, length);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     filled = result;
+ #elif defined(ARCH_ESP32)
+     // ESP32 exposes a true RNG via esp_fill_random().
+diff --git a/src/platform/nrf52/LegionCrypto.cpp b/src/platform/nrf52/LegionCrypto.cpp
+new file mode 100644
+index 0000000..90e88ec
+--- /dev/null
++++ b/src/platform/nrf52/LegionCrypto.cpp
+@@ -0,0 +1,152 @@
++#include "LegionCrypto.h"
++
++#if RAK3401_LEGION_CC310
++#include "concurrency/Lock.h"
++#include <Adafruit_nRFCrypto.h>
++#include <atomic>
++#include <cstring>
++#include <nrf_cc310/include/crys_hash.h>
++#include <nrf_cc310/include/crys_hmac.h>
++#include <task.h>
++
++namespace
++{
++concurrency::Lock acceleratorLock;
++std::atomic<TaskHandle_t> owner{nullptr};
++unsigned depth = 0;
++bool ready = false;
++uint8_t earlyOwner;
++std::atomic<uint32_t> shaCount{0}, hmacCount{0}, fallbackCount{0};
++
++TaskHandle_t currentOwner()
++{
++    const auto task = xTaskGetCurrentTaskHandle();
++    return task ? task : reinterpret_cast<TaskHandle_t>(&earlyOwner);
++}
++
++void wipe(void *data, size_t size)
++{
++    auto bytes = static_cast<volatile uint8_t *>(data);
++    while (size--)
++        *bytes++ = 0;
++}
++
++struct Session {
++    bool available = legionCc310Begin();
++    ~Session() { legionCc310End(); }
++};
++
++// A partial final block must be the LAST SDK update, including when the two
++// fragments meet in the middle of a block (ACK headers are only 15 bytes).
++template <typename Update>
++bool feed(const uint8_t *first, size_t firstSize, const uint8_t *second, size_t secondSize, Update update)
++{
++    alignas(4) uint8_t block[64]{};
++    size_t used = 0;
++    bool ok = true;
++    for (unsigned part = 0; part < 2 && ok; ++part) {
++        auto input = part ? second : first;
++        auto remaining = part ? secondSize : firstSize;
++        while (remaining && ok) {
++            const size_t amount = remaining < sizeof(block) - used ? remaining : sizeof(block) - used;
++            std::memcpy(block + used, input, amount);
++            input += amount;
++            remaining -= amount;
++            used += amount;
++            if (used == sizeof(block)) {
++                ok = update(block, used) == 0;
++                used = 0;
++            }
++        }
++    }
++    if (ok && used)
++        ok = update(block, used) == 0;
++    wipe(block, sizeof(block));
++    return ok;
++}
++} // namespace
++
++bool legionCc310Begin()
++{
++    const auto self = currentOwner();
++    if (owner.load() != self) {
++        acceleratorLock.lock();
++        owner.store(self);
++    }
++    if (depth++ == 0)
++        ready = nRFCrypto.begin();
++    return ready;
++}
++
++void legionCc310End()
++{
++    if (owner.load() != currentOwner() || !depth)
++        return;
++    if (--depth == 0) {
++        // Also resets the library's begun flag after a failed initialization.
++        nRFCrypto.end();
++        ready = false;
++        owner.store(nullptr);
++        acceleratorLock.unlock();
++    }
++}
++
++LegionCryptoStats legionCryptoStats()
++{
++    return {shaCount.load(), hmacCount.load(), fallbackCount.load()};
++}
++
++bool legionCc310Sha256(const uint8_t *data, size_t size, uint8_t *output)
++{
++    bool ok = false;
++    if (output && (data || !size)) {
++        Session session;
++        if (session.available) {
++            CRYS_HASHUserContext_t context{};
++            CRYS_HASH_Result_t result{};
++            ok = CRYS_HASH_Init(&context, CRYS_HASH_SHA256_mode) == 0;
++            if (ok)
++                ok = feed(data, size, nullptr, 0,
++                          [&](uint8_t *block, size_t count) { return CRYS_HASH_Update(&context, block, count); });
++            if (ok)
++                ok = CRYS_HASH_Finish(&context, result) == 0;
++            if (ok)
++                std::memcpy(output, result, 32);
++            CRYS_HASH_Free(&context);
++            wipe(result, sizeof(result));
++            wipe(&context, sizeof(context));
++        }
++    }
++    (ok ? shaCount : fallbackCount).fetch_add(1);
++    return ok;
++}
++
++bool legionCc310Hmac(const uint8_t *key, const uint8_t *header, size_t headerSize, const uint8_t *data, size_t size,
++                     uint8_t *output)
++{
++    bool ok = false;
++    if (key && output && (header || !headerSize) && (data || !size)) {
++        Session session;
++        if (session.available) {
++            alignas(4) uint8_t keyCopy[32];
++            std::memcpy(keyCopy, key, sizeof(keyCopy));
++            CRYS_HMACUserContext_t context{};
++            CRYS_HASH_Result_t result{};
++            ok = CRYS_HMAC_Init(&context, CRYS_HASH_SHA256_mode, keyCopy, sizeof(keyCopy)) == 0;
++            if (ok)
++                ok = feed(header, headerSize, data, size,
++                          [&](uint8_t *block, size_t count) { return CRYS_HMAC_Update(&context, block, count); });
++            if (ok)
++                ok = CRYS_HMAC_Finish(&context, result) == 0;
++            if (ok)
++                std::memcpy(output, result, 32);
++            CRYS_HMAC_Free(&context);
++            wipe(keyCopy, sizeof(keyCopy));
++            wipe(result, sizeof(result));
++            wipe(&context, sizeof(context));
++        }
++    }
++    (ok ? hmacCount : fallbackCount).fetch_add(1);
++    return ok;
++}
++#endif
+diff --git a/src/platform/nrf52/LegionCrypto.h b/src/platform/nrf52/LegionCrypto.h
+new file mode 100644
+index 0000000..7422f26
+--- /dev/null
++++ b/src/platform/nrf52/LegionCrypto.h
+@@ -0,0 +1,27 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_CC310
++#if !defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302)
++#error "Legion CC310 requires the RAK3401 + RAK13302 nRF52 profile"
++#endif
++#include <cstddef>
++#include <cstdint>
++
++struct LegionCryptoStats {
++    uint32_t sha = 0, hmac = 0, fallback = 0;
++};
++
++// Every begin, including a failed one, must be paired with end. Sessions nest on
++// one task and serialize all CC310 users without nesting the caller's cryptLock.
++bool legionCc310Begin();
++void legionCc310End();
++LegionCryptoStats legionCryptoStats();
++
++// Output is committed only after all SDK calls succeed. Inputs may alias output,
++// reside in flash or be unaligned; the SDK receives aligned RAM blocks only.
++bool legionCc310Sha256(const uint8_t *data, size_t size, uint8_t *output);
++bool legionCc310Hmac(const uint8_t *key, const uint8_t *header, size_t headerSize, const uint8_t *data, size_t size,
++                     uint8_t *output);
++#endif
+diff --git a/src/platform/nrf52/NRF52CryptoEngine.cpp b/src/platform/nrf52/NRF52CryptoEngine.cpp
+index e90172b..4f59224 100644
+--- a/src/platform/nrf52/NRF52CryptoEngine.cpp
++++ b/src/platform/nrf52/NRF52CryptoEngine.cpp
+@@ -1,4 +1,5 @@
+ #include "CryptoEngine.h"
++#include "NRF52CryptoSession.h"
+ #include "configuration.h"
+ #include <Adafruit_nRFCrypto.h>
+ #include <nrf_cc310/include/crys_ec_mont_edw_error.h>
+@@ -9,13 +10,21 @@ class NRF52CryptoEngine : public CryptoEngine
+ 
+     ~NRF52CryptoEngine() {}
+ 
++#if RAK3401_LEGION_CC310
++    void hash(uint8_t *bytes, size_t numBytes) override
++    {
++        if (!legionCc310Sha256(bytes, numBytes, bytes))
++            CryptoEngine::hash(bytes, numBytes);
++    }
++#endif
++
+     virtual void encryptAESCtr(CryptoKey _key, uint8_t *_nonce, size_t numBytes, uint8_t *bytes) override
+     {
+         if (_key.length > 16) {
+             // CryptoCell only accelerates AES-128; AES-256 uses the shared software CTR.
+             CryptoEngine::encryptAESCtr(_key, _nonce, numBytes, bytes);
+         } else if (_key.length > 0) {
+-            nRFCrypto.begin();
++            nrf52CryptoBegin();
+             nRFCrypto_AES ctx;
+             // Must not be uint8_t: blockLen() rounds up to the AES block size, so numBytes in
+             // 241..256 yields 256, which truncates to 0 and leaves Process() writing numBytes
+@@ -25,11 +34,21 @@ class NRF52CryptoEngine : public CryptoEngine
+             ctx.begin();
+             ctx.Process((char *)bytes, numBytes, _nonce, _key.bytes, _key.length, encBuf, ctx.encryptFlag, ctx.ctrMode);
+             ctx.end();
+-            nRFCrypto.end();
++            nrf52CryptoEnd();
+             memcpy(bytes, encBuf, numBytes);
+         }
+     }
+ 
++#if RAK3401_LEGION_CC310
++  protected:
++    void hmacSha256(const uint8_t *key, const uint8_t *header, size_t headerSize, const uint8_t *data, size_t size,
++                    uint8_t *output) override
++    {
++        if (!legionCc310Hmac(key, header, headerSize, data, size, output))
++            CryptoEngine::hmacSha256(key, header, headerSize, data, size, output);
++    }
++#endif
++
+ #if !(MESHTASTIC_EXCLUDE_PKI)
+   protected:
+     // CC310 X25519 (~5x faster, no ~3 KB eval stack frame). The CC310 clamps and eval doesn't, so only
+@@ -40,11 +59,15 @@ class NRF52CryptoEngine : public CryptoEngine
+             return CryptoEngine::x25519(out, scalar, point);
+         if (point && !isCanonical(point))
+             return false; // matches Curve25519::eval
+-        if (!nRFCrypto.begin())
++        if (!nrf52CryptoBegin()) {
++#if RAK3401_LEGION_CC310
++            nrf52CryptoEnd();
++#endif
+             return CryptoEngine::x25519(out, scalar, point);
++        }
+         bool ok = point ? cc310X25519.agree(out, scalar, point) : cc310X25519.publicKey(out, scalar);
+         uint32_t err = cc310X25519.lastError();
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         if (ok)
+             return true;
+         if (err == CRYS_OK) {
+@@ -61,11 +84,15 @@ class NRF52CryptoEngine : public CryptoEngine
+     // CC310 is final; any other error falls back to software so a hardware fault can't drop valid packets.
+     bool ed25519Verify(const uint8_t *signature, const uint8_t *edPubKey, const uint8_t *msg, size_t msgLen) override
+     {
+-        if (!nRFCrypto.begin())
++        if (!nrf52CryptoBegin()) {
++#if RAK3401_LEGION_CC310
++            nrf52CryptoEnd();
++#endif
+             return CryptoEngine::ed25519Verify(signature, edPubKey, msg, msgLen);
++        }
+         bool ok = cc310Ed25519.verify(signature, msg, msgLen, edPubKey);
+         uint32_t err = cc310Ed25519.lastError();
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         if (ok)
+             return true;
+         if (err == CRYS_ECEDW_SIGN_VERIFY_FAILED_ERROR)
+diff --git a/src/platform/nrf52/NRF52CryptoSession.h b/src/platform/nrf52/NRF52CryptoSession.h
+new file mode 100644
+index 0000000..806c55f
+--- /dev/null
++++ b/src/platform/nrf52/NRF52CryptoSession.h
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include "configuration.h"
++#include <Adafruit_nRFCrypto.h>
++
++#if RAK3401_LEGION_CC310
++#include "LegionCrypto.h"
++#endif
++
++inline bool nrf52CryptoBegin()
++{
++#if RAK3401_LEGION_CC310
++    return legionCc310Begin();
++#else
++    return nRFCrypto.begin();
++#endif
++}
++
++inline void nrf52CryptoEnd()
++{
++#if RAK3401_LEGION_CC310
++    legionCc310End();
++#else
++    nRFCrypto.end();
++#endif
++}
+diff --git a/src/security/EncryptedStorage.cpp b/src/security/EncryptedStorage.cpp
+index 9d697ec..ebfd37b 100644
+--- a/src/security/EncryptedStorage.cpp
++++ b/src/security/EncryptedStorage.cpp
+@@ -15,6 +15,7 @@
+ #ifdef ARCH_NRF52
+ 
+ // nRF52 CC310 hardware crypto
++#include "platform/nrf52/NRF52CryptoSession.h"
+ #include <Adafruit_nRFCrypto.h>
+ #include <nrf.h>
+ 
+@@ -179,9 +180,9 @@ static void readBackoff(uint8_t &attempts, uint8_t &bootsSinceFail, uint32_t &la
+     }
+     // Verify HMAC under lock-free CC310 access (we hold no spiLock here).
+     uint8_t expected[HMAC_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool ok = computeBackoffHmac(buf.data(), expected);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     if (!ok || !constTimeEq(expected, buf.data() + BACKOFF_BODY_SIZE, HMAC_SIZE)) {
+         // Tampered or attacker-rewritten file. Fail closed.
+         attempts = kBackoffMaxAttempts;
+@@ -201,9 +202,9 @@ static void writeBackoff(uint8_t attempts, uint8_t bootsSinceFail, uint32_t last
+     buf.data()[1] = bootsSinceFail;
+     memcpy(buf.data() + 2, &lastFailEpoch, 4);
+     uint8_t mac[HMAC_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool ok = computeBackoffHmac(buf.data(), mac);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     if (!ok) {
+         LOG_ERROR("EncryptedStorage: backoff HMAC failed");
+         return;
+@@ -359,7 +360,7 @@ static bool constTimeEq(const uint8_t *a, const uint8_t *b, size_t len)
+ /**
+  * Derive the passphrase-mixed KEK and store in module-level kek[].
+  * SHA-256("device-efuse-data" || FICR_16 || passphrase || KEK_DOMAIN) → first 16 bytes.
+- * Caller must hold CC310 (nRFCrypto.begin()).
++ * Caller must hold CC310 (nrf52CryptoBegin()).
+  */
+ static bool deriveKEK(const uint8_t *passphrase, size_t passphraseLen)
+ {
+@@ -479,9 +480,9 @@ static bool loadDEK()
+     memcpy(hmacInput.get() + authLabelLen + NONCE_SIZE, encDek, AES_KEY_SIZE);
+ 
+     meshtastic_security::ZeroizingBuffer<HMAC_SIZE> expectedHmac;
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool hmacOk = computeHMAC(kek, AES_KEY_SIZE, hmacInput.get(), hmacInputLen, expectedHmac.data());
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     hmacInput.reset();
+ 
+     if (!hmacOk) {
+@@ -497,9 +498,9 @@ static bool loadDEK()
+     // Decrypt DEK into a local candidate - only write to global dek[] on success so that
+     // a wrong passphrase attempt does not destroy the live DEK in RAM.
+     meshtastic_security::ZeroizingBuffer<AES_KEY_SIZE> dekCandidate;
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool decOk = aesCtr128(kek, nonce, NONCE_SIZE, encDek, AES_KEY_SIZE, dekCandidate.data());
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+ 
+     if (!decOk) {
+         LOG_ERROR("EncryptedStorage: DEK decrypt failed");
+@@ -524,10 +525,10 @@ static bool saveDEK()
+ #ifdef FSCom
+     // Generate random nonce
+     uint8_t nonce[NONCE_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     if (!nRFCrypto.Random.generate(nonce, NONCE_SIZE)) {
+         LOG_ERROR("EncryptedStorage: TRNG failed for DEK nonce");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         return false;
+     }
+ 
+@@ -536,7 +537,7 @@ static bool saveDEK()
+     bool encOk = aesCtr128(kek, nonce, NONCE_SIZE, dek, AES_KEY_SIZE, encDek);
+     if (!encOk) {
+         LOG_ERROR("EncryptedStorage: DEK encrypt failed");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         meshtastic_security::secure_zero(encDek, sizeof(encDek));
+         return false;
+     }
+@@ -547,7 +548,7 @@ static bool saveDEK()
+     auto hmacInput = meshtastic_security::make_zeroizing_array(hmacInputLen);
+     if (!hmacInput) {
+         LOG_ERROR("EncryptedStorage: OOM for DEK HMAC");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         return false;
+     }
+     memcpy(hmacInput.get(), DEK_AUTH_LABEL, authLabelLen);
+@@ -556,7 +557,7 @@ static bool saveDEK()
+ 
+     uint8_t hmac[HMAC_SIZE];
+     bool hmacOk = computeHMAC(kek, AES_KEY_SIZE, hmacInput.get(), hmacInputLen, hmac);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     hmacInput.reset();
+ 
+     if (!hmacOk) {
+@@ -656,9 +657,9 @@ static uint32_t readMonoCounter()
+             return 0;
+     }
+     uint8_t expected[HMAC_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool ok = computeMonoHmac(buf.data(), expected);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     if (!ok || !constTimeEq(expected, buf.data() + MONO_BODY_SIZE, HMAC_SIZE))
+         return 0;
+     uint32_t counter;
+@@ -680,9 +681,9 @@ static bool writeMonoCounter(uint32_t counter)
+     meshtastic_security::ZeroizingBuffer<MONO_TOTAL_SIZE> buf;
+     memcpy(buf.data(), &counter, 4);
+     uint8_t mac[HMAC_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool ok = computeMonoHmac(buf.data(), mac);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     if (!ok) {
+         LOG_ERROR("EncryptedStorage: mono-counter HMAC failed");
+         return false;
+@@ -716,10 +717,10 @@ static bool writeUnlockToken(uint8_t bootsRemaining, uint32_t validUntilEpoch, u
+ {
+ #ifdef FSCom
+     uint8_t nonce[NONCE_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     if (!nRFCrypto.Random.generate(nonce, NONCE_SIZE)) {
+         LOG_ERROR("EncryptedStorage: TRNG failed for token nonce");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         return false;
+     }
+ 
+@@ -727,7 +728,7 @@ static bool writeUnlockToken(uint8_t bootsRemaining, uint32_t validUntilEpoch, u
+     bool encOk = aesCtr128(ephemeralKek, nonce, NONCE_SIZE, dek, AES_KEY_SIZE, encDek);
+     if (!encOk) {
+         LOG_ERROR("EncryptedStorage: Token DEK encrypt failed");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         meshtastic_security::secure_zero(encDek, sizeof(encDek));
+         return false;
+     }
+@@ -759,7 +760,7 @@ static bool writeUnlockToken(uint8_t bootsRemaining, uint32_t validUntilEpoch, u
+ 
+     uint8_t hmac[HMAC_SIZE];
+     bool hmacOk = computeHMAC(ephemeralKek, AES_KEY_SIZE, body, TOKEN_BODY_SIZE, hmac);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+ 
+     meshtastic_security::secure_zero(encDek, sizeof(encDek));
+ 
+@@ -854,9 +855,9 @@ static bool readAndConsumeToken()
+ 
+     // Verify HMAC-SHA256(ephemeralKek, body). M10: ZeroizingBuffer wipes on scope exit.
+     meshtastic_security::ZeroizingBuffer<HMAC_SIZE> computedHmac;
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool hmacOk = computeHMAC(ephemeralKek, AES_KEY_SIZE, buf.data(), TOKEN_BODY_SIZE, computedHmac.data());
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+ 
+     if (!hmacOk || !constTimeEq(computedHmac.data(), buf.data() + TOKEN_BODY_SIZE, HMAC_SIZE)) {
+         LOG_ERROR("EncryptedStorage: Token HMAC failed - tampered or wrong device, deleting");
+@@ -943,9 +944,9 @@ static bool readAndConsumeToken()
+     }
+ 
+     // Decrypt DEK from token
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool decOk = aesCtr128(ephemeralKek, nonce, NONCE_SIZE, encDek, AES_KEY_SIZE, dek);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+ 
+     if (!decOk) {
+         LOG_ERROR("EncryptedStorage: Token DEK decrypt failed");
+@@ -986,9 +987,9 @@ static bool readAndConsumeToken()
+ 
+ static bool generateDEK()
+ {
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool ok = nRFCrypto.Random.generate(dek, AES_KEY_SIZE);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+ 
+     if (!ok) {
+         LOG_ERROR("EncryptedStorage: TRNG failed generating DEK");
+@@ -1004,9 +1005,9 @@ static bool generateDEK()
+ 
+ void initLocked()
+ {
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool ephOk = deriveEphemeralKEK();
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+ 
+     if (!ephOk) {
+         LOG_ERROR("EncryptedStorage: Ephemeral KEK derivation failed");
+@@ -1117,9 +1118,9 @@ bool provisionPassphrase(const uint8_t *passphrase, size_t passphraseLen, uint8_
+     }
+ 
+     if (!ephemeralKekDerived) {
+-        nRFCrypto.begin();
++        nrf52CryptoBegin();
+         bool ok = deriveEphemeralKEK();
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         if (!ok)
+             return false;
+     }
+@@ -1128,9 +1129,9 @@ bool provisionPassphrase(const uint8_t *passphrase, size_t passphraseLen, uint8_
+         return false;
+ 
+     // Derive KEK from passphrase
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool kekOk = deriveKEK(passphrase, passphraseLen);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     if (!kekOk) {
+         meshtastic_security::secure_zero(dek, sizeof(dek));
+         return false;
+@@ -1242,17 +1243,17 @@ bool unlockWithPassphrase(const uint8_t *passphrase, size_t passphraseLen, uint8
+     }
+ 
+     if (!ephemeralKekDerived) {
+-        nRFCrypto.begin();
++        nrf52CryptoBegin();
+         bool ok = deriveEphemeralKEK();
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         if (!ok)
+             return false;
+     }
+ 
+     // Derive KEK
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool kekOk = deriveKEK(passphrase, passphraseLen);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     if (!kekOk)
+         return false;
+ 
+@@ -1505,9 +1506,9 @@ bool readAndDecrypt(const char *filename, uint8_t *outBuf, size_t outBufSize, si
+     memcpy(hmacData.get() + 4 + NONCE_SIZE + 4, ciphertext, ciphertextLen);
+ 
+     uint8_t computedHmac[HMAC_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool hmacOk = computeHMAC(dekSnapshot, AES_KEY_SIZE, hmacData.get(), hmacDataLen, computedHmac);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     hmacData.reset();
+ 
+     if (!hmacOk || !constTimeEq(computedHmac, storedHmac, HMAC_SIZE)) {
+@@ -1535,9 +1536,9 @@ bool readAndDecrypt(const char *filename, uint8_t *outBuf, size_t outBufSize, si
+         return false;
+     }
+ 
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     bool decOk = aesCtr128(dekSnapshot, nonce, NONCE_SIZE, ciphertext, ciphertextLen, outBuf);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     fileBuf.reset();
+     meshtastic_security::secure_zero(dekSnapshot, sizeof(dekSnapshot));
+ 
+@@ -1569,10 +1570,10 @@ bool encryptAndWrite(const char *filename, const uint8_t *plaintext, size_t plai
+ 
+ #ifdef FSCom
+     uint8_t nonce[NONCE_SIZE];
+-    nRFCrypto.begin();
++    nrf52CryptoBegin();
+     if (!nRFCrypto.Random.generate(nonce, NONCE_SIZE)) {
+         LOG_ERROR("EncryptedStorage: TRNG failed for file nonce");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         meshtastic_security::secure_zero(dekSnapshot, sizeof(dekSnapshot));
+         return false;
+     }
+@@ -1581,7 +1582,7 @@ bool encryptAndWrite(const char *filename, const uint8_t *plaintext, size_t plai
+     auto ciphertext = meshtastic_security::make_zeroizing_array(ciphertextLen > 0 ? ciphertextLen : 1);
+     if (!ciphertext) {
+         LOG_ERROR("EncryptedStorage: OOM for ciphertext");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         meshtastic_security::secure_zero(dekSnapshot, sizeof(dekSnapshot));
+         return false;
+     }
+@@ -1589,7 +1590,7 @@ bool encryptAndWrite(const char *filename, const uint8_t *plaintext, size_t plai
+     bool encOk = aesCtr128(dekSnapshot, nonce, NONCE_SIZE, plaintext, plaintextLen, ciphertext.get());
+     if (!encOk) {
+         LOG_ERROR("EncryptedStorage: Encrypt failed for %s", filename);
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         meshtastic_security::secure_zero(dekSnapshot, sizeof(dekSnapshot));
+         return false;
+     }
+@@ -1603,7 +1604,7 @@ bool encryptAndWrite(const char *filename, const uint8_t *plaintext, size_t plai
+     auto hmacData = meshtastic_security::make_zeroizing_array(hmacDataLen);
+     if (!hmacData) {
+         LOG_ERROR("EncryptedStorage: OOM for HMAC data");
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         meshtastic_security::secure_zero(dekSnapshot, sizeof(dekSnapshot));
+         return false;
+     }
+@@ -1615,7 +1616,7 @@ bool encryptAndWrite(const char *filename, const uint8_t *plaintext, size_t plai
+ 
+     uint8_t hmac[HMAC_SIZE];
+     bool hmacOk = computeHMAC(dekSnapshot, AES_KEY_SIZE, hmacData.get(), hmacDataLen, hmac);
+-    nRFCrypto.end();
++    nrf52CryptoEnd();
+     hmacData.reset();
+ 
+     if (!hmacOk) {

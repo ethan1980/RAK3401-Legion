@@ -1,7 +1,8 @@
 # Legion 0.6.0 planning
 
-Status: in development. APC observation is in progress; stale-backup detection
-and remote traceroute are approved additions. The released firmware remains 0.5.1.
+Status: in development. APC observation is in progress. Approved additions are
+stale-backup detection, remote traceroute, CC310 packet hashing and boot
+diagnostics. The released firmware remains 0.5.1.
 
 Previous documentation and battery-confirmation items moved to 0.5.1.
 
@@ -44,6 +45,33 @@ Previous documentation and battery-confirmation items moved to 0.5.1.
 - Use standard routing reliability without adding a command retry loop or
   persistent writes. Validate RF paths, direct and unreachable targets on hardware
   before releasing 0.6.0. Leave the running APC observation firmware undisturbed.
+
+## CC310 packet hashing — implemented in development, hardware measurements pending
+
+- Use the nRF52840 CC310 for packet SHA-256 and ACK-proof HMAC-SHA256.
+- Retain standard Meshtastic digests, proofs and key formats; fall back to the
+  existing software calculation after any accelerator initialization/SDK error.
+- Stage input through aligned RAM and respect the SDK's final-partial-block
+  rule. Serialize sessions with existing AES, asymmetric crypto, RNG and optional
+  encrypted-storage users; support nested sessions on the same task.
+- Expose successful SHA/MAC and software-fallback attempt counts in `/boot`.
+- Compare against independent reference digests, exercise SDK failures and
+  concurrent callers, and compile both Legion and the baseline profile.
+- Measure real CC310 execution and energy use before claiming a performance or
+  battery gain. Initialization and buffer-copy cost matter for short inputs;
+  forwarding opaque packets does not inherently perform these operations.
+
+## Boot diagnostics — implemented in development, physical reset tests pending
+
+- Add read-only `/boot !legionid` on the private LegionRF channel.
+- Report the core-cached reset mask, a readable interpretation, the previous
+  recorded protective shutdown, and the first battery/VDD/USB boot sample.
+- Record shutdown intent in owned GPREGRET2 high-nibble values, preserving the
+  low nibble and foreign markers. Keep Adafruit's GPREGRET/DFU values intact.
+- Use no flash writes or automatic announcements. Missing reset/shutdown
+  evidence stays unknown; a sudden battery disconnect is not diagnosed by guess.
+- Validate watchdog, software reset, protective System OFF/wake and ordinary
+  power cycles on the actual RAK after APC data collection is complete.
 
 Version policy: feature releases advance the minor version (0.5.x to 0.6.0);
 small changes and fixes advance the patch version (0.5.0 to 0.5.1).

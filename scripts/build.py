@@ -121,7 +121,16 @@ def package(firmware, target, output):
         "private_telemetry": target == "legion",
         "remote_control": target == "legion",
         "control_commands": (
-            ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist", "trace"]
+            [
+                "msg",
+                "reboot",
+                "zerohop",
+                "ignore",
+                "unignore",
+                "ignorelist",
+                "trace",
+                "boot",
+            ]
             if target == "legion"
             else []
         ),
@@ -131,6 +140,13 @@ def package(firmware, target, output):
         "trace_start_cooldown_seconds": 60 if target == "legion" else None,
         "trace_reply_gap_seconds": 6 if target == "legion" else None,
         "trace_hardware_tested": False,
+        "cc310_packet_sha256": target == "legion",
+        "cc310_ack_hmac_sha256": target == "legion",
+        "cc310_software_fallback": target == "legion",
+        "cc310_hardware_measured": False,
+        "boot_diagnostics": target == "legion",
+        "boot_diagnostics_flash_writes": False,
+        "boot_diagnostics_hardware_tested": False,
         "reg1_dcdc": target == "legion",
         "dcdc_validation": dcdc_validation,
         "ble_dfu_validation": dfu_validation,

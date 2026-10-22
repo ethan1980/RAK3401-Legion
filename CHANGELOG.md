@@ -2,6 +2,12 @@
 
 ## 0.6.0 - in development, not released
 
+- Accelerate packet SHA-256 and ACK-proof HMAC-SHA256 with the nRF52840 CC310,
+  with SDK-error fallback, aligned RAM staging and serialized accelerator users.
+- Add `/boot !legionid` for cached reset/shutdown evidence, first boot voltage
+  samples and CC310 success/fallback counters, without flash writes.
+- Add SDK-boundary vector, failure and concurrency tests plus boot-record and
+  command-authorization tests; physical execution/energy/reset tests are pending.
 - Add `/trace !legionid !targetid` using standard Meshtastic traceroute packets.
 - Wait asynchronously for up to 90 seconds; correlate exact replies and return
   both paths on LegionRF with paced, bounded text messages.

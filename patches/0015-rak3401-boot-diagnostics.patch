@@ -1,0 +1,327 @@
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index cb39cca..958bc6c 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -11,6 +11,9 @@
+ #include "mesh/Router.h"
+ #include "power/RAK3401LegionPower.h"
+ #include "xmodem.h"
++#if RAK3401_LEGION_BOOT
++#include "platform/nrf52/LegionBoot.h"
++#endif
+ #if !MESHTASTIC_EXCLUDE_ADMIN
+ #include "modules/AdminModule.h"
+ #endif
+@@ -255,6 +258,9 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         case legion::ControlCommand::Trace:
+             usage = "Usage: /trace !legionid !targetid (different, non-reserved full IDs)";
+             break;
++        case legion::ControlCommand::Boot:
++            usage = "Usage: /boot !legionid";
++            break;
+         case legion::ControlCommand::Ignore:
+             usage = "Usage: /ignore !peerid";
+             break;
+@@ -270,6 +276,14 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         reply(channel, usage);
+         return;
+     }
++#if RAK3401_LEGION_BOOT
++    if (request.command == legion::ControlCommand::Boot) {
++        char output[legion::CONTROL_TEXT_MAX + 1];
++        if (legionBootFormat(output, sizeof(output), nodeDB->getNodeNum()))
++            sendText(channel, output);
++        return;
++    }
++#endif
+     if (request.command == legion::ControlCommand::ZeroHop || request.command == legion::ControlCommand::IgnoreList) {
+         report(command, now, request.command == legion::ControlCommand::ZeroHop);
+         return;
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index 3a9c2ba..a6ee1d5 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -15,7 +15,7 @@ constexpr uint32_t TRACE_WAIT_MS = 90000;
+ constexpr uint32_t TRACE_COOLDOWN_MS = 60000;
+ constexpr uint32_t TRACE_REPLY_GAP_MS = 6000;
+ 
+-enum class ControlCommand : uint8_t { None, Message, Reboot, ZeroHop, Ignore, Unignore, IgnoreList, Trace };
++enum class ControlCommand : uint8_t { None, Message, Reboot, ZeroHop, Ignore, Unignore, IgnoreList, Trace, Boot };
+ struct ControlRequest {
+     ControlCommand command = ControlCommand::None;
+     uint32_t node = 0;
+@@ -186,6 +186,10 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+         result.command = ControlCommand::ZeroHop;
+     else if (parser.token("/trace"))
+         result.command = ControlCommand::Trace;
++#if RAK3401_LEGION_BOOT
++    else if (parser.token("/boot"))
++        result.command = ControlCommand::Boot;
++#endif
+     else if (parser.token("/ignore")) {
+         result.command = ControlCommand::Ignore;
+         result.group = true;
+diff --git a/src/platform/nrf52/LegionBoot.cpp b/src/platform/nrf52/LegionBoot.cpp
+new file mode 100644
+index 0000000..0550e7b
+--- /dev/null
++++ b/src/platform/nrf52/LegionBoot.cpp
+@@ -0,0 +1,143 @@
++#include "LegionBoot.h"
++
++#if RAK3401_LEGION_BOOT
++#if !defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302)
++#error "Legion boot diagnostics require the RAK3401 + RAK13302 nRF52 profile"
++#endif
++#include <Arduino.h>
++#include <cstdio>
++#include <nrf_sdm.h>
++#include <nrf_soc.h>
++#if RAK3401_LEGION_CC310
++#include "LegionCrypto.h"
++#endif
++
++namespace
++{
++// Leave the low nibble (including Nordic's optional CRC-skip bit) alone. The
++// Adafruit UF2 bootloader uses GPREGRET, which this module never touches.
++constexpr uint8_t REASON_MASK = 0xf0;
++LegionBootSnapshot snapshot;
++bool captured = false;
++
++LegionShutdown decode(uint8_t value)
++{
++    switch (static_cast<LegionShutdown>(value & REASON_MASK)) {
++    case LegionShutdown::BootProtect:
++    case LegionShutdown::LowBattery:
++    case LegionShutdown::LowVdd:
++    case LegionShutdown::SystemOff:
++        return static_cast<LegionShutdown>(value & REASON_MASK);
++    default:
++        return LegionShutdown::Unknown;
++    }
++}
++
++bool replaceReason(uint8_t value)
++{
++    uint8_t enabled = 0;
++    if (sd_softdevice_is_enabled(&enabled) != NRF_SUCCESS)
++        return false;
++    if (enabled)
++        return sd_power_gpregret_clr(1, REASON_MASK) == NRF_SUCCESS && sd_power_gpregret_set(1, value) == NRF_SUCCESS;
++    NRF_POWER->GPREGRET2 = (NRF_POWER->GPREGRET2 & ~REASON_MASK) | value;
++    return true;
++}
++
++const char *resetName(uint32_t value)
++{
++    if (value & POWER_RESETREAS_DOG_Msk)
++        return "watchdog";
++    if (value & POWER_RESETREAS_LOCKUP_Msk)
++        return "lockup";
++    if (value & (POWER_RESETREAS_OFF_Msk | POWER_RESETREAS_LPCOMP_Msk))
++        return "system-off-wake";
++    if (value & POWER_RESETREAS_RESETPIN_Msk)
++        return "reset-pin";
++    if (value & POWER_RESETREAS_SREQ_Msk)
++        return "software";
++    return value ? "other" : "power-on/unknown";
++}
++
++const char *shutdownName(LegionShutdown reason)
++{
++    switch (reason) {
++    case LegionShutdown::BootProtect:
++        return "boot-protect";
++    case LegionShutdown::LowBattery:
++        return "low-battery";
++    case LegionShutdown::LowVdd:
++        return "low-vdd";
++    case LegionShutdown::SystemOff:
++        return "system-off";
++    default:
++        return "unknown";
++    }
++}
++} // namespace
++
++void legionBootCapture()
++{
++    if (captured)
++        return;
++    captured = true;
++    snapshot.reset = readResetReason(); // The Arduino core already cleared hardware RESETREAS.
++    const auto previous = decode(NRF_POWER->GPREGRET2);
++    // A marker records an intentional energy stop, not the cause of a later
++    // unrelated watchdog/pin reset. A recovery wait can end in a software reset.
++    constexpr uint32_t expected = POWER_RESETREAS_OFF_Msk | POWER_RESETREAS_LPCOMP_Msk | POWER_RESETREAS_SREQ_Msk;
++    if ((snapshot.reset & expected) &&
++        !(snapshot.reset & (POWER_RESETREAS_DOG_Msk | POWER_RESETREAS_LOCKUP_Msk | POWER_RESETREAS_RESETPIN_Msk)))
++        snapshot.previous = previous;
++    if (previous != LegionShutdown::Unknown)
++        replaceReason(0); // Consume only our markers; preserve foreign values and low-nibble flags.
++}
++
++void legionBootObserveVoltage(uint16_t batteryMv, uint16_t vddMv, bool usb)
++{
++    if (!snapshot.sampled) {
++        snapshot.batteryMv = batteryMv;
++        snapshot.vddMv = vddMv;
++        snapshot.usb = usb;
++        snapshot.sampled = true;
++    }
++}
++
++bool legionBootRecordShutdown(LegionShutdown reason)
++{
++    const auto bits = static_cast<uint8_t>(reason);
++    const auto existing = NRF_POWER->GPREGRET2 & REASON_MASK;
++    if (decode(bits) == LegionShutdown::Unknown || (existing && decode(existing) == LegionShutdown::Unknown))
++        return false;
++    return replaceReason(bits);
++}
++
++LegionBootSnapshot legionBootSnapshot()
++{
++    return snapshot; // Written only by the boot gate, before the radio/command threads start.
++}
++
++bool legionBootFormat(char *output, size_t size, uint32_t node)
++{
++    if (!output || !size)
++        return false;
++    char battery[12] = "NA", vdd[12] = "NA";
++    if (snapshot.sampled && snapshot.batteryMv)
++        std::snprintf(battery, sizeof(battery), "%u", (unsigned)snapshot.batteryMv);
++    if (snapshot.sampled && snapshot.vddMv)
++        std::snprintf(vdd, sizeof(vdd), "%u", (unsigned)snapshot.vddMv);
++    int used = std::snprintf(output, size, "!%08lx BOOT reset:%s(%08lx) prev:%s\nVBAT:%s VDD:%smV USB:%s", (unsigned long)node,
++                             resetName(snapshot.reset), (unsigned long)snapshot.reset, shutdownName(snapshot.previous), battery,
++                             vdd, snapshot.sampled ? (snapshot.usb ? "1" : "0") : "NA");
++    if (used < 0 || static_cast<size_t>(used) >= size)
++        return false;
++#if RAK3401_LEGION_CC310
++    const auto stats = legionCryptoStats();
++    const int added = std::snprintf(output + used, size - used, "\nCC310 SHA:%lu MAC:%lu SW:%lu", (unsigned long)stats.sha,
++                                    (unsigned long)stats.hmac, (unsigned long)stats.fallback);
++    if (added < 0 || static_cast<size_t>(added) >= size - used)
++        return false;
++#endif
++    return true;
++}
++#endif
+diff --git a/src/platform/nrf52/LegionBoot.h b/src/platform/nrf52/LegionBoot.h
+new file mode 100644
+index 0000000..71a1a90
+--- /dev/null
++++ b/src/platform/nrf52/LegionBoot.h
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_BOOT
++#include <cstddef>
++#include <cstdint>
++
++enum class LegionShutdown : uint8_t { Unknown = 0, BootProtect = 0xa0, LowBattery = 0xb0, LowVdd = 0xc0, SystemOff = 0xd0 };
++
++struct LegionBootSnapshot {
++    uint32_t reset = 0;
++    uint16_t batteryMv = 0, vddMv = 0;
++    LegionShutdown previous = LegionShutdown::Unknown;
++    bool sampled = false, usb = false;
++};
++
++void legionBootCapture();
++void legionBootObserveVoltage(uint16_t batteryMv, uint16_t vddMv, bool usb);
++bool legionBootRecordShutdown(LegionShutdown reason);
++LegionBootSnapshot legionBootSnapshot();
++bool legionBootFormat(char *output, size_t size, uint32_t node);
++#endif
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+index 1a24d7f..70d7797 100644
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -16,6 +16,9 @@
+ #include <hal/nrf_lpcomp.h>
+ #include <nrf_sdm.h>
+ #include <nrf_soc.h>
++#if RAK3401_LEGION_BOOT
++#include "platform/nrf52/LegionBoot.h"
++#endif
+ 
+ uint16_t getVDDVoltage();
+ 
+@@ -125,6 +128,9 @@ void feedSleepWatchdog()
+ 
+ [[noreturn]] void earlyEnergySleep()
+ {
++#if RAK3401_LEGION_BOOT
++    legionBootRecordShutdown(LegionShutdown::BootProtect);
++#endif
+     energySleep = true;
+     powerOffPeripherals();
+     if (!armBatteryWake())
+@@ -150,13 +156,21 @@ void checkBootPower()
+         const auto batteryMv = readBatteryMv();
+         const auto vddMv = getVDDVoltage();
+         lastVddMv.store(vddMv);
++#if RAK3401_LEGION_BOOT
++        legionBootObserveVoltage(batteryMv, vddMv, powerHAL_isVBUSConnected());
++#endif
+         if (!legion::bootPowerReady(batteryMv, vddMv, powerHAL_isVBUSConnected()))
+             earlyEnergySleep();
+     }
+ }
+ 
+-[[noreturn]] void enterEnergySleep()
++[[noreturn]] void enterEnergySleep(bool lowVdd)
+ {
++#if RAK3401_LEGION_BOOT
++    legionBootRecordShutdown(lowVdd ? LegionShutdown::LowVdd : LegionShutdown::LowBattery);
++#else
++    (void)lowVdd;
++#endif
+     energySleep = true;
+     LOG_WARN("Legion battery reserve: %u mV, entering energy sleep", (unsigned)lastBatteryMv.load());
+     // Skip the TX queue wait and final snapshots while the supply is falling.
+@@ -168,6 +182,9 @@ void checkBootPower()
+ 
+ void legionPowerBootGate()
+ {
++#if RAK3401_LEGION_BOOT
++    legionBootCapture();
++#endif
+     // Before console/FS setup: no logging, Bluetooth startup or flash writes here.
+     checkBootPower();
+     digitalWrite(PIN_3V3_EN, HIGH);
+@@ -203,6 +220,10 @@ bool legionPowerTxReady()
+ 
+ void legionPrepareSystemOff(bool enableBatteryWake)
+ {
++#if RAK3401_LEGION_BOOT
++    if (!energySleep)
++        legionBootRecordShutdown(LegionShutdown::SystemOff);
++#endif
+     powerOffPeripherals();
+     if (enableBatteryWake && !armBatteryWake())
+         waitForRecovery();
+@@ -220,7 +241,7 @@ void legionPowerPoll()
+         const auto vddMv = getVDDVoltage();
+         lastVddMv.store(vddMv);
+         if (policy.observeVdd(vddMv, powerHAL_isVBUSConnected()))
+-            enterEnergySleep();
++            enterEnergySleep(true);
+     }
+     if (!sampled || Throttle::hasElapsed(lastBatteryCheck, BATTERY_CHECK_MS)) {
+         lastBatteryCheck = Time::getMillis();
+@@ -229,7 +250,7 @@ void legionPowerPoll()
+     if (!sampled || Throttle::hasElapsed(lastBatterySleepCheck, BATTERY_SLEEP_CHECK_MS)) {
+         lastBatterySleepCheck = Time::getMillis();
+         if (policy.observeBattery(lastBatteryMv.load(), powerHAL_isVBUSConnected()))
+-            enterEnergySleep();
++            enterEnergySleep(false);
+     }
+     sampled = true;
+     if (Throttle::hasElapsed(lastStats, 300000)) {

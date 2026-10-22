@@ -22,6 +22,12 @@ Owner owner;
 Config config;
 uint32_t ownNode = 0xabcdef01, rebootAtMsec = 0, radioGeneration = 0;
 bool allocationFails = false, supplyReady = true, flashSafe = true, recoveryBlocked = false;
+unsigned bootReports = 0;
+bool legionBootFormat(char *output, size_t size, uint32_t node)
+{
+    ++bootReports;
+    return std::snprintf(output, size, "!%08lx BOOT reset:watchdog(00000002) prev:unknown", (unsigned long)node) > 0;
+}
 NodeDB database;
 NodeDB *nodeDB = &database;
 MeshService meshService;
@@ -70,6 +76,7 @@ void reset()
     Time::now = rebootAtMsec = radioGeneration = 0;
     allocationFails = recoveryBlocked = false;
     supplyReady = flashSafe = true;
+    bootReports = 0;
     channel(2, "LegionRF");
     channel(0, "SFNarrow");
 }
@@ -748,6 +755,39 @@ void test_trace_pending_validation_and_bounded_output()
     assert(meshService.sent.size() == 3); // Do not send part 2 when part 1 was rejected.
 }
 
+void test_boot_query_authorization_and_read_only_behavior()
+{
+    reset();
+    TestModule module;
+    deliver(module, "/boot !abcdef02");
+    assert(bootReports == 0 && meshService.sent.empty());
+    auto wrong = packet("/boot !abcdef01", 2);
+    wrong.channel = 0;
+    module.handleReceived(wrong);
+    Time::now += 10000;
+    module.runOnce();
+    assert(bootReports == 0 && meshService.sent.empty());
+    // Reading boot state must not require safe flash voltage or interrupt a transfer.
+    flashSafe = false;
+    xModem.busy = true;
+    recoveryBlocked = true;
+    deliver(module, "/boot !abcdef01", 3);
+    assert(bootReports == 1 && meshService.sent.size() == 1 && last().find("BOOT reset:watchdog") != std::string::npos);
+    assert(meshService.sent[0].packet.channel == 2 && database.saveCalls == 0);
+    next();
+    deliver(module, "/boot !abcdef01", 3);
+    assert(bootReports == 1); // Duplicate packet ID is not executed again.
+    next();
+    deliver(module, "/boot !abcdef01 extra", 4);
+    assert(last().find("Usage: /boot") != std::string::npos && bootReports == 1);
+    next();
+    module.handleReceived(packet("/boot !abcdef01", 5));
+    ++channels.entries[2].settings.psk.bytes[0];
+    Time::now += 10000;
+    module.runOnce();
+    assert(bootReports == 1);
+}
+
 int main()
 {
 #define RUN(test)                                                                                                                \
@@ -770,4 +810,5 @@ int main()
     RUN(test_trace_routing_errors_and_local_failure);
     RUN(test_trace_config_changes_and_busy);
     RUN(test_trace_pending_validation_and_bounded_output);
+    RUN(test_boot_query_authorization_and_read_only_behavior);
 }

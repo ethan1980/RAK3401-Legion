@@ -118,6 +118,58 @@ command retries or settings writes are added. Standard routing retries and
 airtime limits still apply. Reply queue acceptance is not proof that the
 requester received it. RF validation of this feature is pending.
 
+## /boot - boot and accelerator diagnostics (0.6.0 development)
+
+~~~text
+/boot !abcdef01
+~~~
+
+The selected Legion returns one private LegionRF message, with no flash writes
+or automatic announcements. The full executor ID is required; missing, malformed
+and nonmatching IDs are silent. Extra fields addressed to this node produce usage
+help. The normal channel/key validation, duplicate cache and shared five-second
+control-command cooldown apply. The report remains available during a transfer
+or low flash-power reserve when radio transmission itself is permitted.
+
+Example; values are illustrative:
+
+~~~text
+!abcdef01 BOOT reset:system-off-wake(00030000) prev:low-battery
+VBAT:3891 VDD:3310mV USB:0
+CC310 SHA:12 MAC:3 SW:0
+~~~
+
+- `reset` is an interpretation of the Arduino core's cached nRF52 RESETREAS
+  mask, followed by the complete hexadecimal mask. `watchdog`, `lockup`,
+  `reset-pin`, `software` and `system-off-wake` are reported when indicated.
+  Zero is `power-on/unknown`; it cannot prove that a brownout occurred.
+- `prev` is a consumed, retained record of the previous deliberate protective
+  stop: `boot-protect`, `low-battery`, `low-vdd` or `system-off`. It is accepted
+  only for a compatible wake/software-reset reason. Absent/foreign records and
+  unrelated watchdog, CPU lockup or pin-reset events stay `unknown`. It records
+  the requested stop, not proof that the preceding shutdown completed.
+- `VBAT` and `VDD` are the first physical readings in this boot's Legion power
+  gate, in millivolts. They are fixed boot samples, not current values or voltage
+  minima at the instant of a fault. Unavailable values are `NA`.
+- `USB` is VBUS detected at the node during that sample. A charger connected
+  only to an external solar/battery box is invisible to the node and may leave
+  `USB:0`. It does not indicate whether the solar panel is charging the battery.
+- `CC310 SHA` and `MAC` count successful hardware SHA-256 and ACK-proof HMAC
+  operations. `SW` counts failed accelerator attempts followed by the caller's
+  existing software calculation. These counters describe this new backend,
+  not all cryptographic work, and wrap at 32 bits. They reset on reboot.
+
+Mesh forwarding alone may not invoke SHA/HMAC. In particular, `MAC:0` can be
+normal when no pairwise PKI ACK proof has been computed. Zero fallbacks indicate
+no failed attempts, not proof that the accelerator was exercised. Identical
+digests/ACK proofs preserve standard Meshtastic interoperability. Existing
+AES key sizes and channel encryption choices retain their normal behavior.
+
+No reset history is written to flash. A complete power loss can erase the
+retained shutdown marker. The report and counters do not by themselves measure
+energy savings or certify the physical reset/accelerator path; those hardware
+tests remain pending. This command is not in the published 0.5.1 firmware.
+
 ## /reboot - scheduled normal restart
 
 ~~~text

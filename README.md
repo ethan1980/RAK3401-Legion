@@ -18,6 +18,11 @@ retaining the 3.50 V threshold and existing REG1 DC/DC and remote commands.
 All six 0.5.0 commands and manual backup restoration have now been tested on hardware.
 See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).
 
+Development for 0.6.0 includes remote `/trace !legionid !targetid`, with an
+asynchronous 90-second wait and separate outbound/return paths. It is not part
+of the published 0.5.1 release. See [0.6.0 planning](PLANNING-0.6.0.md) for APC,
+stale-backup detection and the remaining validation.
+
 This repository contains a small set of patches and a build profile. The build
 downloads the upstream source pinned in `upstream.json`, applies the changes,
 and produces the complete firmware. This keeps Legion changes easy to review

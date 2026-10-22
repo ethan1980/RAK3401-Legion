@@ -121,12 +121,16 @@ def package(firmware, target, output):
         "private_telemetry": target == "legion",
         "remote_control": target == "legion",
         "control_commands": (
-            ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist"]
+            ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist", "trace"]
             if target == "legion"
             else []
         ),
         "control_text_limit_bytes": 199 if target == "legion" else None,
         "control_cooldown_seconds": 5 if target == "legion" else None,
+        "trace_wait_seconds": 90 if target == "legion" else None,
+        "trace_start_cooldown_seconds": 60 if target == "legion" else None,
+        "trace_reply_gap_seconds": 6 if target == "legion" else None,
+        "trace_hardware_tested": False,
         "reg1_dcdc": target == "legion",
         "dcdc_validation": dcdc_validation,
         "ble_dfu_validation": dfu_validation,

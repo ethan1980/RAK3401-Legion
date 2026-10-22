@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 - in development, not released
+
+- Add `/trace !legionid !targetid` using standard Meshtastic traceroute packets.
+- Wait asynchronously for up to 90 seconds; correlate exact replies and return
+  both paths on LegionRF with paced, bounded text messages.
+- Distinguish `NO_ROUTE`, no response and local queue errors; retain other
+  commands while waiting and cancel stale results after configuration changes.
+- Keep the 0.5.1 release identity until 0.6.0 is ready. APC observation and
+  stale-backup detection remain separate workstreams; trace RF tests are pending.
+
 ## 0.5.1 - 2026-10-19
 
 - Confirm low battery with eight checks every 20 seconds, keeping 3.50 V.

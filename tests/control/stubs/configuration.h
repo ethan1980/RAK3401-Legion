@@ -21,6 +21,8 @@
 constexpr uint32_t NODENUM_BROADCAST = UINT32_MAX;
 constexpr int meshtastic_MeshPacket_decoded_tag = 1;
 constexpr int meshtastic_PortNum_TEXT_MESSAGE_APP = 1;
+constexpr int meshtastic_PortNum_TRACEROUTE_APP = 70;
+constexpr int meshtastic_PortNum_ROUTING_APP = 5;
 constexpr int meshtastic_MeshPacket_Priority_BACKGROUND = 10;
 constexpr int meshtastic_MeshPacket_Priority_DEFAULT = 0;
 constexpr int meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA = 1;
@@ -28,6 +30,26 @@ constexpr int meshtastic_Channel_Role_DISABLED = 0;
 constexpr int meshtastic_Channel_Role_PRIMARY = 1;
 constexpr int meshtastic_Channel_Role_SECONDARY = 2;
 constexpr int RX_SRC_LOCAL = 2;
+constexpr int RX_SRC_USER = 1;
+enum meshtastic_Routing_Error {
+    meshtastic_Routing_Error_NONE = 0,
+    meshtastic_Routing_Error_NO_ROUTE = 1,
+    meshtastic_Routing_Error_TIMEOUT = 3,
+    meshtastic_Routing_Error_NO_INTERFACE = 4,
+    meshtastic_Routing_Error_MAX_RETRANSMIT = 5,
+    meshtastic_Routing_Error_NO_RESPONSE = 8,
+    meshtastic_Routing_Error_DUTY_CYCLE_LIMIT = 9
+};
+struct meshtastic_RouteDiscovery {
+    size_t route_count = 0;
+    uint32_t route[8]{};
+    size_t snr_towards_count = 0;
+    int8_t snr_towards[8]{};
+    size_t route_back_count = 0;
+    uint32_t route_back[8]{};
+    size_t snr_back_count = 0;
+    int8_t snr_back[8]{};
+};
 struct Payload {
     size_t size = 0;
     uint8_t bytes[240]{};
@@ -35,6 +57,7 @@ struct Payload {
 struct Decoded {
     int portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
     bool want_response = false;
+    uint32_t request_id = 0;
     Payload payload;
 };
 struct meshtastic_MeshPacket {
@@ -66,6 +89,7 @@ class FakeChannels
     std::array<FakeChannel, 8> entries{};
     std::array<bool, 8> publicKeys{}, aead{};
     uint8_t getNumChannels() const { return entries.size(); }
+    uint8_t getPrimaryIndex() const { return 0; }
     FakeChannel &getByIndex(size_t index) { return entries.at(index); }
     bool usesPublicKey(size_t index) const { return publicKeys.at(index); }
     bool isAEADEnabled(size_t index) const { return aead.at(index); }

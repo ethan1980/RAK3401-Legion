@@ -63,6 +63,61 @@ possible. No fallback channel is used. The destination identity and encryption
 settings are rechecked before dispatch. Firmware-generated local messages do
 not re-enter Legion's command handlers on the transmitting node.
 
+## /trace - remote traceroute (0.6.0 development)
+
+~~~text
+/trace !abcdef01 !12345678
+~~~
+
+The first ID selects the Legion that originates the traceroute. The second is
+the destination, which can run ordinary compatible Meshtastic firmware. Both
+full IDs are required; reserved IDs, the executing node itself and extra fields
+are rejected. Send this command as a broadcast in the private **LegionRF**
+conversation. It is not available in the published 0.5.1 firmware.
+
+The Legion uses the target's recorded channel, or its primary channel for an
+unknown target. The target must share that channel's encryption and radio
+settings; a disabled recorded channel produces an error, with no fallback scan
+or configuration changes. The requester only needs LegionRF. The request is a
+standard `TRACEROUTE_APP` packet with a response requested and normal reliable
+routing, like a traceroute from the Meshtastic app.
+
+After queue acceptance, LegionRF receives a waiting confirmation. The Legion
+waits for **up to 90 seconds from queue acceptance**, without blocking other
+commands. One trace can be active per Legion, and trace starts are at least
+60 seconds apart. The existing shared five-second command gate still applies.
+
+Example successful result; `TR#` is the correlated traceroute packet ID:
+
+~~~text
+!abcdef01: Trace !12345678 queued; waiting up to 90s
+!abcdef01 TR#98765432 1/2 out: !abcdef01 > !11111111 > !12345678
+!abcdef01 TR#98765432 2/2 back: !12345678 > !22222222 > !abcdef01
+~~~
+
+The paths can differ. Each direction is a separate message of at most 199 bytes,
+with at least six seconds between result messages and after the waiting reply.
+Full IDs identify the endpoints and reported relays in travel order. `?` means
+an unknown relay. Missing path metadata is labeled `route not reported`;
+`0 reported relays` does not establish that older firmware reported every hop.
+Names and per-hop SNR are not included in these compact text reports.
+
+Only a response from the requested target, addressed to the executing Legion on
+the selected channel and tied to the exact request packet ID, completes a trace.
+An ACK alone does not. A routing `NO_ROUTE` is reported as unreachable. A timeout,
+missing acknowledgement or absent response is reported separately with
+`reachability unknown`; silence is not proof of an unreachable destination.
+Other routing failures include their numeric Meshtastic error code. Allocation
+and queue rejection are local failures, not reachability measurements.
+
+Changing radio settings, routing-channel encryption or the primary channel
+cancels the pending result. Changing or disabling LegionRF, or losing transmit
+power readiness, clears it without sending the old result under a new key.
+Late and duplicate replies are ignored. State stays in RAM; no automatic
+command retries or settings writes are added. Standard routing retries and
+airtime limits still apply. Reply queue acceptance is not proof that the
+requester received it. RF validation of this feature is pending.
+
 ## /reboot - scheduled normal restart
 
 ~~~text
@@ -165,7 +220,7 @@ app. NodeDB ignore flags are outside the manual rescue snapshot.
 - Capacity is 128 rows; overflow is explicitly labeled `partial`. An empty list
   uses one short response. Ignore/unignore commands invalidate the local ignore
   snapshot. Changes through other paths may wait until snapshot expiry to appear.
-- The six new commands share one pending request and a **five-second cooldown
+- The control commands share one pending request and a **five-second cooldown
   after processing** per Legion. Requests while pending/cooling down are silent.
   This gate is separate from telemetry/backup's 60 seconds.
 - Targeted requests wait 0.25-1 second; group requests wait 1-10 seconds, followed

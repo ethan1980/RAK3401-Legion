@@ -16,6 +16,7 @@
     "patches/0009-rak3401-direct-dfu.patch",
     "patches/0010-rak3401-dfu-write-authorization.patch",
     "patches/0011-rak3401-control-and-dcdc.patch",
-    "patches/0012-rak3401-battery-confirmation.patch"
+    "patches/0012-rak3401-battery-confirmation.patch",
+    "patches/0013-rak3401-remote-traceroute.patch"
   ]
 }

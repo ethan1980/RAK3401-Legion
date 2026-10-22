@@ -2,10 +2,13 @@
 // Commands must select the correct executor, originate one message only after channel revalidation,
 // retain coherent paginated reports, and never claim durable ignore changes after a deferred save.
 // These tests guard queue-vs-delivery confusion, command recursion, stale-hop SNR and legacy blocks.
+// Trace requests must correlate by packet, target and channel, preserve both route directions,
+// remain asynchronous, respect the 90s deadline across rollover, and stop exposing results after key changes.
 // SDK, radio, NodeDB storage and scheduler boundaries are simulated; hardware RF delivery is not tested.
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "UptimeClock.h"
+#include "mesh/Router.h"
 #include "modules/AdminModule.h"
 #include "modules/LegionControlModule.h"
 #include "xmodem.h"
@@ -23,6 +26,8 @@ NodeDB database;
 NodeDB *nodeDB = &database;
 MeshService meshService;
 MeshService *service = &meshService;
+Router testRouter;
+Router *router = &testRouter;
 XModem xModem;
 AdminModule admin;
 AdminModule *adminModule = &admin;
@@ -59,6 +64,7 @@ void reset()
     config = {};
     database = {};
     meshService = {};
+    testRouter = {};
     admin = {};
     xModem = {};
     Time::now = rebootAtMsec = radioGeneration = 0;
@@ -438,6 +444,310 @@ void test_gate_rollover_and_bounded_fuzz()
     }
 }
 
+meshtastic_MeshPacket traceReply(size_t index = 0)
+{
+    const auto &request = meshService.sent.at(index).packet;
+    meshtastic_MeshPacket reply;
+    reply.from = request.to;
+    reply.to = ownNode;
+    reply.channel = request.channel;
+    reply.decoded.portnum = meshtastic_PortNum_TRACEROUTE_APP;
+    reply.decoded.request_id = request.id;
+    return reply;
+}
+
+meshtastic_RouteDiscovery exampleRoute()
+{
+    meshtastic_RouteDiscovery route;
+    route.route_count = 2;
+    route.route[0] = 0x11111111;
+    route.route[1] = 0x22222222;
+    route.route_back_count = 2;
+    route.route_back[0] = 0x33333333;
+    route.route_back[1] = 0x44444444;
+    return route;
+}
+
+void test_trace_parser_and_authorization()
+{
+    const auto parse = [](const std::string &s) {
+        return legion::parseControl(reinterpret_cast<const uint8_t *>(s.data()), s.size(), ownNode);
+    };
+    for (const auto &s : {"/trace", "/trace !bad !12345678", "/trace !00000001 !12345678"})
+        assert(parse(s).command == legion::ControlCommand::None);
+    for (const auto &s : {"/trace !abcdef01", "/trace !abcdef01 !bad", "/trace !abcdef01 !abcdef01", "/trace !abcdef01 !00000000",
+                          "/trace !abcdef01 !00000003", "/trace !abcdef01 !ffffffff", "/trace !abcdef01 !12345678 extra"})
+        assert(parse(s).command == legion::ControlCommand::Trace && !parse(s).valid);
+    const auto valid = parse(" /trace !ABCDEF01 !1234ABCD\n");
+    assert(valid.valid && valid.node == ownNode && valid.target == 0x1234abcd && !valid.group);
+    reset();
+    TestModule module;
+    auto wrongChannel = packet("/trace !abcdef01 !12345678");
+    wrongChannel.channel = 0;
+    module.handleReceived(wrongChannel);
+    Time::now = 10000;
+    module.runOnce();
+    assert(meshService.sent.empty());
+    deliver(module, "/trace !abcdef02 !12345678");
+    assert(meshService.sent.empty());
+    deliver(module, "/trace !abcdef01 !00000001");
+    assert(meshService.sent.size() == 1 && last().find("Usage: /trace") != std::string::npos);
+}
+
+void test_trace_standard_request_and_asymmetric_routes()
+{
+    reset();
+    channel(1, "Remote");
+    database.getOrCreateMeshNode(0x12345678)->channel = 1;
+    TestModule module;
+    deliver(module, "/trace !abcdef01 !12345678");
+    assert(meshService.sent.size() == 2);
+    const auto request = meshService.sent[0];
+    assert(request.packet.to == 0x12345678 && request.packet.channel == 1 && request.packet.from == ownNode);
+    assert(request.packet.decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP && request.packet.decoded.want_response);
+    assert(request.packet.want_ack && request.packet.decoded.payload.size == 0 && request.source == RX_SRC_USER &&
+           request.toPhone);
+    assert(last().find("waiting up to 90s") != std::string::npos && meshService.sent[1].packet.channel == 2);
+    next();
+    deliver(module, "/zerohop !abcdef01", 2);
+    assert(last().find("No eligible") != std::string::npos || last().find("n:0") != std::string::npos);
+    const auto reply = traceReply();
+    auto route = exampleRoute();
+    legionControlObserveTraceRoute(reply, route);
+    module.runOnce();
+    assert(last().find("1/2 out: !abcdef01 > !11111111 > !22222222 > !12345678") != std::string::npos);
+    assert(last().find("TR#98765432") != std::string::npos);
+    const auto sent = meshService.sent.size();
+    legionControlObserveTraceRoute(reply, {});
+    module.runOnce();
+    assert(meshService.sent.size() == sent);
+    Time::now += legion::TRACE_REPLY_GAP_MS - 1;
+    module.runOnce();
+    assert(meshService.sent.size() == sent);
+    ++Time::now;
+    module.runOnce();
+    assert(last().find("2/2 back: !12345678 > !33333333 > !44444444 > !abcdef01") != std::string::npos);
+    assert(database.saveCalls == 0);
+    for (size_t i = 1; i < meshService.sent.size(); ++i)
+        assert(meshService.sent[i].packet.channel == 2 && text(i).size() <= 199);
+}
+
+void test_trace_correlation_and_deadline()
+{
+    for (int mismatch = 0; mismatch < 7; ++mismatch) {
+        reset();
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        auto reply = traceReply();
+        if (mismatch == 0)
+            ++reply.decoded.request_id;
+        if (mismatch == 1)
+            ++reply.from;
+        if (mismatch == 2)
+            reply.to = NODENUM_BROADCAST;
+        if (mismatch == 3)
+            reply.channel = 2;
+        if (mismatch == 4)
+            reply.decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+        if (mismatch == 5)
+            reply.which_payload_variant = 0;
+        auto route = exampleRoute();
+        if (mismatch == 6)
+            route.route_count = 9;
+        legionControlObserveTraceRoute(reply, route);
+        Time::now += legion::TRACE_WAIT_MS - 1;
+        module.runOnce();
+        assert(meshService.sent.size() == 2);
+        ++Time::now;
+        module.runOnce();
+        assert(meshService.sent.size() == 3 && last().find("reachability unknown") != std::string::npos);
+        assert(last().find("Unreachable") == std::string::npos && testRouter.cancelled.size() == 1);
+        legionControlObserveTraceRoute(traceReply(), exampleRoute());
+        Time::now += 10000;
+        module.runOnce();
+        assert(meshService.sent.size() == 3);
+    }
+    for (int before = 0; before < 2; ++before) {
+        reset();
+        TestModule module;
+        Time::now = UINT32_MAX - 30000;
+        deliver(module, "/trace !abcdef01 !12345678");
+        Time::now += legion::TRACE_WAIT_MS - (before ? 1 : 0);
+        legionControlObserveTraceRoute(traceReply(), exampleRoute());
+        module.runOnce();
+        assert(last().find(before ? "1/2 out" : "No traceroute response") != std::string::npos);
+    }
+}
+
+void test_trace_routing_errors_and_local_failure()
+{
+    for (const auto error :
+         {meshtastic_Routing_Error_NONE, meshtastic_Routing_Error_NO_ROUTE, meshtastic_Routing_Error_MAX_RETRANSMIT,
+          meshtastic_Routing_Error_NO_RESPONSE, meshtastic_Routing_Error_TIMEOUT, meshtastic_Routing_Error_DUTY_CYCLE_LIMIT}) {
+        reset();
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        auto ack = traceReply();
+        ack.from = 0x77777777; // A relay may return a correlated NAK.
+        ack.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+        ++ack.decoded.request_id;
+        legionControlObserveTraceError(ack, error);
+        Time::now += 6000;
+        module.runOnce();
+        assert(meshService.sent.size() == 2);
+        --ack.decoded.request_id;
+        legionControlObserveTraceError(ack, error);
+        module.runOnce();
+        if (error == meshtastic_Routing_Error_NONE) {
+            assert(meshService.sent.size() == 2); // An ACK is not a traceroute response.
+            legionControlObserveTraceRoute(traceReply(), exampleRoute());
+            module.runOnce();
+            assert(last().find("1/2 out") != std::string::npos);
+        } else {
+            assert(meshService.sent.size() == 3);
+            assert((last().find("Unreachable") != std::string::npos) == (error == meshtastic_Routing_Error_NO_ROUTE));
+            legionControlObserveTraceRoute(traceReply(), exampleRoute());
+            Time::now += 6000;
+            module.runOnce();
+            assert(meshService.sent.size() == 3);
+        }
+    }
+    reset();
+    TestModule module;
+    meshService.onSend = [](const meshtastic_MeshPacket &request) {
+        if (request.decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP) {
+            auto error = traceReply();
+            error.from = ownNode;
+            error.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+            legionControlObserveTraceError(error, meshtastic_Routing_Error_NO_INTERFACE);
+        }
+    };
+    deliver(module, "/trace !abcdef01 !12345678");
+    Time::now += 6000;
+    module.runOnce();
+    assert(last().find("Routing failed") != std::string::npos);
+    reset();
+    TestModule rejected;
+    meshService.result = 1;
+    deliver(rejected, "/trace !abcdef01 !12345678");
+    assert(last().find("queue rejected") != std::string::npos);
+    Time::now += 100000;
+    rejected.runOnce();
+    assert(meshService.sent.size() == 2);
+    reset();
+    TestModule noAllocation;
+    allocationFails = true;
+    deliver(noAllocation, "/trace !abcdef01 !12345678");
+    allocationFails = false;
+    Time::now += 100000;
+    noAllocation.runOnce();
+    assert(meshService.sent.empty());
+}
+
+void test_trace_config_changes_and_busy()
+{
+    for (int change = 0; change < 7; ++change) {
+        reset();
+        channel(1, "Remote");
+        database.getOrCreateMeshNode(0x12345678)->channel = 1;
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        legionControlObserveTraceRoute(traceReply(), exampleRoute());
+        if (change == 0)
+            channels.entries[2].settings.psk.bytes[0]++;
+        if (change == 1)
+            channels.entries[1].settings.psk.bytes[0]++;
+        if (change == 2)
+            channels.entries[0].settings.psk.bytes[0]++;
+        if (change == 3)
+            ++radioGeneration;
+        if (change == 4)
+            supplyReady = false;
+        if (change == 5)
+            channels.entries[1].role = meshtastic_Channel_Role_DISABLED;
+        if (change == 6)
+            owner.is_licensed = true;
+        Time::now += 6000;
+        module.runOnce();
+        assert(testRouter.cancelled.size() == 1);
+        for (size_t i = 1; i < meshService.sent.size(); ++i)
+            assert(text(i).find("1/2 out") == std::string::npos);
+        assert(meshService.sent.size() == (change == 0 || change == 4 || change == 6 ? 2 : 3));
+    }
+    reset();
+    TestModule module;
+    deliver(module, "/trace !abcdef01 !12345678");
+    next();
+    deliver(module, "/trace !abcdef01 !22222222", 2);
+    assert(last().find("Trace busy") != std::string::npos);
+    legionControlObserveTraceRoute(traceReply(), exampleRoute());
+    module.runOnce();
+    Time::now += 6000;
+    module.runOnce();
+    next();
+    deliver(module, "/trace !abcdef01 !22222222", 3);
+    assert(last().find("Trace cooldown") != std::string::npos);
+    Time::now += 60000;
+    deliver(module, "/trace !abcdef01 !22222222", 4);
+    assert(last().find("Trace !22222222 queued") != std::string::npos);
+}
+
+void test_trace_pending_validation_and_bounded_output()
+{
+    for (int change = 0; change < 5; ++change) {
+        reset();
+        TestModule module;
+        module.handleReceived(packet("/trace !abcdef01 !12345678"));
+        if (change == 0)
+            ++radioGeneration;
+        if (change == 1)
+            database.getOrCreateMeshNode(0x12345678)->channel = 1;
+        if (change == 2)
+            xModem.busy = true;
+        if (change == 3)
+            recoveryBlocked = true;
+        if (change == 4)
+            admin.editing = true;
+        Time::now += 10000;
+        module.runOnce();
+        assert(meshService.sent.size() == 1 && meshService.sent[0].packet.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP);
+    }
+    for (int variant = 0; variant < 3; ++variant) {
+        reset();
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        meshtastic_RouteDiscovery route;
+        if (variant == 1) {
+            route.snr_towards_count = route.snr_back_count = 1;
+        } else if (variant == 2) {
+            route.route_count = route.route_back_count = 8;
+            for (size_t i = 0; i < 8; ++i)
+                route.route[i] = route.route_back[i] = 0x11111111 + i;
+            route.route[3] = NODENUM_BROADCAST;
+        }
+        legionControlObserveTraceRoute(traceReply(), route);
+        Time::now += 6000;
+        module.runOnce();
+        assert(last().size() <= 199);
+        assert(last().find(variant == 0   ? "route not reported"
+                           : variant == 1 ? "0 reported relays"
+                                          : "> ? >") != std::string::npos);
+        Time::now += 6000;
+        module.runOnce();
+        assert(last().size() <= 199 && last().find("2/2 back") != std::string::npos);
+    }
+    reset();
+    TestModule failedResult;
+    deliver(failedResult, "/trace !abcdef01 !12345678");
+    legionControlObserveTraceRoute(traceReply(), exampleRoute());
+    meshService.result = 1;
+    Time::now += 6000;
+    failedResult.runOnce();
+    Time::now += 6000;
+    failedResult.runOnce();
+    assert(meshService.sent.size() == 3); // Do not send part 2 when part 1 was rejected.
+}
+
 int main()
 {
 #define RUN(test)                                                                                                                \
@@ -454,4 +764,10 @@ int main()
     RUN(test_ignore_union_persistence_and_idempotency);
     RUN(test_ignore_deferred_failure_capacity_and_group_scope);
     RUN(test_gate_rollover_and_bounded_fuzz);
+    RUN(test_trace_parser_and_authorization);
+    RUN(test_trace_standard_request_and_asymmetric_routes);
+    RUN(test_trace_correlation_and_deadline);
+    RUN(test_trace_routing_errors_and_local_failure);
+    RUN(test_trace_config_changes_and_busy);
+    RUN(test_trace_pending_validation_and_bounded_output);
 }

@@ -12,6 +12,7 @@ struct meshtastic_NodeInfoLite {
     char short_name[5]{};
     bool has_hops_away = true, snrPresent = true, mqtt = false;
     uint8_t hops_away = 0;
+    uint8_t channel = 0;
     uint16_t slot = 1;
     float snr = 0;
 };

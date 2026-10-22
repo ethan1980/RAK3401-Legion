@@ -19,9 +19,10 @@ All six 0.5.0 commands and manual backup restoration have now been tested on har
 See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).
 
 Development for 0.6.0 includes remote `/trace !legionid !targetid`, CC310 packet
-SHA/HMAC acceleration and read-only `/boot !legionid` diagnostics. These are not part
-of the published 0.5.1 release. See [0.6.0 planning](PLANNING-0.6.0.md) for APC,
-stale-backup detection and the remaining validation. Accelerator use is counted;
+SHA/HMAC acceleration, read-only `/boot !legionid` diagnostics and stale-backup
+detection in `/backup status !legionid`. These are not part of the published
+0.5.1 release. See [0.6.0 planning](PLANNING-0.6.0.md) for APC and the remaining
+validation. Accelerator use is counted;
 hardware performance and whole-node energy gains still require measurement.
 
 This repository contains a small set of patches and a build profile. The build

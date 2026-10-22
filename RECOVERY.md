@@ -31,6 +31,15 @@ icon or radio ACK alone does not confirm a backup. Plain `/backup` never silentl
 overwrites an existing rescue point. After changes, use `replace` explicitly.
 An unchanged replacement avoids another flash write.
 
+The 0.6.0 development firmware extends `status` with **up to date** or
+**OUTDATED**, followed only by changed block names: `owner`, `config`, `modules`,
+`channels` and `position`. A valid but outdated rescue point remains armed;
+`status` neither replaces it nor writes flash. Use `replace` explicitly after
+reviewing the changes. Busy configuration, missing fixed-position data or
+invalid/unencodable current settings return **freshness unavailable** instead
+of guessing. Existing absent, invalid and incomplete-recovery states remain
+distinct. See [COMMANDS.md](COMMANDS.md#backup-freshness-060-development) for examples.
+
 Backup commands and telemetry share one pending request, a 60-second cooldown
 and the existing duplicate-request cache. Wait at least a minute between commands.
 Changing the private channel while a command waits cancels it. An open settings
@@ -138,6 +147,10 @@ An integration test compiles the actual recovery engine with the real generated
 Meshtastic messages and nanopb, simulated storage, and an OpenSSL X25519 oracle.
 It checks identity/settings/position serialization, preflight, restoration, notices,
 replacement, deletion, v26 migration markers and temporary/unsupported reads.
+Development tests also cover freshness for every captured block, combined
+changes, excluded runtime fields, fixed/dynamic position modes, invalid and
+unavailable comparisons, unchanged flash/files during status and recovery from
+a valid outdated snapshot. The new 0.6.0 freshness replies need hardware RF validation.
 The telemetry transport is tested against simulated channels. Build/package gates
 check application boundaries and file integrity.
 These checks do not substitute for physical power-cut or RF-delivery tests.

@@ -2,6 +2,8 @@
 // Simulated flash/files and an OpenSSL X25519 oracle exercise create/replace/delete, the exact
 // boot preflight, restoration and notice code. This guards losing identity/position during
 // serialization, treating healthy changed prefs as loss, and announcing an incomplete restore.
+// Status checks exercise fresh/stale/unavailable/invalid snapshots without writing either
+// flash page or preference files, including protobuf normalization and continued recovery.
 #include "CryptoEngine.h"
 #include "ErriezCRC32.h"
 #include "FSCommon.h"
@@ -261,6 +263,210 @@ void test_replace_unchanged_busy_and_low_power()
     assert(command(LegionBackupCommand::Replace).find("saved and verified") != std::string::npos && rawWrites == writes + 1);
 }
 
+std::string readOnlyStatus()
+{
+    uint8_t pages[2 * legion::RECOVERY_PAGE_SIZE];
+    std::memcpy(pages, reinterpret_cast<const void *>(legion::RECOVERY_BASE), sizeof(pages));
+    const auto writes = rawWrites;
+    const auto mutations = fakeFs.mutations;
+    std::map<std::string, std::vector<uint8_t>> files;
+    for (const auto &entry : fakeFs.files)
+        files.emplace(entry.first, *entry.second);
+    const auto response = command(LegionBackupCommand::Status);
+    assert(response.size() <= 199);
+    assert(rawWrites == writes && fakeFs.mutations == mutations);
+    assert(!std::memcmp(pages, reinterpret_cast<const void *>(legion::RECOVERY_BASE), sizeof(pages)));
+    assert(files.size() == fakeFs.files.size());
+    for (const auto &entry : files)
+        assert(entry.second == fakeFs.get(entry.first.c_str()));
+    return response;
+}
+
+void expectFreshness(const char *description)
+{
+    const auto response = readOnlyStatus();
+    if (response.find(description) == std::string::npos)
+        std::cerr << "Expected " << description << "; received " << response << '\n';
+    assert(response.find(description) != std::string::npos);
+    assert(response.find("valid rescue point;") != std::string::npos);
+    assert(response.find("recovery armed") != std::string::npos);
+}
+
+void test_status_compares_only_captured_semantic_settings()
+{
+    reset();
+    arm();
+    expectFreshness("up to date;");
+    std::strcpy(owner.id, "!12345678");
+    std::memset(owner.macaddr, 0x91, sizeof(owner.macaddr));
+    owner.hw_model = meshtastic_HardwareModel_HELTEC_V3;
+    owner.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
+    owner.has_is_unmessagable = owner.is_unmessagable = false;
+    owner.long_name[sizeof(owner.long_name) - 1] = 'x';
+    moduleConfig.version = channelFile.version = DEVICESTATE_CUR_VER;
+    fixedPosition.time = 12345;
+    fixedPosition.location_source = meshtastic_Position_LocSource_LOC_EXTERNAL;
+    expectFreshness("up to date;");
+    powerSafe = false;
+    expectFreshness("up to date;");
+}
+
+void test_status_identifies_each_block_and_explicit_replace_clears_staleness()
+{
+    for (unsigned block = 0; block < 5; ++block) {
+        reset();
+        arm();
+        const char *expected;
+        switch (block) {
+        case 0:
+            std::strcpy(owner.long_name, "Changed owner");
+            expected = "OUTDATED: owner;";
+            break;
+        case 1:
+            config.lora.spread_factor = 9;
+            expected = "OUTDATED: config;";
+            break;
+        case 2:
+            moduleConfig.mqtt.enabled = false;
+            expected = "OUTDATED: modules;";
+            break;
+        case 3:
+            channelFile.channels[2].settings.psk.bytes[0] ^= 1;
+            expected = "OUTDATED: channels;";
+            break;
+        default:
+            fixedPosition.altitude += 10;
+            expected = "OUTDATED: position;";
+            break;
+        }
+        expectFreshness(expected);
+        assert(command(LegionBackupCommand::Create).find("already exists") != std::string::npos);
+        expectFreshness(expected);
+        assert(command(LegionBackupCommand::Replace).find("saved and verified") != std::string::npos);
+        expectFreshness("up to date;");
+    }
+    reset();
+    arm();
+    std::strcpy(owner.short_name, "XYZ");
+    config.has_bluetooth = true;
+    config.bluetooth.fixed_pin = 987654;
+    moduleConfig.mqtt.enabled = false;
+    channelFile.channels[2].settings.psk.bytes[0] ^= 1;
+    ++fixedPosition.latitude_i;
+    const auto response = readOnlyStatus();
+    assert(response.find("OUTDATED: owner,config,modules,channels,position;") != std::string::npos);
+    char replacement[40];
+    std::snprintf(replacement, sizeof(replacement), "/backup replace !%08lx", (unsigned long)nodeDB->getNodeNum());
+    assert(response.find(replacement) != std::string::npos);
+    assert(response.find("987654") == std::string::npos && response.find("XYZ") == std::string::npos);
+}
+
+void test_position_modes_coordinates_and_missing_position()
+{
+    reset();
+    arm();
+    config.position.fixed_position = false;
+    positionPresent = false;
+    expectFreshness("OUTDATED: position;");
+    assert(command(LegionBackupCommand::Replace).find("saved and verified") != std::string::npos);
+    fixedPosition.latitude_i += 100;
+    expectFreshness("up to date;");
+    config.position.fixed_position = true;
+    assert(readOnlyStatus().find("freshness unavailable;") != std::string::npos);
+    positionPresent = true;
+    expectFreshness("OUTDATED: position;");
+    assert(command(LegionBackupCommand::Replace).find("saved and verified") != std::string::npos);
+    ++fixedPosition.longitude_i;
+    expectFreshness("OUTDATED: position;");
+    positionPresent = false;
+    assert(readOnlyStatus().find("freshness unavailable;") != std::string::npos);
+}
+
+void test_freshness_unavailable_is_not_fresh_or_stale()
+{
+    for (unsigned reason = 0; reason < 7; ++reason) {
+        reset();
+        arm();
+        switch (reason) {
+        case 0:
+            administrator.editing = true;
+            break;
+        case 1:
+            rebootAtMsec = 1;
+            break;
+        case 2:
+            persistenceBlocked = true;
+            break;
+        case 3:
+            config.version = 999;
+            break;
+        case 4:
+            config.security.private_key.size = 0;
+            break;
+        case 5:
+            std::memset(moduleConfig.mqtt.password, 'x', sizeof(moduleConfig.mqtt.password));
+            break;
+        default:
+            channelFile.channels_count = 0;
+            break;
+        }
+        const auto response = readOnlyStatus();
+        assert(response.find("freshness unavailable") != std::string::npos);
+        assert(response.find("up to date") == std::string::npos && response.find("OUTDATED") == std::string::npos);
+    }
+}
+
+void test_absent_invalid_and_incomplete_status_remain_distinct()
+{
+    reset();
+    assert(readOnlyStatus().find("no rescue point; recovery disabled") != std::string::npos);
+    arm();
+    assert(command(LegionBackupCommand::Delete).find("deleted") != std::string::npos);
+    assert(readOnlyStatus().find("no rescue point; recovery disabled") != std::string::npos);
+    for (unsigned invalid = 0; invalid < 4; ++invalid) {
+        reset();
+        arm();
+        RecoveryPage page;
+        assert(store.load(page) == RecoveryRead::Valid);
+        if (invalid == 0)
+            page.device[0] ^= 1;
+        else if (invalid == 1)
+            page.node ^= 1;
+        else if (invalid == 2) {
+            page.payload[0] = 0xff;
+            page.payloadSize = 1;
+        } else {
+            auto *stored = reinterpret_cast<RecoveryPage *>(legion::RECOVERY_BASE);
+            stored->schema ^= 1;
+            stored->crc = legion::recoveryCrc(*stored);
+        }
+        if (invalid != 3)
+            assert(store.commit(page));
+        assert(readOnlyStatus().find("rescue point invalid or incompatible") != std::string::npos);
+    }
+    reset();
+    arm();
+    assert(legionRecoveryFactoryReset() == 1);
+    assert(readOnlyStatus().find("recovery incomplete;") != std::string::npos);
+}
+
+void test_stale_status_does_not_replace_or_disarm_recovery()
+{
+    reset();
+    arm();
+    std::strcpy(owner.long_name, "Current settings");
+    config.lora.spread_factor = 9;
+    writeCurrent();
+    expectFreshness("OUTDATED: owner,config;");
+    assert(legionRecoveryBoot() == LegionBootRecovery::None);
+    assert(!std::strcmp(owner.long_name, "Current settings") && config.lora.spread_factor == 9);
+    fakeFs.remove(configFileName);
+    assert(legionRecoveryBoot() == LegionBootRecovery::Restored);
+    completeRestore();
+    assert(!std::strcmp(owner.long_name, "Test Legion") && config.lora.spread_factor == 7);
+    expectFreshness("up to date;");
+}
+
 int main()
 {
     void *memory = mmap(reinterpret_cast<void *>(legion::RECOVERY_BASE), 8192, PROT_READ | PROT_WRITE,
@@ -271,6 +477,12 @@ int main()
     test_temporary_reads_and_supported_v26_markers_do_not_restore();
     test_format_survival_factory_reset_delete_and_key_retirement();
     test_replace_unchanged_busy_and_low_power();
+    test_status_compares_only_captured_semantic_settings();
+    test_status_identifies_each_block_and_explicit_replace_clears_staleness();
+    test_position_modes_coordinates_and_missing_position();
+    test_freshness_unavailable_is_not_fresh_or_stale();
+    test_absent_invalid_and_incomplete_status_remain_distinct();
+    test_stale_status_does_not_replace_or_disarm_recovery();
     assert(munmap(memory, 8192) == 0);
     std::cout << "Recovery engine: real protobuf identity/settings/position and transaction checks passed\n";
 }

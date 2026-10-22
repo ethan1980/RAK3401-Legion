@@ -352,6 +352,33 @@ reset: an armed rescue point is restored; delete it first to deliberately remain
 The successful-recovery notice is separate from routine telemetry and is emitted
 only after a completed recovery.
 
+### Backup freshness (0.6.0 development)
+
+In the 0.6.0 development firmware, `/backup status !abcdef01` also compares a
+valid rescue point with the current settings it captures:
+
+| Status text | Meaning |
+| --- | --- |
+| `valid rescue point; up to date; recovery armed` | Captured settings match. |
+| `valid rescue point; OUTDATED: owner,channels; recovery armed; /backup replace !abcdef01` | The named blocks differ; the saved rescue point remains usable. |
+| `valid rescue point; freshness unavailable` | The snapshot is valid, but a reliable comparison is currently unavailable. |
+| `no rescue point; recovery disabled` | No rescue point exists, or it was explicitly deleted. |
+| `rescue point invalid or incompatible` | The saved record fails existing validity, compatibility or device-binding checks. |
+
+Changed block names are `owner` (saved names/public identity), `config`
+(device/radio settings), `modules`, `channels` and `position` (fixed mode,
+latitude, longitude or altitude). Replies contain no configuration values or keys.
+Internal version markers, runtime owner fields, dynamic GPS data and position
+timestamps do not make the backup outdated. An open settings transaction,
+pending reboot, missing fixed position or invalid/unencodable current settings
+can make freshness unavailable. Incomplete recovery keeps its existing warning.
+
+Status is read-only and never refreshes or disables a valid rescue point.
+Review the changed settings, then use `/backup replace !abcdef01` explicitly to
+update it. The existing 60-second telemetry/backup cooldown still applies.
+These freshness replies are not part of the released 0.5.1 firmware and still
+require RF validation on hardware.
+
 ## Telemetry/backup sampling and response limits
 
 - Reuse upstream's current-channel noise samples: no more than one valid sample

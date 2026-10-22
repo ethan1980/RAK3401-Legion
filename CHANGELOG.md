@@ -2,6 +2,10 @@
 
 ## 0.6.0 - in development, not released
 
+- Extend `/backup status !legionid` with read-only freshness checks and changed
+  block names. Preserve recovery from valid outdated snapshots and require an
+  explicit `/backup replace` to refresh them. Report unavailable comparisons
+  without guessing or exposing settings/keys; retain the existing flash format.
 - Accelerate packet SHA-256 and ACK-proof HMAC-SHA256 with the nRF52840 CC310,
   with SDK-error fallback, aligned RAM staging and serialized accelerator users.
 - Add `/boot !legionid` for cached reset/shutdown evidence, first boot voltage
@@ -14,7 +18,7 @@
 - Distinguish `NO_ROUTE`, no response and local queue errors; retain other
   commands while waiting and cancel stale results after configuration changes.
 - Keep the 0.5.1 release identity until 0.6.0 is ready. APC observation and
-  stale-backup detection remain separate workstreams; trace RF tests are pending.
+  implementation remain in progress; new-feature hardware/RF tests are pending.
 
 ## 0.5.1 - 2026-10-19
 

@@ -19,6 +19,7 @@
     "patches/0012-rak3401-battery-confirmation.patch",
     "patches/0013-rak3401-remote-traceroute.patch",
     "patches/0014-rak3401-cc310-hashing.patch",
-    "patches/0015-rak3401-boot-diagnostics.patch"
+    "patches/0015-rak3401-boot-diagnostics.patch",
+    "patches/0016-rak3401-backup-freshness.patch"
   ]
 }

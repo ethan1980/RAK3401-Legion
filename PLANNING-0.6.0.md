@@ -4,6 +4,10 @@ Status: in development. APC observation is in progress. Approved additions are
 stale-backup detection, remote traceroute, CC310 packet hashing and boot
 diagnostics. The released firmware remains 0.5.1.
 
+The four additions below are implemented in development PRs. APC is the only
+approved feature still awaiting implementation; hardware validation of the new
+features remains pending until the observation campaign is complete.
+
 Previous documentation and battery-confirmation items moved to 0.5.1.
 
 ## APC — existing workstream
@@ -14,7 +18,7 @@ Previous documentation and battery-confirmation items moved to 0.5.1.
 - Select thresholds and actions after reviewing the measurements and the
   required reception tests. Observation builds remain separate from a release.
 
-## Stale-backup detection — approved, pending implementation
+## Stale-backup detection — implemented in development, hardware validation pending
 
 - Extend the backup status query to distinguish a valid rescue point that
   matches current backed-up settings from a valid but outdated rescue point.
@@ -26,7 +30,14 @@ Previous documentation and battery-confirmation items moved to 0.5.1.
 - Keep the query read-only, with no automatic replacement or flash writes.
   Updating the rescue point remains an explicit
   `/backup replace !xxxxxxxx` operation.
-- Validate matching, changed, absent and invalid rescue-point cases before release.
+- Compare protobuf contents rather than structure padding, ignoring internal
+  version markers and owner fields excluded from the snapshot. Compare only
+  fixed-position mode/coordinates, not dynamic GPS updates or timestamps.
+- Report freshness as unavailable during configuration edits, a pending reboot,
+  missing fixed-position data or an invalid/unencodable current configuration.
+- Host integration tests cover matching, individual/all changed blocks, absent,
+  invalid and unavailable cases, read-only behavior and recovery from an older
+  valid snapshot. Validate the new status replies over RF on hardware before release.
 
 ## Remote traceroute — implemented on the development branch, RF validation pending
 

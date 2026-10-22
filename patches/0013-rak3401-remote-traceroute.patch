@@ -388,7 +388,7 @@ index d3aa404..3a9c2ba 100644
          result.valid = parser.end();
      return result;
 diff --git a/src/modules/RoutingModule.cpp b/src/modules/RoutingModule.cpp
-index 1ed9b0f..3d50a34 100644
+index 1ed9b0f..6a87431 100644
 --- a/src/modules/RoutingModule.cpp
 +++ b/src/modules/RoutingModule.cpp
 @@ -5,6 +5,9 @@
@@ -408,7 +408,7 @@ index 1ed9b0f..3d50a34 100644
 +#if RAK3401_LEGION_CONTROL
 +    if (r && mp.which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
 +        mp.decoded.portnum == meshtastic_PortNum_ROUTING_APP && r->which_variant == meshtastic_Routing_error_reason_tag)
-+        legionControlObserveTraceError(mp, r->variant.error_reason);
++        legionControlObserveTraceError(mp, r->error_reason);
 +#endif
  
      // FIXME - move this to a non promsicious PhoneAPI module?

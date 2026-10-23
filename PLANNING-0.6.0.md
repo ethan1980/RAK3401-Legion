@@ -10,6 +10,21 @@ features remains pending until the observation campaign is complete.
 
 Previous documentation and battery-confirmation items moved to 0.5.1.
 
+## Upstream base migration — required before the 0.6.0 release
+
+- Decision approved on 2026-10-23: update the Meshtastic base as part of 0.6.0.
+  This is a release requirement; the existing base is not the final selection.
+- During release preparation, compare the reviewed candidate
+  `0d3da2dcda5d83fe8ecfb08ce23c9ef77464d39b` with the latest upstream/nightly
+  available then. Select the revision after reviewing its changes and validation;
+  the final candidate remains open until that review.
+- Pin the selected full commit SHA, refresh the Legion patches and complete
+  both-profile builds, host tests and required hardware/RF validation before
+  publication. Include command, crypto/CC310, backup/restore and DFU checks.
+- Keep the current APC observation firmware/session running during collection.
+  Preserve its measurements under their original base and collect a reference
+  on the migrated base before attributing changes to adaptive APC behavior.
+
 ## APC — existing workstream
 
 - Continue passive observation with the local experimental firmware.

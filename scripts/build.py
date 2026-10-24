@@ -107,8 +107,6 @@ def package(firmware, target, output):
             "RELEASE_NOTES.md",
             "CHANGELOG.md",
             "APC.md",
-            "ALPHA-TESTING.md",
-            "PLANNING-0.6.0.md",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {

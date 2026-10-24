@@ -1,175 +1,97 @@
-# Manual rescue backup - Legion 0.6.0 alpha
+# Manual rescue backup
 
-Legion can save one rescue point on the configured node and restore it if a
-later boot confirms missing or corrupt essential preferences. **Nothing is
-backed up automatically.** Installing firmware, restarting, changing settings or
-updating firmware does not create or refresh a rescue point.
+[Overview](README.md) · [Commands](COMMANDS.md) · [APC](APC.md)
 
-## Create the rescue point
+Legion can save one rescue point and restore it after confirmed loss or corruption
+of essential preferences. **Backup creation and replacement are always explicit.**
+Installing firmware, restarting or changing settings never refreshes it.
 
-Configure and check the node first. Use the existing private **LegionRF**
-secondary channel and its own 16- or 32-byte PSK as described in [COMMANDS.md](COMMANDS.md).
-Possession of that configured channel authorizes these commands;
-there is no additional password or administrator allowlist.
+## Commands
 
-Replace `!abcdef01` with the destination node's complete eight-digit hexadecimal ID:
+Send these channel messages on the configured private **LegionRF** channel.
+Replace the example with the destination's full node ID; only that Legion acts.
 
 | Message | Result |
 | --- | --- |
-| `/backup !abcdef01` | Create a rescue point if none exists. |
-| `/backup status !abcdef01` | Check whether a valid rescue point exists. |
-| `/backup replace !abcdef01` | Explicitly replace it with the current settings. |
-| `/backup delete !abcdef01` | Persistently disable recovery from that rescue point. |
+| `/backup !abcdef01` | Creates a rescue point if absent. |
+| `/backup status !abcdef01` | Reports validity and whether the saved settings are current. |
+| `/backup replace !abcdef01` | Replaces the rescue point with current settings. |
+| `/backup delete !abcdef01` | Persistently disables recovery from that rescue point. |
 
-The destination is mandatory. Only the matching node acts and replies, even
-when several Legion nodes share the channel. Send a channel broadcast, not a
-direct message. Commands are lowercase; hexadecimal IDs accept either case.
-The same commands work from the app connected to the target itself.
+Telemetry and backup share a **60-second cooldown**. Wait for **`saved and
+verified; recovery armed`** or **`deleted; recovery disabled`**: a delivery icon
+alone does not confirm persistence. Creation never silently overwrites a rescue
+point; replacement is explicit and avoids a new write if unchanged.
 
-Wait for the node's **`saved and verified; recovery armed`** response. A delivery
-icon or radio ACK alone does not confirm a backup. Plain `/backup` never silently
-overwrites an existing rescue point. After changes, use `replace` explicitly.
-An unchanged replacement avoids another flash write.
+## Saved settings
 
-The 0.6.0 alpha extends `status` with **up to date** or
-**OUTDATED**, followed only by changed block names: `owner`, `config`, `modules`,
-`channels` and `position`. A valid but outdated rescue point remains armed;
-`status` neither replaces it nor writes flash. Use `replace` explicitly after
-reviewing the changes. Busy configuration, missing fixed-position data or
-invalid/unencodable current settings return **freshness unavailable** instead
-of guessing. Existing absent, invalid and incomplete-recovery states remain
-distinct. See [COMMANDS.md](COMMANDS.md#backup-freshness-060-alpha) for examples.
+The rescue point contains names, this node's private identity and coherent public
+key/Node ID, channel keys, device/radio settings, module settings and fixed-position
+configuration. It excludes peer databases, conversations, dynamic GPS history,
+session counters, queued messages and BLE bonding. Licensed/Ham and “cannot be
+messaged” owner flags are excluded and use their normal defaults on restoration.
 
-Backup commands and telemetry share one pending request, a 60-second cooldown
-and the existing duplicate-request cache. Wait at least a minute between commands.
-Changing the private channel while a command waits cancels it. An open settings
-transaction, pending reboot, unsupported storage mode or unsafe power prevents
-creation/replacement. Normal LoRa airtime and power limits apply.
+Keys remain on the device and are never included in status replies. The rescue
+record is integrity-protected local flash, **not encrypted secret storage**.
+Deletion disables recovery; it is not a forensic secure erase.
 
-## What is saved
+## Backup freshness
 
-- Long and short names.
-- Channels and their private keys, equivalent to the configuration Channel URL.
-- Device/radio configuration and module configuration.
-- This node's private identity key and coherent public key/Node ID.
-- Fixed-position mode and configured latitude, longitude and altitude.
+`/backup status` is read-only. It compares the settings captured by a valid rescue
+point with the current configuration without replacing it.
 
-The licensed/Ham and “cannot be messaged” owner flags are excluded and use their
-normal defaults after restoration. Peer-node databases, conversations, dynamic
-GPS history, telemetry history, session counters and queued messages are excluded.
-An existing peer database is retained when readable; it is not part of the backup.
+| Status | Meaning |
+| --- | --- |
+| `up to date; recovery armed` | Captured settings match. |
+| `OUTDATED: owner,channels; recovery armed` | Named blocks differ; the saved rescue point remains usable. |
+| `freshness unavailable` | A reliable comparison is currently unavailable. |
+| `no rescue point; recovery disabled` | No active rescue point exists. |
+| `rescue point invalid or incompatible` | The record cannot be used. |
 
-Keys are captured locally after installation. Replies never contain private keys,
-channel keys or backup contents. They are not compiled into release images or
-uploaded to GitHub. The reserve contains sensitive data in local flash;
-it is an integrity-protected rescue record, not encrypted secret storage.
-Deletion commits a durable tombstone and disables recovery; it is not a forensic
-secure erase of every historical flash cell. A full-device flash dump can contain it.
+Changed blocks are `owner`, `config`, `modules`, `channels` and `position`.
+Replies contain block names, not settings or keys. Runtime fields and dynamic
+GPS updates do not make the snapshot stale. An active settings edit, pending
+restart or unavailable fixed-position data can prevent comparison. To save
+intentional changes, use `/backup replace` explicitly.
 
-## When recovery runs
+## Restoration behavior
 
-At boot, before normal preference loading or identity generation, Legion checks
-for an explicitly saved, valid, hardware-bound snapshot. A healthy configuration
-remains authoritative even when it differs from that snapshot.
+At boot, a valid, device-bound rescue point can restore consistently missing or
+corrupt essential owner, channel, configuration or module files. Healthy current
+preferences remain authoritative, even when different from the saved snapshot.
+Normal restarts, name changes and application updates do not trigger restoration.
 
-Recovery requires consistent evidence of missing/corrupt essential config,
-module, channel or owner files, or a committed restoration in progress.
-It does not use uptime, reboot reason, silence on the mesh or default-looking
-settings as evidence. Temporary read failures and unsupported preference versions
-do not authorize an overwrite. Losing only peer history or position history does
-not trigger a complete restoration.
+Restoration verifies the saved settings before normal operation resumes. An
+incomplete recovery holds the radio silent and has a bounded retry limit.
+Intentional identity-key rotation or licensed mode disables the old rescue point.
 
-Normal restart, name-change restart, battery-switch power-off/on and application
-firmware updates with intact preferences do not restore the rescue point or send an announcement.
-If an event actually destroys essential preferences, that damage can trigger recovery.
+**Factory reset restores an armed rescue point.** To deliberately return to blank
+settings, send `/backup delete !abcdef01`, wait for its deletion confirmation,
+then request factory reset.
 
-Restoration writes and verifies the essential files before normal boot continues.
-It reconstructs identity from the saved private key, restores fixed position and
-persists completion before enabling the recovery notice. A power cut during the
-transaction causes a later boot to resume it rather than accept a mixed configuration.
-At most three restore attempts are persisted. An incomplete/blocked restoration
-holds the radio silent and prevents preference saves.
-Repeated hardware/storage failure needs operator diagnosis rather than an endless
-erase/reboot loop. No autonomous reboot loop is introduced.
-
-An intentional key rotation or entering licensed mode disables the old rescue
-point before the change; create a fresh compatible rescue point afterward.
-This avoids restoring an intentionally retired identity.
-
-## Factory reset
-
-With a valid rescue point, a normal application factory-reset request schedules
-restoration of that rescue point on reboot. It does not erase the rescue point.
-To deliberately return to blank settings, first send `/backup delete !abcdef01`
-and wait for **`deleted; recovery disabled`**, then request factory reset.
-The delete confirmation must precede the reset. A normal restart is different.
-
-## Recovery notice
-
-After a completed recovery, the normal radio queue sends this text to the restored
-private LegionRF channel:
+After successful recovery, Legion queues this notice on the restored private
+LegionRF channel:
 
 > Ashes to ashes, dust to dust, the node [node_name] has risen again
 
-The restored long name replaces `[node_name]`; short name and Node ID are fallbacks.
-The notice is never sent for an ordinary boot, firmware update, backup creation or failed restore.
-It never falls back to a public channel. If the private channel/key changes, it
-does not send into that replacement channel.
+It is not sent for ordinary boots or firmware updates. Notification failure does
+not undo recovery; queue acceptance does not guarantee another node received it.
 
-Pending/attempted/sent state survives reboot independently of the manually saved
-configuration. There are at most three persisted queue attempts, at least a minute
-apart while running. Queue acceptance is not proof of RF reception. A power cut
-between queueing and persisting its result can cause a duplicate; exactly-once
-delivery across arbitrary power cuts is not promised. Notification failure does
-not invalidate a successful recovery or trigger another restoration.
+Two alternate flash generations at **0xE8000–0xEA000**, outside LittleFS, hold the
+rescue record. Compatible application-only Legion updates preserve that reserve.
+A full-chip erase, incompatible firmware or flash failure can destroy it.
 
-## Storage and updates
+## Low-energy sleep and wake
 
-Two 4096-byte raw-flash pages at **0xE8000–0xEA000** hold alternate complete
-generations, including integrity checks and transaction state. They are outside
-LittleFS (0xED000–0xF4000) and do not take the warm-node region
-(0xEA000–0xED000). The Legion linker caps the application at 0xE8000.
-The two-page record keeps the previous valid generation during a torn write.
+Separate from rescue backup, Legion's power policy protects the battery and MCU
+supply automatically. Eight battery readings below **3.50 V**, spaced 20 seconds
+apart, trigger energy sleep; VDD and TX protections remain independent. Reception
+and forwarding stop during sleep and resume after voltage recovery. Node USB
+power bypasses the battery threshold for servicing. A deliberate app shutdown
+does not arm automatic battery-voltage wake. APC does not replace this policy.
 
-Packaging rejects application images that overlap the rescue reserve and checks
-that all firmware packages describe the same application. Normal Legion firmware
-updates that respect this boundary preserve the reserve. A full chip erase,
-incompatible firmware or failed flash hardware can destroy it.
-Encrypted-storage lockdown and event-profile builds do not create/use this rescue
-format. BLE bonding is separate and is not restored by the LoRa identity snapshot.
+## Hardware status
 
-## Validation status
-
-Host tests exercise the actual journal/parser/recovery runner, including every
-32-bit interrupted-write boundary, committed deletion, unsupported schemas,
-normal boot, transient reads, partial restores and persisted retry limits.
-An integration test compiles the actual recovery engine with the real generated
-Meshtastic messages and nanopb, simulated storage, and an OpenSSL X25519 oracle.
-It checks identity/settings/position serialization, preflight, restoration, notices,
-replacement, deletion, v26 migration markers and temporary/unsupported reads.
-Development tests also cover freshness for every captured block, combined
-changes, excluded runtime fields, fixed/dynamic position modes, invalid and
-unavailable comparisons, unchanged flash/files during status and recovery from
-a valid outdated snapshot. On the 0.6.0 alpha, RF captures show matching status,
-`OUTDATED: owner`, then matching status again, with a valid rescue point and
-recovery armed throughout. Other freshness blocks, unavailable comparisons and
-rescue write/restoration operations remain pending on this alpha; these status
-captures do not establish backup replacement or recovery.
-The telemetry transport is tested against simulated channels. Build/package gates
-check application boundaries and file integrity.
-These checks do not substitute for physical power-cut or RF-delivery tests.
-
-On 0.4.2, telemetry responses and formatting and all backup commands—creation
-with its success confirmation, status, replacement and deletion—have been verified
-on hardware. All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
-Manual backup restoration was observed on the test RAK after applying an erase.uf2,
-installing bootloader 0.4.4 and reinstalling the D1 diagnostic Legion firmware by USB
-UF2: the saved configuration returned. This validates that procedure with the file
-used; it does not establish survival of a full-chip erase. Reception of the recovery
-announcement was not verified because no connected receiver was available.
-Physical interrupted-write/power-cut recovery testing remains pending.
-No rescue point is armed until an explicit backup command succeeds.
-
-The 0.5.0 commands retain this rescue format and activation policy. NodeDB
-ignored-node flags are outside the rescue snapshot. Legacy LoRa ignore entries
-remain part of its captured radio configuration.
+Backup commands and manual restoration were tested on earlier Legion builds.
+The alpha's freshness feature is partially tested. Recovery-notice reception
+and physical interrupted-write recovery are not yet hardware-validated.

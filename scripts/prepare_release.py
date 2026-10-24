@@ -335,7 +335,13 @@ def prepare_release(directory, commit):
         features = (
             Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md"
         ).read_text() + "\n\n"
-        for name in ("COMMANDS.md", "RECOVERY.md", "APC.md", "ALPHA-TESTING.md"):
+        for name in (
+            "README.md",
+            "COMMANDS.md",
+            "RECOVERY.md",
+            "APC.md",
+            "CHANGELOG.md",
+        ):
             features = features.replace(
                 f"]({name})",
                 f"](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/{name})",

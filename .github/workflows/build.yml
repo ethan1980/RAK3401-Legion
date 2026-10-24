@@ -142,9 +142,9 @@ jobs:
           from pathlib import Path
           before = os.environ["BEFORE_SHA"]
           allowed = {
-              "README.md", "DFU.md", "RECOVERY.md", "COMMANDS.md", "CHANGELOG.md",
+              "README.md", "DFU.md", "RECOVERY.md", "COMMANDS.md", "CHANGELOG.md", "APC.md",
               "RELEASE_NOTES.md", "ALPHA-TESTING.md", "PLANNING-0.6.0.md",
-              "upstream.json", "scripts/prepare_release.py",
+              "upstream.json", "scripts/prepare_release.py", "scripts/build.py",
               "tests/test_release.py", ".github/workflows/build.yml",
           }
           changed = set(subprocess.check_output(
@@ -152,6 +152,14 @@ jobs:
           ).splitlines())
           if changed - allowed:
               raise SystemExit(f"Non-documentation changes: {sorted(changed - allowed)}")
+          if "scripts/build.py" in changed:
+              previous = subprocess.check_output(
+                  ["git", "show", f"{before}:scripts/build.py"], text=True
+              )
+              for retired in ("ALPHA-TESTING.md", "PLANNING-0.6.0.md"):
+                  previous = previous.replace(f'            "{retired}",\n', "")
+              if previous != Path("scripts/build.py").read_text():
+                  raise SystemExit("Build changes exceed retired documentation entries")
           old = json.loads(subprocess.check_output(
               ["git", "show", f"{before}:upstream.json"], text=True
           ))

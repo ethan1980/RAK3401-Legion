@@ -13,7 +13,8 @@ Current prerelease: **Legion 0.6.0-alpha.1**, based on **Meshtastic 2.8.2 develo
 commit [`e039e34`](https://github.com/meshtastic/firmware/commit/e039e34171e697e36d4f1b66eedfb683ffffe4f5).
 This pins a source revision, not a published official nightly binary.
 
-**Experimental alpha: hardware/RF validation of this combined version is pending.**
+**Experimental alpha: initial hardware checks pass; extended hardware/RF
+validation is in progress.**
 It integrates the base migration, APC S1, remote `/trace`, CC310 packet SHA/HMAC,
 read-only `/boot` diagnostics and backup freshness. Existing Legion features
 remain included. Earlier 0.4.x/0.5.x hardware results do not validate this build.
@@ -340,9 +341,25 @@ upstream revision or unexpected local changes. To use another destination:
 
 ## Validation status
 
-The following hardware observations are historical, from earlier Legion builds.
-**All combined alpha hardware checks remain pending**; follow [ALPHA-TESTING.md](ALPHA-TESTING.md).
-Software tests and both-profile builds cover the migrated alpha.
+### Current alpha — partial hardware validation
+
+On 2026-10-24, the operator confirms OTA installation of 0.6.0-alpha.1 and normal
+sending/receiving of channel and private messages. Screenshots confirm the alpha
+identity, initial APC OFF state, telemetry/boot reports, an up-to-date armed
+rescue point, an empty ignore list, three zero-hop neighbors and both parts of a
+traceroute to a direct peer. The initial live CC310 report is `SHA:3 MAC:3 SW:0`;
+a follow-up after the message exchange is awaited.
+
+See [ALPHA-TESTING.md](ALPHA-TESTING.md#hardware-record--2026-10-24) for evidence,
+limits and remaining checks. A subsequent OTA started from the running alpha is
+still required to exercise its own DFU entry. Relayed traceroute, controlled
+restart, OUTDATED backup detection, recovery, APC OBSERVE/SHADOW/ON and extended
+radio/energy testing remain pending. The release remains an experimental alpha.
+
+### Earlier hardware observations
+
+The following table records earlier Legion builds. Software tests and
+both-profile builds also cover the migrated alpha.
 
 | Area | Validation status |
 | --- | --- |

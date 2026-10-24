@@ -212,6 +212,12 @@ SNR in dB, sorted by descending SNR and then Node ID. Unknown names appear as `?
 Next: /zerohop !abcdef01 2
 ~~~
 
+The first request captures the eligible directory for **15 minutes**. Repeating
+page 1 during that period returns the same capture, including an initially empty
+one; later arrivals appear in a new capture after expiry. The `ZH#` number
+identifies the capture. Repeated queries do not extend its lifetime. A first
+query soon after boot can therefore stay empty until the capture expires.
+
 Entries require a genuine direct RF observation during this boot, known zero-hop
 metadata and existing valid SNR. Zero and negative SNR are valid. A later relayed,
 unknown-hop, Internet-origin or replay-like observation removes that node's

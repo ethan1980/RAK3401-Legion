@@ -143,7 +143,8 @@ jobs:
           before = os.environ["BEFORE_SHA"]
           allowed = {
               "README.md", "DFU.md", "RECOVERY.md", "COMMANDS.md", "CHANGELOG.md",
-              "RELEASE_NOTES.md", "upstream.json", "scripts/prepare_release.py",
+              "RELEASE_NOTES.md", "ALPHA-TESTING.md", "PLANNING-0.6.0.md",
+              "upstream.json", "scripts/prepare_release.py",
               "tests/test_release.py", ".github/workflows/build.yml",
           }
           changed = set(subprocess.check_output(

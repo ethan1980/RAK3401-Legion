@@ -3,7 +3,9 @@
 Status: **0.6.0-alpha.1**, published for controlled hardware testing on
 2026-10-24. APC S1, backup freshness, remote traceroute, CC310 packet hashing
 and boot diagnostics are integrated. Adaptive RF-power selection is not
-implemented. Physical validation of the combined alpha remains pending.
+implemented. Physical validation of the combined alpha is in progress; initial
+OTA, messaging and diagnostic results are recorded in
+[ALPHA-TESTING.md](ALPHA-TESTING.md#hardware-record--2026-10-24).
 
 The operator authorized alpha publication before installing it on the node.
 Hardware/RF validation follows publication and remains required before a stable

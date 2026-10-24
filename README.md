@@ -21,15 +21,15 @@ validation. Current consumption and battery-life gains have not been measured.
 
 | Feature | What it does | Hardware status |
 | --- | --- | --- |
-| Private telemetry | Reports battery, CPU temperature, sampled RF noise and packet counters on demand. | Tested in this alpha. |
-| Remote node tools | Sends text from a selected node, schedules restarts, lists direct RF peers and manages ignored nodes. | Tested in earlier releases; core operation confirmed in this alpha. |
-| Remote traceroute | Returns outbound and return mesh paths on LegionRF. | Direct, relayed and timeout replies tested in this alpha. |
-| Boot diagnostics | Reports reset evidence, first boot voltages and accelerator counters. | Partially tested in this alpha. |
-| CC310 hashing | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use confirmed; performance and energy gains unmeasured. |
-| Manual rescue backup | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup/restoration tested on earlier builds; freshness partially tested in this alpha. |
-| APC — Adaptive Power Control | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE basic operation tested; SHADOW/ON not yet hardware-validated. |
+| [Private telemetry](COMMANDS.md#telemetry-fields) | Reports battery, CPU temperature, sampled RF noise and packet counters on demand. | Tested in this alpha. |
+| [Remote node tools](COMMANDS.md#command-reference) | Sends text from a selected node, schedules restarts, lists direct RF peers and manages ignored nodes. | Tested in earlier releases; core operation confirmed in this alpha. |
+| [Remote traceroute](COMMANDS.md#direct-peer-and-traceroute-reports) | Returns outbound and return mesh paths on LegionRF. | Direct, relayed and timeout replies tested in this alpha. |
+| [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence, first boot voltages and accelerator counters. | Partially tested in this alpha. |
+| [CC310 hashing](COMMANDS.md#boot-fields) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use confirmed; performance and energy gains unmeasured. |
+| [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup/restoration tested on earlier builds; freshness partially tested in this alpha. |
+| [APC — Adaptive Power Control](APC.md) | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE basic operation tested; SHADOW/ON not yet hardware-validated. |
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Partially tested; sleep/wake observed on earlier builds. |
-| Flash persistence | Skips identical saves and verifies temporary writes before replacement. | Software-tested; physical power-loss tolerance unverified. |
+| [Flash persistence](ENERGY-RECOVERY.md#usb-apc-and-configuration-resilience) | Skips identical saves and verifies temporary writes before replacement. | Software-tested; physical power-loss tolerance unverified. |
 | Bulk radio SPI at 8 MHz | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | In use; controlled long-term comparison unverified. |
 | REG1 DC/DC | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation tested on earlier builds; whole-node savings unmeasured. |
 

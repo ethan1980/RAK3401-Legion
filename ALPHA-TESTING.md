@@ -10,15 +10,18 @@ from these physical results; no energy-saving claim follows from counters alone.
 ## Hardware record — 2026-10-24
 
 The following results are from the operator's alpha node. Screenshots establish
-the reported command outputs; OTA completion and ordinary message exchange are
-also confirmed by the operator. These observations cover the listed cases.
+the reported command outputs; OTA completion with nRF Connect, ordinary message
+exchange and successful remote `/msg` operation are also confirmed by the
+operator. These observations cover the listed cases.
 
 | Check | Observed result | Remaining scope |
 | --- | --- | --- |
-| OTA installation and startup | Operator confirms the alpha was installed by OTA; telemetry identifies `2.8.2.LGN0.6.0a1`. | Updater/client and source version are not recorded. Entry into DFU from the running alpha and its next OTA need a separate test. |
-| Ordinary channel and private messages | Operator confirms normal sending and receiving of both. | Successful delivery specifically through the remote `/msg` command has not been stated separately. |
+| OTA installation and startup | Operator confirms the alpha was installed by OTA using nRF Connect; telemetry identifies `2.8.2.LGN0.6.0a1`. | The source firmware and exact client version/platform are not recorded. Entry into DFU from the running alpha and its next OTA need a separate test; this does not validate the Meshtastic apps' updater. |
+| Ordinary channel and private messages | Operator confirms normal sending and receiving of both. | Long-term reliability remains part of the continuous runs. |
+| Remote `/msg` | Operator separately confirms that `/msg` works on the alpha. | The basic command case is complete; no repeat is required to start OBSERVE. |
 | Private diagnostics | `/telemetry`, `/boot` and `/apc status` replies received on LegionRF. | Additional modes and long-term command reachability remain pending. |
-| APC initial and post-restart state | `OFF NORMAL off`, zero decision counters and `TX:nominal`, also reported after the controlled restart. | OBSERVE, SHADOW, ON, USB bypass, context disarming, battery-state transitions and restart from a running mode remain pending. |
+| APC initial and post-restart state | `OFF NORMAL off`, zero decision counters and `TX:nominal`, also reported after the controlled restart. | OBSERVE is now in progress; SHADOW, ON, USB bypass, context disarming, battery-state transitions and restart from a running mode remain pending. |
+| APC OBSERVE reference | Operator reports OBSERVE activated on the validation node. | Initial six-page capture, exact activation time/power context and continuous 24-hour results are awaited. Activation alone does not complete the reference. |
 | Boot report and normal restart | `/reboot` acknowledges `Reboot scheduled in 20s`. The subsequent `/boot` reports `reset:software(00000004)`, `prev:unknown`, first VBAT 3,870 mV, VDD 3,336 mV and `USB:0`, with reset CC310 counters. The earlier boot samples were 3,864/3,322 mV. | Normal restart and post-restart diagnostics are observed; exact restart latency and full configuration retention were not independently measured. Protective-reset/shutdown and other reset causes remain pending. `prev:unknown` is not classified as a fault cause. |
 | CC310 counters during normal use | Initial `SHA:3 MAC:3 SW:0` advances to `SHA:4 MAC:19 SW:0` before restart, after the operator-confirmed message traffic. The new boot reports `SHA:3 MAC:2 SW:0`. | Hardware SHA/MAC activity and no fallback are observed in this run. Aggregate counters do not isolate each operation. Deliberate fallback, performance and current/energy measurements remain pending. |
 | Rescue status and owner freshness | A valid, armed rescue point reports `up to date`, then `OUTDATED: owner`, then `up to date` again. Both matching and stale status replies keep `recovery armed`. | The owner freshness sequence is observed. The captures do not show a backup replacement or restoration. Other changed blocks, unavailable comparisons, create/replace/delete, recovery and interrupted-write cases remain pending on the alpha. |
@@ -43,15 +46,16 @@ normal-restart and owner-freshness cases listed above. They do not establish
 backup replacement/restoration or all reset causes. CC310 counters are RAM-only;
 their lower values after the deliberate restart are expected for a new boot.
 
-Next: a 24-hour passive OBSERVE reference on the migrated base, followed by
-SHADOW and controlled ON after review. Keep the completed cases closed unless
+Current stage: the operator has started the 24-hour passive OBSERVE reference
+on the migrated base; the first capture is awaited. SHADOW and controlled ON
+follow after review. Keep the completed cases closed unless
 new evidence exposes a regression. Defer configuration edits, deliberate reboots,
 DFU and recovery tests until the continuous APC capture is complete.
 
 ## 1. Install and establish the migrated-base reference
 
-- First installation is complete by OTA on the validation node. For another
-  accessible node, keep the earlier working firmware and export/check its
+- First installation is complete by OTA using nRF Connect on the validation
+  node. For another accessible node, keep the earlier working firmware and export/check its
   configuration; USB UF2 remains the initial test option. Ordinary updates
   preserve preferences and do not require erase or factory reset.
 - Verify `2.8.2.LGN0.6.0a1`, node ID, owner, region, channels, keys, role and
@@ -72,12 +76,12 @@ checks can follow the continuous OBSERVE/SHADOW runs.
 
 | Check | Evidence to collect |
 | --- | --- |
-| Existing remote commands | Confirm delivery specifically through `/msg`; test ignore/unignore mutations only with deliberate test peers. The no-argument ignore-list query and zero-hop directory already reply on the alpha. |
+| Existing remote commands | Remote `/msg` is now operator-confirmed. Test ignore/unignore mutations only with deliberate test peers. The no-argument ignore-list query and zero-hop directory already reply on the alpha. |
 | Traceroute | Still collect an explicit routing `NO_ROUTE` if reproducible and a diagnostic reply while another trace is waiting. Direct, asymmetric relayed and timeout replies are already observed. |
 | CC310 | The live SHA/MAC counts and zero observed fallback are recorded. Isolate operation/fallback behavior and measure performance/energy separately if needed; a zero MAC count alone is inconclusive. |
 | Boot evidence | Compare USB/battery boot samples and protective/wake or other reset causes in controlled later runs. Normal software restart is already observed. Record unknown causes as unknown. |
 | Backup freshness | Owner stale/matching replies are observed. Later exercise other captured blocks and unavailable comparisons; status must add no writes. Keep explicit replacement and restoration separate from a freshness query. |
-| Backup and DFU | Initial OTA installation is confirmed. Test a subsequent DFU/OTA entry from the running alpha, and record the updater/client, source/target versions, reconnection, preferences and rescue status. Use an agreed procedure for restoration. |
+| Backup and DFU | Initial OTA installation using nRF Connect is confirmed. Test a subsequent DFU/OTA entry from the running alpha, and record the exact updater/client version/platform, source/target versions, reconnection, preferences and rescue status. Use an agreed procedure for restoration. |
 
 After any reboot, APC must again be OFF. Prioritize command/reception failures,
 watchdog resets, unexpected configuration changes or flash/DFU failures before

@@ -56,9 +56,10 @@ the full version. Firmware filenames use the upstream base `2.8.2.e039e34`.
 - Corresponding source, ELF/debug files, `legion-build.json` and SHA256SUMS are
   attached. Baseline comparison builds are available in GitHub Actions.
 
-The operator confirms successful OTA installation and startup of this alpha.
-The updater/client and previous firmware version have not been recorded. This
-exercises the previously installed firmware's update-entry path; a subsequent
+The operator confirms successful OTA installation and startup of this alpha
+using **nRF Connect**. The exact client version/platform and previous firmware
+version have not been recorded. This exercises the previously installed
+firmware's update-entry path; a subsequent
 update started from the running alpha remains pending to validate its own DFU
 entry. On another accessible test node, USB UF2 remains an initial installation
 option. Preserve configuration and the previous release for rollback; ordinary
@@ -75,8 +76,8 @@ configuration disarming, 32-bit rollover and 50 days of uptime.
 
 ### Hardware observations — 2026-10-24
 
-- Operator confirms OTA installation and normal sending/receiving of ordinary
-  channel and private messages.
+- Operator confirms OTA installation using nRF Connect, normal sending/receiving
+  of ordinary channel and private messages, and successful remote `/msg` operation.
 - Screenshots confirm firmware identity, private telemetry, `/boot`, initial
   APC OFF with nominal RF and an empty ignore list.
 - A fresh `/zerohop` capture lists three neighbors, including positive and
@@ -96,18 +97,20 @@ configuration disarming, 32-bit rollover and 50 days of uptime.
 - Backup status changes from `up to date` to `OUTDATED: owner` and back to
   `up to date`, with the valid rescue point armed throughout. This demonstrates
   the owner-freshness case, not backup replacement or restoration.
+- Operator reports OBSERVE activated for the migrated-base reference. The first
+  six-page capture and continuous 24-hour results are awaited.
 
 **Remaining hardware/RF validation:** explicit routing `NO_ROUTE`, other-command
-responsiveness during a trace wait, remote `/msg` delivery, ignore/unignore
+responsiveness during a trace wait, ignore/unignore
 mutations, protective/other reset cases, other backup-freshness blocks and rescue
 operations, DFU entry from the running alpha, APC OBSERVE/SHADOW/ON and long-term
-radio/energy behavior. The ordinary-message report does not separately establish
-a `/msg` command test. Earlier 0.4.x/0.5.x hardware observations remain separate
-from these alpha results.
+radio/energy behavior. Initial OTA with nRF Connect does not establish the
+Meshtastic apps' updater path or a subsequent update from the running alpha.
+Earlier 0.4.x/0.5.x hardware observations remain separate from these alpha results.
 
 No measured energy saving, battery-life gain or reduced-power RF reachability
-is claimed. Next collect a 24-hour migrated-base reference in passive OBSERVE,
-then 24 hours in SHADOW before a supervised 30–60-minute ON trial with known
+is claimed. The 24-hour migrated-base reference in passive OBSERVE is in progress.
+Then collect 24 hours in SHADOW before a supervised 30–60-minute ON trial with known
 peers. Review each stage before proceeding; no further OTA is needed to change
 APC modes. Keep disruptive tests outside the continuous observation runs.
 

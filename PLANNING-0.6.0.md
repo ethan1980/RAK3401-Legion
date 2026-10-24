@@ -3,8 +3,9 @@
 Status: **0.6.0-alpha.1**, published for controlled hardware testing on
 2026-10-24. APC S1, backup freshness, remote traceroute, CC310 packet hashing
 and boot diagnostics are integrated. Adaptive RF-power selection is not
-implemented. Physical validation of the combined alpha is in progress. OTA,
-messaging, direct/relayed traceroute, timeout reporting, live CC310 counters,
+implemented. Physical validation of the combined alpha is in progress. OTA using
+nRF Connect, ordinary and remote `/msg` messaging, direct/relayed traceroute,
+timeout reporting, live CC310 counters,
 normal restart and the owner-freshness sequence are recorded in
 [ALPHA-TESTING.md](ALPHA-TESTING.md#hardware-record--2026-10-24).
 
@@ -38,6 +39,8 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
   [APC.md](APC.md) and the alpha test sequence: 24 hours of passive OBSERVE,
   24 hours of SHADOW, then a supervised 30–60-minute ON trial before extending
   the run. Review each stage on the migrated base, separately from upstream effects.
+- The operator reports OBSERVE activated; its initial six-page capture and
+  continuous 24-hour results remain awaited. This stage is in progress.
 - Adaptive RF-power selection remains pending known-receiver testing and
   implementation; S1 keeps nominal output. Thresholds, budgets and final boot
   persistence policy remain provisional. Hardware/RF tests are still required.

@@ -110,7 +110,8 @@ node. Full syntax, errors and pagination limits are in [COMMANDS.md](COMMANDS.md
 
 The six commands introduced in 0.5.0 were tested on earlier hardware builds.
 The migrated alpha's zero-hop, ignore-list query and normal reboot have now
-been observed; the remaining regression scope is tracked in
+been observed, and the operator confirms remote `/msg` works. The remaining
+regression scope is tracked in
 [ALPHA-TESTING.md](ALPHA-TESTING.md).
 
 ### REG1 DC/DC (new in 0.5.0)
@@ -345,8 +346,9 @@ upstream revision or unexpected local changes. To use another destination:
 
 ### Current alpha — partial hardware validation
 
-On 2026-10-24, the operator confirms OTA installation of 0.6.0-alpha.1 and normal
-sending/receiving of channel and private messages. Screenshots confirm the alpha
+On 2026-10-24, the operator confirms OTA installation of 0.6.0-alpha.1 using
+nRF Connect, normal sending/receiving of channel and private messages, and
+successful remote `/msg` operation. Screenshots confirm the alpha
 identity, telemetry/boot reports, an empty ignore list, three zero-hop neighbors
 and both parts of direct and relayed traceroutes. The relayed example has two
 outbound intermediates and one on its different return path. A separate timeout
@@ -361,10 +363,12 @@ These observations do not measure energy gains or establish backup restoration.
 See [ALPHA-TESTING.md](ALPHA-TESTING.md#hardware-record--2026-10-24) for evidence,
 limits and remaining checks. A subsequent OTA started from the running alpha is
 still required to exercise its own DFU entry. Explicit routing `NO_ROUTE`,
-command responsiveness during a trace wait, remote `/msg` delivery,
-ignore/unignore mutations, other backup-freshness blocks, recovery, protective
+command responsiveness during a trace wait, ignore/unignore mutations,
+other backup-freshness blocks, recovery, protective
 reset cases, APC OBSERVE/SHADOW/ON and extended radio/energy testing remain
-pending. Next is a 24-hour passive OBSERVE reference. The release remains an
+pending. The operator has started the 24-hour passive OBSERVE reference;
+its first capture and completed run remain awaited. nRF Connect installation
+does not validate the Meshtastic apps' updater. The release remains an
 experimental alpha.
 
 ### Earlier hardware observations

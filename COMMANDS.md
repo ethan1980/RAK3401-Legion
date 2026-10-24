@@ -444,9 +444,11 @@ ordinary nodes do not provide a guaranteed archive of earlier reports.
 
 ## Validation status
 
-The current alpha's OTA, ordinary messaging, diagnostics, zero-hop directory,
+The current alpha's OTA using nRF Connect, ordinary and remote `/msg` messaging,
+diagnostics, zero-hop directory,
 ignore-list query, direct/relayed trace, timeout, CC310 counters, normal restart
 and owner-freshness results are tracked in [ALPHA-TESTING.md](ALPHA-TESTING.md).
+OBSERVE has been started; its first capture and continuous results are awaited.
 These partial results are separate from the earlier hardware observations below.
 
 Telemetry responses, current firmware version and min/max formatting were verified

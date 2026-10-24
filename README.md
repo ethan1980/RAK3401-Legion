@@ -109,7 +109,9 @@ duplicate suppression. Queue acceptance does not confirm reception by another
 node. Full syntax, errors and pagination limits are in [COMMANDS.md](COMMANDS.md).
 
 The six commands introduced in 0.5.0 were tested on earlier hardware builds.
-Regression testing of the migrated alpha is pending.
+The migrated alpha's zero-hop, ignore-list query and normal reboot have now
+been observed; the remaining regression scope is tracked in
+[ALPHA-TESTING.md](ALPHA-TESTING.md).
 
 ### REG1 DC/DC (new in 0.5.0)
 
@@ -345,16 +347,25 @@ upstream revision or unexpected local changes. To use another destination:
 
 On 2026-10-24, the operator confirms OTA installation of 0.6.0-alpha.1 and normal
 sending/receiving of channel and private messages. Screenshots confirm the alpha
-identity, initial APC OFF state, telemetry/boot reports, an up-to-date armed
-rescue point, an empty ignore list, three zero-hop neighbors and both parts of a
-traceroute to a direct peer. The initial live CC310 report is `SHA:3 MAC:3 SW:0`;
-a follow-up after the message exchange is awaited.
+identity, telemetry/boot reports, an empty ignore list, three zero-hop neighbors
+and both parts of direct and relayed traceroutes. The relayed example has two
+outbound intermediates and one on its different return path. A separate timeout
+correctly reports unknown reachability after 90 seconds.
+
+CC310 counts advance from `SHA:3 MAC:3 SW:0` to `SHA:4 MAC:19 SW:0` during normal
+use. A scheduled normal restart is followed by fresh boot samples, reset counters
+(`SHA:3 MAC:2 SW:0`) and APC OFF with nominal RF. Backup status reports a valid,
+armed rescue point through `up to date` → `OUTDATED: owner` → `up to date`.
+These observations do not measure energy gains or establish backup restoration.
 
 See [ALPHA-TESTING.md](ALPHA-TESTING.md#hardware-record--2026-10-24) for evidence,
 limits and remaining checks. A subsequent OTA started from the running alpha is
-still required to exercise its own DFU entry. Relayed traceroute, controlled
-restart, OUTDATED backup detection, recovery, APC OBSERVE/SHADOW/ON and extended
-radio/energy testing remain pending. The release remains an experimental alpha.
+still required to exercise its own DFU entry. Explicit routing `NO_ROUTE`,
+command responsiveness during a trace wait, remote `/msg` delivery,
+ignore/unignore mutations, other backup-freshness blocks, recovery, protective
+reset cases, APC OBSERVE/SHADOW/ON and extended radio/energy testing remain
+pending. Next is a 24-hour passive OBSERVE reference. The release remains an
+experimental alpha.
 
 ### Earlier hardware observations
 

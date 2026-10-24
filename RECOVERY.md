@@ -150,7 +150,11 @@ replacement, deletion, v26 migration markers and temporary/unsupported reads.
 Development tests also cover freshness for every captured block, combined
 changes, excluded runtime fields, fixed/dynamic position modes, invalid and
 unavailable comparisons, unchanged flash/files during status and recovery from
-a valid outdated snapshot. The new 0.6.0 freshness replies need hardware RF validation.
+a valid outdated snapshot. On the 0.6.0 alpha, RF captures show matching status,
+`OUTDATED: owner`, then matching status again, with a valid rescue point and
+recovery armed throughout. Other freshness blocks, unavailable comparisons and
+rescue write/restoration operations remain pending on this alpha; these status
+captures do not establish backup replacement or recovery.
 The telemetry transport is tested against simulated channels. Build/package gates
 check application boundaries and file integrity.
 These checks do not substitute for physical power-cut or RF-delivery tests.

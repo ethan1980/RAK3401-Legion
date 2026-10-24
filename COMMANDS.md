@@ -1,7 +1,8 @@
 # Legion commands
 
 The current prerelease is **Legion 0.6.0-alpha.1**. Hardware/RF validation of
-this combined alpha remains pending. Remote messaging, reboot, zero-hop reports
+this combined alpha is partial; see [ALPHA-TESTING.md](ALPHA-TESTING.md).
+Remote messaging, reboot, zero-hop reports
 and ignored-node management require 0.5.0 on the executing RAK3401. Telemetry
 requires 0.3.0 or later; manual rescue backup requires 0.4.0 or later.
 The phone app and the requesting/receiving node can use standard Meshtastic.
@@ -122,7 +123,9 @@ power readiness, clears it without sending the old result under a new key.
 Late and duplicate replies are ignored. State stays in RAM; no automatic
 command retries or settings writes are added. Standard routing retries and
 airtime limits still apply. Reply queue acceptance is not proof that the
-requester received it. RF validation of this feature is pending.
+requester received it. Direct, asymmetric relayed and 90-second timeout replies
+have been observed on the alpha; explicit `NO_ROUTE`, command responsiveness
+while waiting and extended RF cases remain pending.
 
 ## /boot - boot and accelerator diagnostics (0.6.0 alpha)
 
@@ -173,8 +176,10 @@ AES key sizes and channel encryption choices retain their normal behavior.
 
 No reset history is written to flash. A complete power loss can erase the
 retained shutdown marker. The report and counters do not by themselves measure
-energy savings or certify the physical reset/accelerator path; those hardware
-tests remain pending for this alpha.
+energy savings or certify every physical reset/accelerator path. Alpha captures
+show live SHA/MAC activity with `SW:0`, followed by new counters and first-voltage
+samples after a deliberate normal software restart. Protective/other reset causes,
+deliberate accelerator fallback and hardware energy measurements remain pending.
 
 ## /reboot - scheduled normal restart
 
@@ -388,8 +393,10 @@ can make freshness unavailable. Incomplete recovery keeps its existing warning.
 Status is read-only and never refreshes or disables a valid rescue point.
 Review the changed settings, then use `/backup replace !abcdef01` explicitly to
 update it. The existing 60-second telemetry/backup cooldown still applies.
-These freshness replies require the alpha on the executor and still need
-RF validation on hardware.
+These freshness replies require the alpha on the executor. Alpha RF captures
+show `up to date` → `OUTDATED: owner` → `up to date`, with recovery armed
+throughout. Other changed blocks, unavailable comparisons and rescue write/restore
+operations remain pending on this alpha.
 
 ## Telemetry/backup sampling and response limits
 
@@ -436,6 +443,11 @@ hide notifications. Keep a receiver/app connected if you need a continuous recor
 ordinary nodes do not provide a guaranteed archive of earlier reports.
 
 ## Validation status
+
+The current alpha's OTA, ordinary messaging, diagnostics, zero-hop directory,
+ignore-list query, direct/relayed trace, timeout, CC310 counters, normal restart
+and owner-freshness results are tracked in [ALPHA-TESTING.md](ALPHA-TESTING.md).
+These partial results are separate from the earlier hardware observations below.
 
 Telemetry responses, current firmware version and min/max formatting were verified
 on 0.4.2 hardware. All backup commands—creation with its success confirmation, status,

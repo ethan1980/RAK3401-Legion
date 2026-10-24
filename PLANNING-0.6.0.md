@@ -3,8 +3,9 @@
 Status: **0.6.0-alpha.1**, published for controlled hardware testing on
 2026-10-24. APC S1, backup freshness, remote traceroute, CC310 packet hashing
 and boot diagnostics are integrated. Adaptive RF-power selection is not
-implemented. Physical validation of the combined alpha is in progress; initial
-OTA, messaging and diagnostic results are recorded in
+implemented. Physical validation of the combined alpha is in progress. OTA,
+messaging, direct/relayed traceroute, timeout reporting, live CC310 counters,
+normal restart and the owner-freshness sequence are recorded in
 [ALPHA-TESTING.md](ALPHA-TESTING.md#hardware-record--2026-10-24).
 
 The operator authorized alpha publication before installing it on the node.
@@ -33,13 +34,15 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
   persistence, optional position/telemetry relay admission budgets and status.
 - Keep protected and opaque traffic, normal CLIENT behavior, reception and RF
   output unchanged. OFF is the boot default; candidate mode state is RAM-only.
-- Follow [APC.md](APC.md) and the alpha test sequence. Validate
-  SHADOW and then ON on the migrated base, separately from upstream effects.
+- Initial and controlled post-restart reports show OFF and nominal RF. Follow
+  [APC.md](APC.md) and the alpha test sequence: 24 hours of passive OBSERVE,
+  24 hours of SHADOW, then a supervised 30–60-minute ON trial before extending
+  the run. Review each stage on the migrated base, separately from upstream effects.
 - Adaptive RF-power selection remains pending known-receiver testing and
   implementation; S1 keeps nominal output. Thresholds, budgets and final boot
   persistence policy remain provisional. Hardware/RF tests are still required.
 
-## Stale-backup detection — included in alpha, hardware validation pending
+## Stale-backup detection — owner case observed, remaining hardware cases pending
 
 - Extend the backup status query to distinguish a valid rescue point that
   matches current backed-up settings from a valid but outdated rescue point.
@@ -58,9 +61,11 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
   missing fixed-position data or an invalid/unencodable current configuration.
 - Host integration tests cover matching, individual/all changed blocks, absent,
   invalid and unavailable cases, read-only behavior and recovery from an older
-  valid snapshot. Validate the new status replies over RF on the alpha hardware.
+  valid snapshot. Alpha RF captures now show `up to date` → `OUTDATED: owner`
+  → `up to date`, with the valid rescue point armed throughout. Other blocks,
+  unavailable comparisons and rescue write/restoration operations remain pending.
 
-## Remote traceroute — included in alpha, RF validation pending
+## Remote traceroute — direct, relayed and timeout cases observed
 
 - Add `/trace !legionid !targetid` on the private LegionRF channel.
 - The selected Legion originates a standard Meshtastic traceroute; the target
@@ -75,8 +80,10 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
 - Distinguish routing `NO_ROUTE` from an expired wait or missing acknowledgement:
   silence alone does not establish that the destination is unreachable.
 - Use standard routing reliability without adding a command retry loop or
-  persistent writes. Validate RF paths, direct and unreachable targets on hardware
-  on the alpha before recommending stable use. Preserve the completed O1.1 record.
+  persistent writes. Alpha captures show both direct paths, asymmetric relayed
+  paths (two outbound intermediates, one return intermediate) and a 90-second
+  timeout with unknown reachability. Explicit `NO_ROUTE`, other-command
+  responsiveness while waiting and extended RF cases remain pending.
 
 ## CC310 packet hashing — included in alpha, hardware measurements pending
 
@@ -87,13 +94,16 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
   rule. Serialize sessions with existing AES, asymmetric crypto, RNG and optional
   encrypted-storage users; support nested sessions on the same task.
 - Expose successful SHA/MAC and software-fallback attempt counts in `/boot`.
+- Alpha counters advance from SHA/MAC/SW `3/3/0` to `4/19/0` during normal use;
+  the deliberate restart begins new counts at `3/2/0`. Hardware activity and no
+  observed fallback are established for this run, without per-operation timing.
 - Compare against independent reference digests, exercise SDK failures and
   concurrent callers, and compile both Legion and the baseline profile.
 - Measure real CC310 execution and energy use before claiming a performance or
   battery gain. Initialization and buffer-copy cost matter for short inputs;
   forwarding opaque packets does not inherently perform these operations.
 
-## Boot diagnostics — included in alpha, physical reset tests pending
+## Boot diagnostics — normal software restart observed, other causes pending
 
 - Add read-only `/boot !legionid` on the private LegionRF channel.
 - Report the core-cached reset mask, a readable interpretation, the previous
@@ -102,8 +112,11 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
   low nibble and foreign markers. Keep Adafruit's GPREGRET/DFU values intact.
 - Use no flash writes or automatic announcements. Missing reset/shutdown
   evidence stays unknown; a sudden battery disconnect is not diagnosed by guess.
-- Validate watchdog, software reset, protective System OFF/wake and ordinary
-  power cycles on the actual RAK after APC data collection is complete.
+- The alpha's `/reboot` acknowledgement is followed by a software-reset boot
+  report, new first-voltage samples, reset CC310 counters and APC OFF. Exact
+  latency and all retained settings were not independently measured.
+- Validate watchdog, protective System OFF/wake and ordinary power cycles on
+  the actual RAK after APC data collection is complete.
 
 Version policy: feature releases advance the minor version (0.5.x to 0.6.0);
 small changes and fixes advance the patch version (0.5.0 to 0.5.1).

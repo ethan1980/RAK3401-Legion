@@ -78,24 +78,38 @@ configuration disarming, 32-bit rollover and 50 days of uptime.
 - Operator confirms OTA installation and normal sending/receiving of ordinary
   channel and private messages.
 - Screenshots confirm firmware identity, private telemetry, `/boot`, initial
-  APC OFF with nominal RF, an up-to-date armed rescue point and an empty ignore list.
+  APC OFF with nominal RF and an empty ignore list.
 - A fresh `/zerohop` capture lists three neighbors, including positive and
   negative SNR. The earlier empty result was the same 15-minute frozen capture;
   the directory populated after capture renewal.
-- `/trace` returns both outbound and return reports for a direct peer.
-- The initial live CC310 report is `SHA:3 MAC:3 SW:0`. The follow-up report
-  after the confirmed message traffic is still awaited.
+- `/trace` returns both outbound and return reports for a direct peer and a
+  relayed peer. The relayed example reports two outbound intermediates and one
+  return intermediate on a different path. A separate trace expires after
+  90 seconds with `reachability unknown`, without claiming an unreachable target.
+- CC310 counts advance from `SHA:3 MAC:3 SW:0` to `SHA:4 MAC:19 SW:0` during
+  normal use. A deliberate `/reboot` acknowledges its scheduled normal restart;
+  the new boot reports software reset, fresh first-voltage samples and
+  `SHA:3 MAC:2 SW:0`. No software fallback is observed in these captures.
+- Post-restart `/boot` and `/apc status` replies remain available; APC reports
+  OFF and nominal RF. Exact reboot latency and every retained setting were not
+  independently measured.
+- Backup status changes from `up to date` to `OUTDATED: owner` and back to
+  `up to date`, with the valid rescue point armed throughout. This demonstrates
+  the owner-freshness case, not backup replacement or restoration.
 
-**Remaining hardware/RF validation:** relayed traceroute, timeout/unreachable
-handling, explicit remote `/msg` delivery, controlled restart/reset evidence,
-OUTDATED backup detection and restoration, DFU entry from the running alpha,
-APC OBSERVE/SHADOW/ON and long-term radio/energy behavior. The ordinary-message
-report does not separately establish a `/msg` command test. Earlier 0.4.x/0.5.x
-hardware observations remain separate from these alpha results.
+**Remaining hardware/RF validation:** explicit routing `NO_ROUTE`, other-command
+responsiveness during a trace wait, remote `/msg` delivery, ignore/unignore
+mutations, protective/other reset cases, other backup-freshness blocks and rescue
+operations, DFU entry from the running alpha, APC OBSERVE/SHADOW/ON and long-term
+radio/energy behavior. The ordinary-message report does not separately establish
+a `/msg` command test. Earlier 0.4.x/0.5.x hardware observations remain separate
+from these alpha results.
 
 No measured energy saving, battery-life gain or reduced-power RF reachability
-is claimed. Begin with APC OFF, collect a migrated-base reference in OBSERVE,
-then test SHADOW before enabling ON with known peers.
+is claimed. Next collect a 24-hour migrated-base reference in passive OBSERVE,
+then 24 hours in SHADOW before a supervised 30–60-minute ON trial with known
+peers. Review each stage before proceeding; no further OTA is needed to change
+APC modes. Keep disruptive tests outside the continuous observation runs.
 
 Read [COMMANDS.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md), [RECOVERY.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md), [APC.md](https://github.com/ethan1980/RAK3401-Legion/blob/main/APC.md)
 and the [alpha hardware test sequence](https://github.com/ethan1980/RAK3401-Legion/blob/main/ALPHA-TESTING.md).

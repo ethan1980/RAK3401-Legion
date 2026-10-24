@@ -97,8 +97,13 @@ configuration disarming, 32-bit rollover and 50 days of uptime.
 - Backup status changes from `up to date` to `OUTDATED: owner` and back to
   `up to date`, with the valid rescue point armed throughout. This demonstrates
   the owner-freshness case, not backup replacement or restoration.
-- Operator reports OBSERVE activated for the migrated-base reference. The first
-  six-page capture and continuous 24-hour results are awaited.
+- OBSERVE started at 19:05 Europe/Madrid on 2026-10-24 on battery/solar, without
+  USB or an additional charger. Its first coherent six-page capture covers
+  991 seconds and 195 samples: 2 own and 75 relay TXs completed, with no recorded
+  aborts, start errors, open TXs or sample gaps. RF remains nominal and decision
+  counters are zero as expected in passive OBSERVE. The continuous 24-hour
+  reference remains in progress; the initial capture does not validate active
+  admission budgets or measure energy savings.
 
 **Remaining hardware/RF validation:** explicit routing `NO_ROUTE`, other-command
 responsiveness during a trace wait, ignore/unignore

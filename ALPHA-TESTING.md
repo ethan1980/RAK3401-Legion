@@ -21,7 +21,7 @@ operator. These observations cover the listed cases.
 | Remote `/msg` | Operator separately confirms that `/msg` works on the alpha. | The basic command case is complete; no repeat is required to start OBSERVE. |
 | Private diagnostics | `/telemetry`, `/boot` and `/apc status` replies received on LegionRF. | Additional modes and long-term command reachability remain pending. |
 | APC initial and post-restart state | `OFF NORMAL off`, zero decision counters and `TX:nominal`, also reported after the controlled restart. | OBSERVE is now in progress; SHADOW, ON, USB bypass, context disarming, battery-state transitions and restart from a running mode remain pending. |
-| APC OBSERVE reference | Operator reports OBSERVE activated on the validation node. | Initial six-page capture, exact activation time/power context and continuous 24-hour results are awaited. Activation alone does not complete the reference. |
+| APC OBSERVE reference | Activated at 19:05 Europe/Madrid on 2026-10-24, on battery/solar without USB or an additional charger. All six pages of session `3dbf71da`, report `0001`, received; 991 seconds observed, 195 samples, 77 completed TXs and zero recorded start errors, aborts, open TXs or sample gaps. | Initial activation, sampling, TX accounting and six-page reporting pass for this capture. The continuous 24-hour reference and later decision modes remain pending. See the detailed record below. |
 | Boot report and normal restart | `/reboot` acknowledges `Reboot scheduled in 20s`. The subsequent `/boot` reports `reset:software(00000004)`, `prev:unknown`, first VBAT 3,870 mV, VDD 3,336 mV and `USB:0`, with reset CC310 counters. The earlier boot samples were 3,864/3,322 mV. | Normal restart and post-restart diagnostics are observed; exact restart latency and full configuration retention were not independently measured. Protective-reset/shutdown and other reset causes remain pending. `prev:unknown` is not classified as a fault cause. |
 | CC310 counters during normal use | Initial `SHA:3 MAC:3 SW:0` advances to `SHA:4 MAC:19 SW:0` before restart, after the operator-confirmed message traffic. The new boot reports `SHA:3 MAC:2 SW:0`. | Hardware SHA/MAC activity and no fallback are observed in this run. Aggregate counters do not isolate each operation. Deliberate fallback, performance and current/energy measurements remain pending. |
 | Rescue status and owner freshness | A valid, armed rescue point reports `up to date`, then `OUTDATED: owner`, then `up to date` again. Both matching and stale status replies keep `recovery armed`. | The owner freshness sequence is observed. The captures do not show a backup replacement or restoration. Other changed blocks, unavailable comparisons, create/replace/delete, recovery and interrupted-write cases remain pending on the alpha. |
@@ -38,19 +38,59 @@ zero-hop detection regression. Repeated page 1 requests reuse a live capture.
 Installing the alpha by OTA exercises the entry path of the previously installed
 firmware. Testing the alpha's own DFU entry requires starting a subsequent update
 while the alpha is running. The first installation is complete; record that next
-entry test separately. USB power, external battery/solar charging context and
-full configuration-retention confirmation should accompany later observations.
+entry test separately. Battery/solar context for the current OBSERVE run is
+recorded below; full configuration-retention confirmation remains separate.
 
 The later captures close the relayed-trace, timeout-reporting, CC310 follow-up,
 normal-restart and owner-freshness cases listed above. They do not establish
 backup replacement/restoration or all reset causes. CC310 counters are RAM-only;
 their lower values after the deliberate restart are expected for a new boot.
 
-Current stage: the operator has started the 24-hour passive OBSERVE reference
-on the migrated base; the first capture is awaited. SHADOW and controlled ON
-follow after review. Keep the completed cases closed unless
-new evidence exposes a regression. Defer configuration edits, deliberate reboots,
-DFU and recovery tests until the continuous APC capture is complete.
+Current stage: the 24-hour passive OBSERVE reference is running on the migrated
+base, with its initial six-page capture received. SHADOW and controlled ON follow
+after review. Keep the completed cases closed unless new evidence exposes a
+regression. Defer configuration edits, deliberate reboots, DFU and recovery tests
+until the continuous APC capture is complete.
+
+### First OBSERVE capture — session `3dbf71da`, report `0001`
+
+The operator gives the activation time as **2026-10-24 19:05 Europe/Madrid**
+(CEST, UTC+02:00), with **battery and solar** power. No USB or additional charger
+has been connected since the preceding report. The three screenshots show all
+six pages under the same `A2 s3dbf71da r0001` header; their phone clock reads
+19:24–19:25. The frozen report's elapsed time is 991 seconds (16 min 31 s);
+screenshot time is not an exact timestamp for the earlier page-1 capture.
+
+| Page | Recorded fields |
+| --- | --- |
+| 1 | `OBSERVE NORMAL observe`; VBAT raw/decision EMA `3856/3852 mV`; `next:NORMAL 0/0s`; `eligible:0 would:0 skip:0`; `TX:nominal`. |
+| 2 | `up:1664s dt:991s n:195 usb:0`; VBAT raw/min/max/integer mean/observation EMA `3856/3681/3892/3857/3852 mV`; exact sum `752266`; VDD current/min `3322/3293 mV`. |
+| 3 | TX start/done/abort: own `2/2/0`, relay `75/75/0`; estimated TX time own/relay `524/23742 ms`. |
+| 4 | IRQ timing own/relay `524/23729 ms`, timed counts `2/75`; `repeat32:0 evict:45 fail:0 open:0`; `gaps:0 cfg:0`. |
+| 5 | `gen:0 region:3 role:0 CUSTOM:0`; frequency `869618 kHz`, bandwidth `62500 Hz`, SF `7`, CR `5`; configured power `27 dBm`, chip drive `18 dBm`. |
+| 6 | CONSERVE/RESERVE budget `600/120 ms/min`, burst `2000 ms`, RF nominal; `protected:0 changes:0`; estimated would/skip time `0/0 ms`. |
+
+The first capture passes mode activation, coherent pagination, voltage sampling
+and local TX accounting for this short interval. All 77 starts have matching
+completions; no abort, start error, unresolved start or observer sample gap is
+recorded. `evict` counts replacement of entries in the 32-ID repeat-detection
+ring while still within its lookback window; it is not a packet-drop count.
+`repeat32:0` only describes repeats detected within that bounded evidence.
+
+OBSERVE bypasses relay admission decisions, so zero eligible/protected/would/skip
+counters do not imply absent traffic or validate the SHADOW/ON exemptions or
+budgets. The displayed budget values are configuration, not evidence of active
+refusals. Configured power and chip drive are different fields; this report does
+not measure radiated power. The 3,681 mV minimum has no per-sample timeline or
+identified cause. TX completion and IRQ timing do not prove remote delivery or
+measure battery current, energy savings or autonomy.
+
+The 24-hour elapsed-time checkpoint is **2026-10-25 18:05 Europe/Madrid**
+(CET, UTC+01:00), because the local clock changes overnight. Collect a fresh
+six-page set, `/boot` and `/telemetry` then, keeping the same observation session
+if uninterrupted. Later collection is usable too; record its actual duration.
+Report power/context changes or failures as they occur and review the complete
+reference before switching to SHADOW.
 
 ## 1. Install and establish the migrated-base reference
 

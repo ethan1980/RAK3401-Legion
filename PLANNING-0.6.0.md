@@ -39,8 +39,12 @@ See [ALPHA-TESTING.md](ALPHA-TESTING.md) for the next test sequence.
   [APC.md](APC.md) and the alpha test sequence: 24 hours of passive OBSERVE,
   24 hours of SHADOW, then a supervised 30–60-minute ON trial before extending
   the run. Review each stage on the migrated base, separately from upstream effects.
-- The operator reports OBSERVE activated; its initial six-page capture and
-  continuous 24-hour results remain awaited. This stage is in progress.
+- OBSERVE started at 19:05 Europe/Madrid on 2026-10-24, on battery/solar without
+  USB. Its initial six-page capture (`3dbf71da` / `0001`) covers 991 seconds,
+  195 samples and 77 completed TXs, with no recorded aborts, start errors, open
+  TXs or sample gaps. The continuous 24-hour reference remains in progress;
+  the initial checkpoint passes without establishing energy savings or active
+  budget/exemption behavior.
 - Adaptive RF-power selection remains pending known-receiver testing and
   implementation; S1 keeps nominal output. Thresholds, budgets and final boot
   persistence policy remain provisional. Hardware/RF tests are still required.

@@ -366,8 +366,11 @@ still required to exercise its own DFU entry. Explicit routing `NO_ROUTE`,
 command responsiveness during a trace wait, ignore/unignore mutations,
 other backup-freshness blocks, recovery, protective
 reset cases, APC OBSERVE/SHADOW/ON and extended radio/energy testing remain
-pending. The operator has started the 24-hour passive OBSERVE reference;
-its first capture and completed run remain awaited. nRF Connect installation
+pending. The 24-hour passive OBSERVE reference started at 19:05 Europe/Madrid
+on 2026-10-24 on battery/solar without USB. Its first six-page capture records
+195 samples and 77 completed TXs, with no recorded aborts, start errors, open
+TXs or sample gaps; the full continuous reference remains in progress.
+nRF Connect installation
 does not validate the Meshtastic apps' updater. The release remains an
 experimental alpha.
 

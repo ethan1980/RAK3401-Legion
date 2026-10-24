@@ -47,4 +47,4 @@ restart operation have been observed on alpha hardware. Boot diagnostics, CC310
 use, backup freshness and APC OBSERVE are partially validated. **SHADOW/ON and
 extended hardware validation remain pending.** Energy savings are unmeasured.
 
-[Commands](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md) · [Recovery](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md) · [APC](https://github.com/ethan1980/RAK3401-Legion/blob/main/APC.md) · [Changelog](https://github.com/ethan1980/RAK3401-Legion/blob/main/CHANGELOG.md)
+[Commands](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md) · [Rescue backup](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md) · [Energy recovery](https://github.com/ethan1980/RAK3401-Legion/blob/main/ENERGY-RECOVERY.md) · [APC](https://github.com/ethan1980/RAK3401-Legion/blob/main/APC.md) · [Changelog](https://github.com/ethan1980/RAK3401-Legion/blob/main/CHANGELOG.md)

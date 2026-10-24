@@ -143,7 +143,7 @@ jobs:
           before = os.environ["BEFORE_SHA"]
           allowed = {
               "README.md", "DFU.md", "RECOVERY.md", "COMMANDS.md", "CHANGELOG.md", "APC.md",
-              "RELEASE_NOTES.md", "ALPHA-TESTING.md", "PLANNING-0.6.0.md",
+              "RELEASE_NOTES.md", "ENERGY-RECOVERY.md", "ALPHA-TESTING.md", "PLANNING-0.6.0.md",
               "upstream.json", "scripts/prepare_release.py", "scripts/build.py",
               "tests/test_release.py", ".github/workflows/build.yml",
           }
@@ -156,10 +156,13 @@ jobs:
               previous = subprocess.check_output(
                   ["git", "show", f"{before}:scripts/build.py"], text=True
               )
-              for retired in ("ALPHA-TESTING.md", "PLANNING-0.6.0.md"):
-                  previous = previous.replace(f'            "{retired}",\n', "")
-              if previous != Path("scripts/build.py").read_text():
-                  raise SystemExit("Build changes exceed retired documentation entries")
+              current = Path("scripts/build.py").read_text()
+              for document in ("ALPHA-TESTING.md", "PLANNING-0.6.0.md", "ENERGY-RECOVERY.md"):
+                  entry = f'            "{document}",\n'
+                  previous = previous.replace(entry, "")
+                  current = current.replace(entry, "")
+              if previous != current:
+                  raise SystemExit("Build changes exceed documentation archive entries")
           old = json.loads(subprocess.check_output(
               ["git", "show", f"{before}:upstream.json"], text=True
           ))

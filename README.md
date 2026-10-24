@@ -5,7 +5,7 @@
 # RAK3401 Legion
 
 <p align="center">
-  <strong><a href="README.md">Overview</a> · <a href="COMMANDS.md">Commands</a> · <a href="RECOVERY.md">Recovery</a> · <a href="APC.md">APC</a> · <a href="RELEASE_NOTES.md">Release notes</a> · <a href="CHANGELOG.md">Changelog</a> · <a href="https://github.com/ethan1980/RAK3401-Legion/releases">Downloads</a> · <a href="LICENSE">License</a></strong>
+  <strong><a href="README.md">Overview</a> · <a href="COMMANDS.md">Commands</a> · <a href="RECOVERY.md">Rescue backup</a> · <a href="ENERGY-RECOVERY.md">Energy recovery</a> · <a href="APC.md">APC</a> · <a href="RELEASE_NOTES.md">Release notes</a> · <a href="CHANGELOG.md">Changelog</a> · <a href="https://github.com/ethan1980/RAK3401-Legion/releases">Downloads</a> · <a href="LICENSE">License</a></strong>
 </p>
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
@@ -28,7 +28,7 @@ validation. Current consumption and battery-life gains have not been measured.
 | CC310 hashing | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use confirmed; performance and energy gains unmeasured. |
 | Manual rescue backup | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup/restoration tested on earlier builds; freshness partially tested in this alpha. |
 | APC — Adaptive Power Control | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE basic operation tested; SHADOW/ON not yet hardware-validated. |
-| Energy recovery | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Partially tested; sleep/wake observed on earlier builds. |
+| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Partially tested; sleep/wake observed on earlier builds. |
 | Flash persistence | Skips identical saves and verifies temporary writes before replacement. | Software-tested; physical power-loss tolerance unverified. |
 | Bulk radio SPI at 8 MHz | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | In use; controlled long-term comparison unverified. |
 | REG1 DC/DC | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation tested on earlier builds; whole-node savings unmeasured. |
@@ -57,7 +57,8 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 ```
 
 - [Commands](COMMANDS.md): channel setup, command syntax and report fields.
-- [Recovery](RECOVERY.md): rescue backup, freshness and restoration behavior.
+- [Rescue backup](RECOVERY.md): backup, freshness and restoration behavior.
+- [Energy recovery](ENERGY-RECOVERY.md): voltage measurements, protection thresholds, sleep and automatic wake.
 - [APC](APC.md): Adaptive Power Control modes and battery policy.
 
 **APC starts OFF after every boot.** Its settings and counters remain in RAM.

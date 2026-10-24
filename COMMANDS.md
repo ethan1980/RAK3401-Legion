@@ -1,6 +1,6 @@
 # Legion commands
 
-[Overview](README.md) · [Recovery](RECOVERY.md) · [APC](APC.md)
+[Overview](README.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
 
 These commands are available in **Legion 0.6.0-alpha.1**. The requesting node and
 phone app can use standard Meshtastic. Hardware validation is partial; see the

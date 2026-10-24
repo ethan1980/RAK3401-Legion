@@ -339,6 +339,7 @@ def prepare_release(directory, commit):
             "README.md",
             "COMMANDS.md",
             "RECOVERY.md",
+            "ENERGY-RECOVERY.md",
             "APC.md",
             "CHANGELOG.md",
         ):

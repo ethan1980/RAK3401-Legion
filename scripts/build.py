@@ -104,6 +104,7 @@ def package(firmware, target, output):
             "README.md",
             "COMMANDS.md",
             "RECOVERY.md",
+            "ENERGY-RECOVERY.md",
             "RELEASE_NOTES.md",
             "CHANGELOG.md",
             "APC.md",

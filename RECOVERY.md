@@ -1,6 +1,6 @@
 # Manual rescue backup
 
-[Overview](README.md) · [Commands](COMMANDS.md) · [APC](APC.md)
+[Overview](README.md) · [Commands](COMMANDS.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
 
 Legion can save one rescue point and restore it after confirmed loss or corruption
 of essential preferences. **Backup creation and replacement are always explicit.**
@@ -83,12 +83,9 @@ A full-chip erase, incompatible firmware or flash failure can destroy it.
 
 ## Low-energy sleep and wake
 
-Separate from rescue backup, Legion's power policy protects the battery and MCU
-supply automatically. Eight battery readings below **3.50 V**, spaced 20 seconds
-apart, trigger energy sleep; VDD and TX protections remain independent. Reception
-and forwarding stop during sleep and resume after voltage recovery. Node USB
-power bypasses the battery threshold for servicing. A deliberate app shutdown
-does not arm automatic battery-voltage wake. APC does not replace this policy.
+Automatic supply protection is separate from rescue backup. See
+[Energy recovery and resilience](ENERGY-RECOVERY.md) for voltage measurements,
+boot/TX/flash thresholds, energy sleep and automatic wake.
 
 ## Hardware status
 

@@ -1,6 +1,6 @@
 # APC — Adaptive Power Control
 
-[Overview](README.md) · [Commands](COMMANDS.md) · [Recovery](RECOVERY.md)
+[Overview](README.md) · [Commands](COMMANDS.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md)
 
 **APC means Adaptive Power Control.** Legion's experimental **S1** implementation
 adapts optional relay activity to battery conditions. It keeps reception and RF
@@ -50,7 +50,8 @@ Invalid/stale readings permit normal relay admission and reset decision evidence
 That includes a sample gap over 20 seconds, VBAT outside 2,500–4,500 mV or VDD
 outside 3,000–3,600 mV. Node USB power bypasses conservation; an external solar
 charger may leave `USB:0`. Existing boot, TX and low-voltage safety takes priority;
-APC does not itself initiate sleep.
+APC does not itself initiate sleep. See [Energy recovery](ENERGY-RECOVERY.md)
+for the independent protection thresholds and automatic wake behavior.
 
 ## What APC can limit
 

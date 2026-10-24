@@ -1,0 +1,1070 @@
+diff --git a/src/mesh/NextHopRouter.cpp b/src/mesh/NextHopRouter.cpp
+index 2c5ee8d..1201685 100644
+--- a/src/mesh/NextHopRouter.cpp
++++ b/src/mesh/NextHopRouter.cpp
+@@ -11,6 +11,9 @@
+ #include "modules/TrafficManagementModule.h"
+ #endif
+ #include "NodeDB.h"
++#if RAK3401_LEGION_APC
++#include "modules/LegionControlModule.h"
++#endif
+ 
+ #if USERPREFS_EVENT_MODE
+ static void capEventRelayHops(meshtastic_MeshPacket *packet)
+@@ -271,6 +274,10 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
+                 // on-wire field to fix. M1/M2 instead shrink the blast radius by reducing how often an
+                 // ambiguous next_hop byte is ever learned (sniffReceived) or originated (getNextHop).
+                 if (p->next_hop == NO_NEXT_HOP_PREFERENCE || p->next_hop == nodeDB->getLastByteOfNodeNum(getNodeNum())) {
++#if RAK3401_LEGION_APC
++                    if (iface && !legionControlApcAllowRelay(*p, *iface))
++                        return false;
++#endif
+                     meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
+                     if (!tosend)
+                         return true;
+diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
+index d4f4fab..47c8d8a 100644
+--- a/src/mesh/RadioInterface.cpp
++++ b/src/mesh/RadioInterface.cpp
+@@ -1019,6 +1019,19 @@ float RadioInterface::getFreq()
+     return savedFreq;
+ }
+ 
++#if RAK3401_LEGION_APC
++void RadioInterface::legionApcDescribe(char *output, size_t size) const
++{
++    snprintf(output, size,
++             "gen:%lu region:%u role:%u %s:%u\nf_kHz:%lu bw_Hz:%lu sf:%u "
++             "cr:%u\ncfg_dBm:%ld drive_dBm:%d",
++             (unsigned long)radioGeneration, (unsigned)config.lora.region, (unsigned)config.device.role,
++             config.lora.use_preset ? "PRESET" : "CUSTOM", (unsigned)config.lora.modem_preset,
++             (unsigned long)(savedFreq * 1000 + 0.5f), (unsigned long)(bw * 1000 + 0.5f), sf, cr, (long)config.lora.tx_power,
++             power);
++}
++#endif
++
+ /**
+  * Save our channel for later reuse.
+  */
+diff --git a/src/mesh/RadioInterface.h b/src/mesh/RadioInterface.h
+index b428f70..c12e058 100644
+--- a/src/mesh/RadioInterface.h
++++ b/src/mesh/RadioInterface.h
+@@ -263,6 +263,9 @@ class RadioInterface
+      * Get the frequency we saved.
+      */
+     [[nodiscard]] virtual float getFreq();
++#if RAK3401_LEGION_APC
++    void legionApcDescribe(char *output, size_t size) const;
++#endif
+ 
+     /// Some boards (1st gen Pinetab Lora module) have broken IRQ wires, so we need to poll via i2c registers
+     virtual bool isIRQPending() { return false; }
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index 8755e7c..de33d60 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -13,6 +13,10 @@
+ #include <pb_decode.h>
+ #include <pb_encode.h>
+ 
++#if RAK3401_LEGION_APC
++#include "modules/LegionApc.h"
++#endif
++
+ #if RAK3401_LEGION_TELEMETRY
+ #include "modules/LegionTelemetryModule.h"
+ #endif
+@@ -117,6 +121,9 @@ void INTERRUPT_ATTR RadioLibInterface::isrRxLevel0()
+ 
+ void INTERRUPT_ATTR RadioLibInterface::isrTxLevel0()
+ {
++#if RAK3401_LEGION_APC
++    legionApcTxDoneIsr(Time::getMillis());
++#endif
+     // Before the notify: the handler that would otherwise re-arm RX can wait behind a main-loop hold.
+     instance->rearmReceiveFromIsr();
+     isrLevel0Common(ISR_TX);
+@@ -736,6 +743,9 @@ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_
+ 
+ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+ {
++#if RAK3401_LEGION_APC
++    legionApcTxEnded(true);
++#endif
+     // Null if we forced the device into standby, which already completed the send.
+     meshtastic_MeshPacket *sent = detachSentPacket();
+     powerMon->clearState(meshtastic_PowerMon_State_Lora_TXOn); // But our transmitter is definitely off now
+@@ -744,6 +754,9 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+ 
+ void RadioLibInterface::completeSending()
+ {
++#if RAK3401_LEGION_APC
++    legionApcTxEnded(false);
++#endif
+     finishSentPacket(detachSentPacket());
+ }
+ 
+@@ -1419,8 +1432,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+ 
+         size_t numbytes = beginSending(txp);
+ 
++#if RAK3401_LEGION_APC
++        legionApcTxPreparing();
++#endif
+         int res = launchTransmit(numbytes);
+         if (res != RADIOLIB_ERR_NONE) {
++#if RAK3401_LEGION_APC
++            legionApcTxStartError();
++#endif
+             LOG_ERROR("startTransmit failed, error=%d", res);
+             RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_RADIO_SPI_BUG);
+ 
+@@ -1434,6 +1453,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+             enableInterrupt(isrTxLevel0);
+             // unset-sentinel-ok: busyTx/sendingPacket is the armed flag, so 0 is a legal stamp
+             lastTxStart = Time::getMillis();
++#if RAK3401_LEGION_APC
++            legionApcTxStarted(txp->from, txp->id, isFromUs(txp), getPacketTime(txp), lastTxStart);
++#endif
+             printPacket("Started Tx", txp);
+ #ifdef LED_LORA
+             digitalWrite(LED_LORA, LED_STATE_ON);
+diff --git a/src/modules/LegionApc.cpp b/src/modules/LegionApc.cpp
+new file mode 100644
+index 0000000..4f3ad54
+--- /dev/null
++++ b/src/modules/LegionApc.cpp
+@@ -0,0 +1,83 @@
++#include "LegionApc.h"
++
++#if RAK3401_LEGION_APC
++#include "UptimeClock.h"
++#include "concurrency/Lock.h"
++#include "concurrency/LockGuard.h"
++#include <atomic>
++
++namespace
++{
++concurrency::Lock apcLock;
++legion::ApcObserver observer;
++legion::ApcController controller;
++std::atomic<uint32_t> irqMs{0};
++std::atomic<bool> irqValid{false};
++static_assert(std::atomic<uint32_t>::is_always_lock_free && std::atomic<bool>::is_always_lock_free,
++              "APC interrupt stamps must be lock-free");
++} // namespace
++
++bool legionApcSetMode(legion::ApcMode mode, uint32_t session, uint32_t generation)
++{
++    concurrency::LockGuard guard(&apcLock);
++    const bool changed = controller.setMode(mode, generation);
++    if (mode == legion::ApcMode::Off)
++        observer.off(Time::getUptimeSecs());
++    else if (observer.observe(Time::getUptimeSecs(), session, generation))
++        controller.resetCounters();
++    return changed;
++}
++void legionApcDisarm()
++{
++    concurrency::LockGuard guard(&apcLock);
++    controller.disarm();
++    observer.off(Time::getUptimeSecs());
++}
++legion::ApcControlStats legionApcControlSnapshot()
++{
++    concurrency::LockGuard guard(&apcLock);
++    return controller.copy(Time::getMillis());
++}
++bool legionApcAllowRelay(uint32_t generation, bool context, bool optional, uint32_t airtimeMs)
++{
++    concurrency::LockGuard guard(&apcLock);
++    return controller.allowRelay(Time::getMillis(), generation, context, optional, airtimeMs);
++}
++legion::ApcStats legionApcSnapshot()
++{
++    concurrency::LockGuard guard(&apcLock);
++    return observer.copy();
++}
++void legionApcSample(uint16_t battery, uint16_t vdd, bool usb, uint32_t generation)
++{
++    concurrency::LockGuard guard(&apcLock);
++    observer.sample(Time::getMillis(), battery, vdd, usb, generation);
++    controller.sample(Time::getMillis(), battery, vdd, usb, generation);
++}
++void legionApcTxPreparing()
++{
++    irqValid.store(false, std::memory_order_release);
++}
++void legionApcTxStarted(uint32_t from, uint32_t id, bool own, uint32_t expectedMs, uint32_t startMs)
++{
++    concurrency::LockGuard guard(&apcLock);
++    observer.started(startMs, from, id, own, expectedMs);
++}
++void legionApcTxDoneIsr(uint32_t nowMs)
++{
++    irqMs.store(nowMs, std::memory_order_relaxed);
++    irqValid.store(true, std::memory_order_release);
++}
++void legionApcTxEnded(bool done)
++{
++    const bool timed = irqValid.load(std::memory_order_acquire);
++    const uint32_t end = timed ? irqMs.load(std::memory_order_relaxed) : Time::getMillis();
++    concurrency::LockGuard guard(&apcLock);
++    observer.ended(end, done || timed, timed);
++}
++void legionApcTxStartError()
++{
++    concurrency::LockGuard guard(&apcLock);
++    observer.startError();
++}
++#endif
+diff --git a/src/modules/LegionApc.h b/src/modules/LegionApc.h
+new file mode 100644
+index 0000000..a5b2362
+--- /dev/null
++++ b/src/modules/LegionApc.h
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_APC
++#if !RAK3401_LEGION_POWER || !RAK3401_LEGION_CONTROL
++#error "Legion APC requires the physical power policy and private control module"
++#endif
++#include "LegionApcController.h"
++#include "LegionApcPolicy.h"
++
++bool legionApcSetMode(legion::ApcMode mode, uint32_t session, uint32_t generation);
++void legionApcDisarm();
++legion::ApcStats legionApcSnapshot();
++legion::ApcControlStats legionApcControlSnapshot();
++bool legionApcAllowRelay(uint32_t generation, bool context, bool optional, uint32_t airtimeMs);
++void legionApcSample(uint16_t battery, uint16_t vdd, bool usb, uint32_t generation);
++void legionApcTxPreparing();
++void legionApcTxStarted(uint32_t from, uint32_t id, bool own, uint32_t expectedMs, uint32_t startMs);
++void legionApcTxDoneIsr(uint32_t nowMs);
++void legionApcTxEnded(bool done);
++void legionApcTxStartError();
++#endif
+diff --git a/src/modules/LegionApcController.h b/src/modules/LegionApcController.h
+new file mode 100644
+index 0000000..51390ae
+--- /dev/null
++++ b/src/modules/LegionApcController.h
+@@ -0,0 +1,245 @@
++#pragma once
++
++#include "mesh/Throttle.h"
++#include <algorithm>
++#include <cstdint>
++
++namespace legion
++{
++constexpr uint16_t APC_CONSERVE_MV = 3800, APC_RESERVE_MV = 3650;
++constexpr uint16_t APC_RESERVE_EXIT_MV = 3750, APC_NORMAL_MV = 3900;
++constexpr uint32_t APC_CONSERVE_MS = 900000, APC_RESERVE_MS = 300000, APC_RECOVER_MS = 900000;
++constexpr uint32_t APC_WARMUP_MS = 300000, APC_SAMPLE_MAX_MS = 20000;
++constexpr uint32_t APC_CONSERVE_BUDGET_MS = 600, APC_RESERVE_BUDGET_MS = 120, APC_BURST_MS = 2000;
++
++enum class ApcMode : uint8_t { Off, Observe, Shadow, On };
++enum class ApcState : uint8_t { Normal, Conserve, Reserve };
++enum class ApcHold : uint8_t { Off, Observe, Sample, Warmup, Usb, Context, None };
++
++inline const char *apcModeName(ApcMode mode)
++{
++    switch (mode) {
++    case ApcMode::Observe:
++        return "OBSERVE";
++    case ApcMode::Shadow:
++        return "SHADOW";
++    case ApcMode::On:
++        return "ON";
++    default:
++        return "OFF";
++    }
++}
++inline const char *apcStateName(ApcState state)
++{
++    switch (state) {
++    case ApcState::Conserve:
++        return "CONSERVE";
++    case ApcState::Reserve:
++        return "RESERVE";
++    default:
++        return "NORMAL";
++    }
++}
++inline const char *apcHoldName(ApcHold hold)
++{
++    switch (hold) {
++    case ApcHold::Off:
++        return "off";
++    case ApcHold::Observe:
++        return "observe";
++    case ApcHold::Sample:
++        return "sample";
++    case ApcHold::Warmup:
++        return "warmup";
++    case ApcHold::Usb:
++        return "USB";
++    case ApcHold::Context:
++        return "context";
++    default:
++        return "ready";
++    }
++}
++
++struct ApcControlStats {
++    ApcMode mode = ApcMode::Off;
++    ApcState state = ApcState::Normal, pending = ApcState::Normal;
++    ApcHold hold = ApcHold::Off;
++    uint16_t battery = 0, filtered = 0;
++    bool usb = false;
++    uint32_t dwellSec = 0, requiredSec = 0, changes = 0;
++    uint32_t eligible = 0, protectedRelays = 0, wouldSkip = 0, skipped = 0;
++    uint64_t wouldSkipMs = 0, skippedMs = 0;
++};
++
++class ApcController
++{
++  public:
++    void resetCounters()
++    {
++        stats.changes = stats.eligible = stats.protectedRelays = stats.wouldSkip = stats.skipped = 0;
++        stats.wouldSkipMs = stats.skippedMs = 0;
++    }
++    bool setMode(ApcMode mode, uint32_t generation)
++    {
++        if (stats.mode == mode && armedGeneration == generation) {
++            if (mode == ApcMode::Off)
++                contextStop = false;
++            return false;
++        }
++        stats.mode = mode;
++        contextStop = false;
++        armedGeneration = generation;
++        resetEvidence();
++        return true;
++    }
++    void disarm()
++    {
++        stats.mode = ApcMode::Off;
++        contextStop = true;
++        resetEvidence();
++    }
++    void sample(uint32_t now, uint16_t battery, uint16_t vdd, bool usb, uint32_t generation)
++    {
++        if (stats.mode == ApcMode::Off)
++            return;
++        if (generation != armedGeneration) {
++            disarm();
++            return;
++        }
++        if (!validSample(battery, vdd)) {
++            resetEvidence();
++            return;
++        }
++        const bool gap = haveSample && uint32_t(now - lastSample) > APC_SAMPLE_MAX_MS;
++        if (gap || (haveSample && usb != stats.usb))
++            resetEvidence();
++        if (!haveSample) {
++            filteredQ8 = uint32_t(battery) << 8;
++            warmupAt = now;
++            haveSample = true;
++        } else {
++            filteredQ8 = (11 * filteredQ8 + (uint32_t(battery) << 8) + 6) / 12;
++        }
++        lastSample = now;
++        stats.battery = battery;
++        stats.filtered = (filteredQ8 + 128) >> 8;
++        stats.usb = usb;
++        if (!warmupComplete && Throttle::deadlinePassedAt(now, warmupAt + APC_WARMUP_MS))
++            warmupComplete = true;
++        if (hold(now) != ApcHold::None) {
++            pendingActive = false;
++            return;
++        }
++        const auto next = target();
++        if (next == stats.state) {
++            pendingActive = false;
++            return;
++        }
++        if (!pendingActive || stats.pending != next) {
++            stats.pending = next;
++            pendingAt = now;
++            pendingActive = true;
++        }
++        const auto delay = pendingDelay();
++        if (Throttle::deadlinePassedAt(now, pendingAt + delay)) {
++            stats.state = next;
++            ++stats.changes;
++            pendingActive = false;
++            creditQ = 0;
++            refillAt = now;
++        }
++    }
++    bool allowRelay(uint32_t now, uint32_t generation, bool context, bool optional, uint32_t airtimeMs)
++    {
++        if (stats.mode == ApcMode::Off || stats.mode == ApcMode::Observe)
++            return true;
++        if (generation != armedGeneration) {
++            disarm();
++            return true;
++        }
++        if (!optional || !airtimeMs || airtimeMs > APC_BURST_MS) {
++            ++stats.protectedRelays;
++            return true;
++        }
++        ++stats.eligible;
++        if (!context || hold(now) != ApcHold::None || stats.state == ApcState::Normal)
++            return true;
++        const auto rate = stats.state == ApcState::Reserve ? APC_RESERVE_BUDGET_MS : APC_CONSERVE_BUDGET_MS;
++        creditQ = std::min(uint64_t(APC_BURST_MS) * 60000, creditQ + uint64_t(uint32_t(now - refillAt)) * rate);
++        refillAt = now;
++        const uint64_t cost = uint64_t(airtimeMs) * 60000;
++        if (creditQ >= cost) {
++            creditQ -= cost;
++            return true;
++        }
++        ++stats.wouldSkip;
++        stats.wouldSkipMs += airtimeMs;
++        if (stats.mode != ApcMode::On)
++            return true;
++        ++stats.skipped;
++        stats.skippedMs += airtimeMs;
++        return false;
++    }
++    ApcControlStats copy(uint32_t now, bool context = true) const
++    {
++        auto result = stats;
++        result.hold = context ? hold(now) : ApcHold::Context;
++        if (pendingActive && result.hold == ApcHold::None) {
++            const auto delay = pendingDelay();
++            result.dwellSec = std::min(uint32_t(now - pendingAt), delay) / 1000;
++            result.requiredSec = delay / 1000;
++        } else {
++            result.pending = stats.state;
++        }
++        return result;
++    }
++
++  private:
++    static bool validSample(uint16_t battery, uint16_t vdd)
++    {
++        return battery >= 2500 && battery <= 4500 && vdd >= 3000 && vdd <= 3600;
++    }
++    void resetEvidence()
++    {
++        stats.state = stats.pending = ApcState::Normal;
++        stats.battery = stats.filtered = 0;
++        stats.usb = false;
++        haveSample = pendingActive = warmupComplete = false;
++        creditQ = 0;
++    }
++    ApcHold hold(uint32_t now) const
++    {
++        if (stats.mode == ApcMode::Off)
++            return contextStop ? ApcHold::Context : ApcHold::Off;
++        if (stats.mode == ApcMode::Observe)
++            return ApcHold::Observe;
++        if (!haveSample || uint32_t(now - lastSample) > APC_SAMPLE_MAX_MS)
++            return ApcHold::Sample;
++        if (stats.usb)
++            return ApcHold::Usb;
++        if (!warmupComplete)
++            return ApcHold::Warmup;
++        return ApcHold::None;
++    }
++    ApcState target() const
++    {
++        if (stats.filtered <= APC_RESERVE_MV)
++            return ApcState::Reserve;
++        if (stats.state == ApcState::Reserve)
++            return stats.filtered >= APC_RESERVE_EXIT_MV ? ApcState::Conserve : ApcState::Reserve;
++        if (stats.state == ApcState::Conserve)
++            return stats.filtered >= APC_NORMAL_MV ? ApcState::Normal : ApcState::Conserve;
++        return stats.filtered <= APC_CONSERVE_MV ? ApcState::Conserve : ApcState::Normal;
++    }
++    uint32_t pendingDelay() const
++    {
++        if (stats.pending == ApcState::Reserve)
++            return APC_RESERVE_MS;
++        return stats.state == ApcState::Normal ? APC_CONSERVE_MS : APC_RECOVER_MS;
++    }
++    ApcControlStats stats;
++    bool haveSample = false, pendingActive = false, contextStop = false, warmupComplete = false;
++    uint32_t armedGeneration = 0, filteredQ8 = 0, warmupAt = 0, lastSample = 0, pendingAt = 0, refillAt = 0;
++    uint64_t creditQ = 0;
++};
++} // namespace legion
+diff --git a/src/modules/LegionApcPolicy.h b/src/modules/LegionApcPolicy.h
+new file mode 100644
+index 0000000..e37a753
+--- /dev/null
++++ b/src/modules/LegionApcPolicy.h
+@@ -0,0 +1,136 @@
++#pragma once
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++
++namespace legion
++{
++struct ApcTxStats {
++    uint32_t started = 0, done = 0, interrupted = 0, irqTimed = 0;
++    uint64_t expectedMs = 0, irqMs = 0;
++};
++
++struct ApcStats {
++    bool enabled = false;
++    uint32_t session = 0, startSec = 0, stopSec = 0, generation = 0;
++    uint32_t samples = 0, usbSamples = 0, gaps = 0, configChanges = 0;
++    uint16_t battery = 0, minimum = 0, maximum = 0, vdd = 0, vddMin = 0;
++    uint32_t filteredQ8 = 0;
++    uint64_t batterySum = 0;
++    ApcTxStats own, relay;
++    uint32_t startErrors = 0, repeated = 0, repeatEvictions = 0, unfinished = 0;
++};
++
++class ApcObserver
++{
++  public:
++    bool observe(uint32_t nowSec, uint32_t session, uint32_t generation)
++    {
++        if (stats.enabled)
++            return false;
++        *this = {};
++        stats.enabled = true;
++        stats.session = session;
++        stats.startSec = nowSec;
++        stats.generation = generation;
++        return true;
++    }
++    void off(uint32_t nowSec)
++    {
++        if (stats.enabled) {
++            stats.enabled = false;
++            stats.stopSec = nowSec;
++        }
++    }
++    void sample(uint32_t nowMs, uint16_t battery, uint16_t vdd, bool usb, uint32_t generation)
++    {
++        if (!stats.enabled)
++            return;
++        if (stats.generation != generation) {
++            ++stats.configChanges;
++            stats.generation = generation;
++        }
++        if (haveSample && uint32_t(nowMs - lastSample) > 20000)
++            ++stats.gaps;
++        lastSample = nowMs;
++        haveSample = true;
++        if (!battery || !vdd)
++            return;
++        if (!stats.samples) {
++            stats.minimum = stats.maximum = battery;
++            stats.vddMin = vdd;
++            stats.filteredQ8 = uint32_t(battery) << 8;
++        } else {
++            stats.minimum = std::min(stats.minimum, battery);
++            stats.maximum = std::max(stats.maximum, battery);
++            stats.vddMin = std::min(stats.vddMin, vdd);
++            stats.filteredQ8 = (11 * stats.filteredQ8 + (uint32_t(battery) << 8) + 6) / 12;
++        }
++        stats.battery = battery;
++        stats.vdd = vdd;
++        stats.batterySum += battery;
++        ++stats.samples;
++        stats.usbSamples += usb;
++    }
++    void started(uint32_t nowMs, uint32_t from, uint32_t id, bool own, uint32_t expectedMs)
++    {
++        if (!stats.enabled)
++            return;
++        if (active)
++            ++stats.unfinished;
++        active = true;
++        activeOwn = own;
++        txStartMs = nowMs;
++        auto &tx = own ? stats.own : stats.relay;
++        ++tx.started;
++        tx.expectedMs += expectedMs;
++        bool repeated = false;
++        for (const auto &entry : seen)
++            if (entry.used && entry.from == from && entry.id == id && uint32_t(nowMs - entry.when) <= 600000)
++                repeated = true;
++        stats.repeated += repeated;
++        if (seen[nextSeen].used && uint32_t(nowMs - seen[nextSeen].when) <= 600000)
++            ++stats.repeatEvictions;
++        seen[nextSeen] = {from, id, nowMs, true};
++        nextSeen = (nextSeen + 1) % 32;
++    }
++    void ended(uint32_t nowMs, bool done, bool irqTimed)
++    {
++        if (!active)
++            return;
++        auto &tx = activeOwn ? stats.own : stats.relay;
++        if (done) {
++            ++tx.done;
++            if (irqTimed) {
++                tx.irqMs += uint32_t(nowMs - txStartMs);
++                ++tx.irqTimed;
++            }
++        } else
++            ++tx.interrupted;
++        active = false;
++    }
++    void startError()
++    {
++        if (stats.enabled)
++            ++stats.startErrors;
++    }
++    ApcStats copy() const
++    {
++        auto result = stats;
++        result.unfinished += active;
++        return result;
++    }
++
++  private:
++    struct Seen {
++        uint32_t from = 0, id = 0, when = 0;
++        bool used = false;
++    };
++    ApcStats stats;
++    Seen seen[32]{};
++    size_t nextSeen = 0;
++    bool active = false, activeOwn = false, haveSample = false;
++    uint32_t txStartMs = 0, lastSample = 0;
++};
++} // namespace legion
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index 958bc6c..f480f43 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -11,6 +11,9 @@
+ #include "mesh/Router.h"
+ #include "power/RAK3401LegionPower.h"
+ #include "xmodem.h"
++#if RAK3401_LEGION_APC
++#include "RadioLibInterface.h"
++#endif
+ #if RAK3401_LEGION_BOOT
+ #include "platform/nrf52/LegionBoot.h"
+ #endif
+@@ -88,6 +91,22 @@ static bool sameName(const char *a, const char *b)
+     return *a == *b;
+ }
+ 
++#if RAK3401_LEGION_APC
++static void formatUint64(uint64_t value, char (&output)[21])
++{
++    char reversed[20];
++    size_t length = 0;
++    do {
++        reversed[length++] = '0' + value % 10;
++        value /= 10;
++    } while (value);
++    for (size_t i = 0; i < length; ++i)
++        output[i] = reversed[length - i - 1];
++    output[length] = '\0';
++}
++
++#endif
++
+ uint8_t LegionControlModule::findDestination(const char *name, Channel &result) const
+ {
+     uint8_t count = 0;
+@@ -242,6 +261,192 @@ void LegionControlModule::report(const Pending &command, uint32_t now, bool zero
+         reply(command.control.index, "Invalid page; request page 1");
+ }
+ 
++#if RAK3401_LEGION_APC
++static bool sameApcLora(const meshtastic_Config_LoRaConfig &a, const meshtastic_Config_LoRaConfig &b)
++{
++    return a.use_preset == b.use_preset && a.modem_preset == b.modem_preset && a.bandwidth == b.bandwidth &&
++           a.spread_factor == b.spread_factor && a.coding_rate == b.coding_rate && a.frequency_offset == b.frequency_offset &&
++           a.region == b.region && a.hop_limit == b.hop_limit && a.tx_enabled == b.tx_enabled && a.tx_power == b.tx_power &&
++           a.channel_num == b.channel_num && a.override_frequency == b.override_frequency &&
++           a.override_duty_cycle == b.override_duty_cycle && a.sx126x_rx_boosted_gain == b.sx126x_rx_boosted_gain &&
++           a.fem_lna_mode == b.fem_lna_mode && a.serial_hal_only == b.serial_hal_only;
++}
++
++bool LegionControlModule::apcContext()
++{
++    if (!apcBound)
++        return false;
++    Channel current, primary;
++    if (!findControlChannel(current) || !sameChannel(current, apcControl) || apcGeneration != radioGeneration ||
++        !readChannel(channels.getPrimaryIndex(), primary) || !sameChannel(primary, apcPrimary) ||
++        !sameApcLora(config.lora, apcLora) || config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT || rebootAtMsec ||
++        shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
++#if !MESHTASTIC_EXCLUDE_ADMIN
++        || (adminModule && adminModule->isEditingSettings())
++#endif
++    ) {
++        legionApcDisarm();
++        apcBound = false;
++        apcReport.valid = false;
++        return false;
++    }
++    return true;
++}
++
++bool LegionControlModule::allowApcRelay(const meshtastic_MeshPacket &packet, RadioInterface &radio)
++{
++    if (!apcBound)
++        return true;
++    const bool context = apcContext();
++    const auto &data = packet.decoded;
++    const bool optional = packet.which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
++                          packet.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA &&
++                          !packet.via_mqtt && packet.from && packet.from != nodeDB->getNodeNum() && isBroadcast(packet.to) &&
++                          packet.channel != apcControl.index && packet.hop_limit && !packet.want_ack && !data.want_response &&
++                          !data.request_id && !data.reply_id && packet.priority <= meshtastic_MeshPacket_Priority_DEFAULT &&
++                          (data.portnum == meshtastic_PortNum_POSITION_APP || data.portnum == meshtastic_PortNum_TELEMETRY_APP);
++    const auto status = legionApcControlSnapshot();
++    const bool budget = context && status.hold == legion::ApcHold::None && status.state != legion::ApcState::Normal;
++    const uint32_t airtimeMs = optional && budget ? radio.getPacketTime(&packet) : 1;
++    return legionApcAllowRelay(radioGeneration, context, optional, airtimeMs);
++}
++
++bool legionControlApcAllowRelay(const meshtastic_MeshPacket &packet, RadioInterface &radio)
++{
++    return !legionControlModule || legionControlModule->allowApcRelay(packet, radio);
++}
++
++void LegionControlModule::apc(const Pending &command, uint32_t now)
++{
++    const auto &request = command.request;
++    if (request.apcAction != 1) {
++        const auto mode = request.apcAction == 2   ? legion::ApcMode::Observe
++                          : request.apcAction == 4 ? legion::ApcMode::Shadow
++                          : request.apcAction == 5 ? legion::ApcMode::On
++                                                   : legion::ApcMode::Off;
++        Channel primary;
++        if (mode != legion::ApcMode::Off && (!readChannel(channels.getPrimaryIndex(), primary) ||
++                                             config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT || rebootAtMsec ||
++                                             shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
++#if !MESHTASTIC_EXCLUDE_ADMIN
++                                             || (adminModule && adminModule->isEditingSettings())
++#endif
++                                                 )) {
++            reply(command.control.index, "APC requires CLIENT, stable configuration and no pending restart/transfer");
++            return;
++        }
++        const bool changed = legionApcSetMode(mode, static_cast<uint32_t>(random(1, 0x7fffffff)), radioGeneration);
++        apcBound = mode != legion::ApcMode::Off;
++        apcControl = command.control;
++        apcPrimary = primary;
++        apcLora = config.lora;
++        apcGeneration = radioGeneration;
++        char output[150];
++        std::snprintf(output, sizeof(output), "APC %s%s; %s; RAM only, boot OFF", legion::apcModeName(mode),
++                      changed ? " selected" : " unchanged",
++                      mode == legion::ApcMode::On ? "optional relay budget armed after warmup, TX nominal" : "normal TX/relays");
++        reply(command.control.index, output);
++        apcReport.valid = false;
++        return;
++    }
++    const auto page = request.page;
++    if (page < 1 || page > 6) {
++        reply(command.control.index, "APC pages: 1-6; request page 1 first");
++        return;
++    }
++    if (page == 1) {
++        apcReport.stats = legionApcSnapshot();
++        apcReport.controlStats = legionApcControlSnapshot();
++        apcReport.control = command.control;
++        apcReport.from = command.from;
++        apcReport.createdAt = now;
++        apcReport.uptime = Time::getUptimeSecs();
++        apcReport.generation = radioGeneration;
++        if (!++apcReport.capture)
++            ++apcReport.capture;
++        std::strcpy(apcReport.radio, "Radio unavailable");
++        if (RadioLibInterface::instance)
++            RadioLibInterface::instance->legionApcDescribe(apcReport.radio, sizeof(apcReport.radio));
++        apcReport.valid = true;
++    } else if (!apcReport.valid || apcReport.from != command.from || !sameChannel(apcReport.control, command.control) ||
++               apcReport.generation != radioGeneration || Throttle::hasElapsed(apcReport.createdAt, 15 * 60000)) {
++        reply(command.control.index, "APC capture missing/expired; request page 1");
++        return;
++    }
++    const auto &s = apcReport.stats;
++    char body[160];
++    int n = 0;
++    if (page == 1) {
++        const auto &c = apcReport.controlStats;
++        char filtered[8] = "?";
++        if (c.filtered)
++            std::snprintf(filtered, sizeof(filtered), "%u", c.filtered);
++        n = std::snprintf(body, sizeof(body),
++                          "%s %s %s\nVBAT:%u/%smV\nnext:%s %lu/%lus\neligible:%lu would:%lu skip:%lu\nTX:nominal",
++                          legion::apcModeName(c.mode), legion::apcStateName(c.state), legion::apcHoldName(c.hold), s.battery,
++                          filtered, legion::apcStateName(c.pending), (unsigned long)c.dwellSec, (unsigned long)c.requiredSec,
++                          (unsigned long)c.eligible, (unsigned long)c.wouldSkip, (unsigned long)c.skipped);
++    } else if (page == 2) {
++        const uint32_t elapsed = s.session ? (s.enabled ? apcReport.uptime : s.stopSec) - s.startSec : 0;
++        char batterySum[21];
++        formatUint64(s.batterySum, batterySum);
++        n = std::snprintf(body, sizeof(body),
++                          "%s up:%lus dt:%lus n:%lu usb:%lu\nVBAT "
++                          "mV:%u/%u/%u/%u/%u\nsum:%s VDD:%u/%u",
++                          s.enabled ? "OBS" : "OFF", (unsigned long)apcReport.uptime, (unsigned long)elapsed,
++                          (unsigned long)s.samples, (unsigned long)s.usbSamples, s.battery, s.minimum, s.maximum,
++                          (unsigned)(s.samples ? s.batterySum / s.samples : 0), (unsigned)((s.filteredQ8 + 128) >> 8), batterySum,
++                          s.vdd, s.vddMin);
++    } else if (page == 3) {
++        char ownExpectedMs[21];
++        char relayExpectedMs[21];
++        formatUint64(s.own.expectedMs, ownExpectedMs);
++        formatUint64(s.relay.expectedMs, relayExpectedMs);
++        n = std::snprintf(body, sizeof(body),
++                          "TX start/done/abort\nO:%lu/%lu/%lu R:%lu/%lu/%lu\nest_ms "
++                          "O/R:%s/%s",
++                          (unsigned long)s.own.started, (unsigned long)s.own.done, (unsigned long)s.own.interrupted,
++                          (unsigned long)s.relay.started, (unsigned long)s.relay.done, (unsigned long)s.relay.interrupted,
++                          ownExpectedMs, relayExpectedMs);
++    } else if (page == 4) {
++        char ownIrqMs[21];
++        char relayIrqMs[21];
++        formatUint64(s.own.irqMs, ownIrqMs);
++        formatUint64(s.relay.irqMs, relayIrqMs);
++        n = std::snprintf(body, sizeof(body),
++                          "irq_ms O/R:%s/%s n:%lu/%lu\nrepeat32:%lu evict:%lu fail:%lu "
++                          "open:%lu\ngaps:%lu cfg:%lu",
++                          ownIrqMs, relayIrqMs, (unsigned long)s.own.irqTimed, (unsigned long)s.relay.irqTimed,
++                          (unsigned long)s.repeated, (unsigned long)s.repeatEvictions, (unsigned long)s.startErrors,
++                          (unsigned long)s.unfinished, (unsigned long)s.gaps, (unsigned long)s.configChanges);
++    } else if (page == 5)
++        n = std::snprintf(body, sizeof(body), "%s", apcReport.radio);
++    else {
++        const auto &c = apcReport.controlStats;
++        char wouldMs[21], skippedMs[21];
++        formatUint64(c.wouldSkipMs, wouldMs);
++        formatUint64(c.skippedMs, skippedMs);
++        n = std::snprintf(body, sizeof(body),
++                          "budget C/R:%lu/%lums/min\nburst:%lums; RF:nominal\nprotected:%lu changes:%lu\nest_would/skip_ms:%s/%s",
++                          (unsigned long)legion::APC_CONSERVE_BUDGET_MS, (unsigned long)legion::APC_RESERVE_BUDGET_MS,
++                          (unsigned long)legion::APC_BURST_MS, (unsigned long)c.protectedRelays, (unsigned long)c.changes,
++                          wouldMs, skippedMs);
++    }
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    if (n < 0 || size_t(n) >= sizeof(body)) {
++        reply(command.control.index, "APC report exceeds message limit");
++        return;
++    }
++    n = std::snprintf(output, sizeof(output), "!%08lx A2 s%08lx r%04x %u/6\n%s", (unsigned long)nodeDB->getNodeNum(),
++                      (unsigned long)s.session, apcReport.capture, page, body);
++    if (n < 0 || size_t(n) >= sizeof(output)) {
++        reply(command.control.index, "APC report exceeds message limit");
++        return;
++    }
++    sendText(command.control.index, output);
++}
++#endif
++
+ void LegionControlModule::execute(const Pending &command, uint32_t now)
+ {
+     const auto &request = command.request;
+@@ -258,6 +463,9 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         case legion::ControlCommand::Trace:
+             usage = "Usage: /trace !legionid !targetid (different, non-reserved full IDs)";
+             break;
++        case legion::ControlCommand::Apc:
++            usage = "Usage: /apc observe|shadow|on|off|status !legionid [status page 1-6]";
++            break;
+         case legion::ControlCommand::Boot:
+             usage = "Usage: /boot !legionid";
+             break;
+@@ -276,6 +484,12 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         reply(channel, usage);
+         return;
+     }
++#if RAK3401_LEGION_APC
++    if (request.command == legion::ControlCommand::Apc) {
++        apc(command, now);
++        return;
++    }
++#endif
+ #if RAK3401_LEGION_BOOT
+     if (request.command == legion::ControlCommand::Boot) {
+         char output[legion::CONTROL_TEXT_MAX + 1];
+@@ -492,6 +706,8 @@ void LegionControlModule::formatTrace(const Trace &result, bool back, char *outp
+ 
+ void LegionControlModule::pollTrace(uint32_t now)
+ {
++    if (traceCooling && Throttle::deadlinePassedAt(now, nextTraceAt))
++        traceCooling = false;
+     Trace result;
+     {
+         concurrency::LockGuard guard(&stateLock);
+@@ -571,6 +787,11 @@ int32_t LegionControlModule::runOnce()
+ {
+     const uint32_t now = Time::getMillis();
+     pollTrace(now);
++#if RAK3401_LEGION_APC
++    apcContext();
++    if (apcReport.valid && Throttle::hasElapsed(apcReport.createdAt, legion::CONTROL_SNAPSHOT_MS))
++        apcReport.valid = false;
++#endif
+     Pending command;
+     bool executeCommand = false;
+     {
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 203051e..a308bd1 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -7,10 +7,15 @@
+ #error "Legion control requires private telemetry and recovery"
+ #endif
+ #include "LegionControlPolicy.h"
++#if RAK3401_LEGION_APC
++#include "LegionApc.h"
++#endif
+ #include "SinglePortModule.h"
+ #include "concurrency/Lock.h"
+ #include "concurrency/OSThread.h"
+ 
++class RadioInterface;
++
+ class LegionControlModule : public SinglePortModule, private concurrency::OSThread
+ {
+   public:
+@@ -18,6 +23,9 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     void observeLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+     void observeTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+     void observeTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
++#if RAK3401_LEGION_APC
++    bool allowApcRelay(const meshtastic_MeshPacket &packet, RadioInterface &radio);
++#endif
+ 
+   protected:
+     ProcessMessage handleReceived(const meshtastic_MeshPacket &packet) override;
+@@ -64,6 +72,24 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     void pollTrace(uint32_t now);
+     bool matchesTrace(const meshtastic_MeshPacket &packet) const;
+     void formatTrace(const Trace &result, bool back, char *output, size_t size) const;
++#if RAK3401_LEGION_APC
++    void apc(const Pending &command, uint32_t now);
++    bool apcContext();
++    Channel apcControl;
++    Channel apcPrimary;
++    meshtastic_Config_LoRaConfig apcLora{};
++    uint32_t apcGeneration = 0;
++    bool apcBound = false;
++    struct ApcReport {
++        legion::ApcStats stats;
++        legion::ApcControlStats controlStats;
++        Channel control;
++        uint32_t from = 0, createdAt = 0, uptime = 0, generation = 0;
++        uint16_t capture = 0;
++        char radio[148]{};
++        bool valid = false;
++    } apcReport;
++#endif
+ 
+     concurrency::Lock stateLock;
+     legion::ControlGate requests;
+@@ -80,4 +106,7 @@ extern LegionControlModule *legionControlModule;
+ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+ void legionControlObserveTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+ void legionControlObserveTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
++#if RAK3401_LEGION_APC
++bool legionControlApcAllowRelay(const meshtastic_MeshPacket &packet, RadioInterface &radio);
++#endif
+ #endif
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index a6ee1d5..9f65ef1 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -15,12 +15,13 @@ constexpr uint32_t TRACE_WAIT_MS = 90000;
+ constexpr uint32_t TRACE_COOLDOWN_MS = 60000;
+ constexpr uint32_t TRACE_REPLY_GAP_MS = 6000;
+ 
+-enum class ControlCommand : uint8_t { None, Message, Reboot, ZeroHop, Ignore, Unignore, IgnoreList, Trace, Boot };
++enum class ControlCommand : uint8_t { None, Message, Reboot, ZeroHop, Ignore, Unignore, IgnoreList, Trace, Boot, Apc };
+ struct ControlRequest {
+     ControlCommand command = ControlCommand::None;
+     uint32_t node = 0;
+     uint32_t target = 0;
+     uint16_t page = 1;
++    uint8_t apcAction = 0;
+     char channel[12]{};
+     char text[CONTROL_TEXT_MAX + 1]{};
+     bool valid = false;
+@@ -178,6 +179,27 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+     if (!data || !ownNode || size > 233)
+         return result;
+     ControlParser parser(data, size);
++#if RAK3401_LEGION_APC
++    if (parser.token("/apc")) {
++        result.command = ControlCommand::Apc;
++        if (parser.token("status"))
++            result.apcAction = 1;
++        else if (parser.token("observe"))
++            result.apcAction = 2;
++        else if (parser.token("off"))
++            result.apcAction = 3;
++        else if (parser.token("shadow"))
++            result.apcAction = 4;
++        else if (parser.token("on"))
++            result.apcAction = 5;
++        if (!result.apcAction || !parser.node(result.node) || result.node != ownNode) {
++            result.command = ControlCommand::None;
++            return result;
++        }
++        result.valid = result.apcAction == 1 ? parser.page(result.page) && result.page <= 6 : parser.end();
++        return result;
++    }
++#endif
+     if (parser.token("/msg"))
+         result.command = ControlCommand::Message;
+     else if (parser.token("/reboot"))
+@@ -237,7 +259,15 @@ class ControlGate
+         pending = true;
+         return true;
+     }
+-    bool ready(uint32_t now) const { return pending && Throttle::deadlinePassedAt(now, due); }
++    bool ready(uint32_t now)
++    {
++        if (cooling && Throttle::deadlinePassedAt(now, nextAllowed))
++            cooling = false;
++        for (auto &entry : seen)
++            if (entry.used && Throttle::deadlinePassedAt(now, entry.expires))
++                entry.used = false;
++        return pending && Throttle::deadlinePassedAt(now, due);
++    }
+     void finish(uint32_t now)
+     {
+         pending = false;
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+index 70d7797..6220640 100644
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -1,5 +1,10 @@
+ #include "RAK3401LegionPower.h"
+ 
++#if RAK3401_LEGION_APC
++#include "mesh/NodeDB.h"
++#include "modules/LegionApc.h"
++#endif
++
+ #if RAK3401_LEGION_POWER
+ #include "LegionPowerPolicy.h"
+ #include "UptimeClock.h"
+@@ -246,6 +251,9 @@ void legionPowerPoll()
+     if (!sampled || Throttle::hasElapsed(lastBatteryCheck, BATTERY_CHECK_MS)) {
+         lastBatteryCheck = Time::getMillis();
+         readBatteryMv();
++#if RAK3401_LEGION_APC
++        legionApcSample(lastBatteryMv.load(), lastVddMv.load(), powerHAL_isVBUSConnected(), radioGeneration);
++#endif
+     }
+     if (!sampled || Throttle::hasElapsed(lastBatterySleepCheck, BATTERY_SLEEP_CHECK_MS)) {
+         lastBatterySleepCheck = Time::getMillis();

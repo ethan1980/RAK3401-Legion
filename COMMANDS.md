@@ -1,10 +1,16 @@
 # Legion commands
 
-The current release is **Legion 0.5.1**. Remote messaging, reboot, zero-hop reports
+The current prerelease is **Legion 0.6.0-alpha.1**. Hardware/RF validation of
+this combined alpha remains pending. Remote messaging, reboot, zero-hop reports
 and ignored-node management require 0.5.0 on the executing RAK3401. Telemetry
 requires 0.3.0 or later; manual rescue backup requires 0.4.0 or later.
 The phone app and the requesting/receiving node can use standard Meshtastic.
 Commands are ordinary text messages; no app plugin or remote-admin key is needed.
+
+APC S1 is included in this experimental alpha. The commands
+`/apc observe|shadow|on|off|status !legionid` and optional status pages 2-6 are
+documented in [APC.md](APC.md). Modes are RAM-only and boot OFF. S1 conserves
+eligible position/telemetry relays; adaptive RF output is not enabled.
 
 ## Required private channel
 
@@ -62,6 +68,113 @@ names, changed settings and queue failures produce errors when a reply is
 possible. No fallback channel is used. The destination identity and encryption
 settings are rechecked before dispatch. Firmware-generated local messages do
 not re-enter Legion's command handlers on the transmitting node.
+
+## /trace - remote traceroute (0.6.0 alpha)
+
+~~~text
+/trace !abcdef01 !12345678
+~~~
+
+The first ID selects the Legion that originates the traceroute. The second is
+the destination, which can run ordinary compatible Meshtastic firmware. Both
+full IDs are required; reserved IDs, the executing node itself and extra fields
+are rejected. Send this command as a broadcast in the private **LegionRF**
+conversation. It requires the 0.6.0 alpha on the executor.
+
+The Legion uses the target's recorded channel, or its primary channel for an
+unknown target. The target must share that channel's encryption and radio
+settings; a disabled recorded channel produces an error, with no fallback scan
+or configuration changes. The requester only needs LegionRF. The request is a
+standard `TRACEROUTE_APP` packet with a response requested and normal reliable
+routing, like a traceroute from the Meshtastic app.
+
+After queue acceptance, LegionRF receives a waiting confirmation. The Legion
+waits for **up to 90 seconds from queue acceptance**, without blocking other
+commands. One trace can be active per Legion, and trace starts are at least
+60 seconds apart. The existing shared five-second command gate still applies.
+
+Example successful result; `TR#` is the correlated traceroute packet ID:
+
+~~~text
+!abcdef01: Trace !12345678 queued; waiting up to 90s
+!abcdef01 TR#98765432 1/2 out: !abcdef01 > !11111111 > !12345678
+!abcdef01 TR#98765432 2/2 back: !12345678 > !22222222 > !abcdef01
+~~~
+
+The paths can differ. Each direction is a separate message of at most 199 bytes,
+with at least six seconds between result messages and after the waiting reply.
+Full IDs identify the endpoints and reported relays in travel order. `?` means
+an unknown relay. Missing path metadata is labeled `route not reported`;
+`0 reported relays` does not establish that older firmware reported every hop.
+Names and per-hop SNR are not included in these compact text reports.
+
+Only a response from the requested target, addressed to the executing Legion on
+the selected channel and tied to the exact request packet ID, completes a trace.
+An ACK alone does not. A routing `NO_ROUTE` is reported as unreachable. A timeout,
+missing acknowledgement or absent response is reported separately with
+`reachability unknown`; silence is not proof of an unreachable destination.
+Other routing failures include their numeric Meshtastic error code. Allocation
+and queue rejection are local failures, not reachability measurements.
+
+Changing radio settings, routing-channel encryption or the primary channel
+cancels the pending result. Changing or disabling LegionRF, or losing transmit
+power readiness, clears it without sending the old result under a new key.
+Late and duplicate replies are ignored. State stays in RAM; no automatic
+command retries or settings writes are added. Standard routing retries and
+airtime limits still apply. Reply queue acceptance is not proof that the
+requester received it. RF validation of this feature is pending.
+
+## /boot - boot and accelerator diagnostics (0.6.0 alpha)
+
+~~~text
+/boot !abcdef01
+~~~
+
+The selected Legion returns one private LegionRF message, with no flash writes
+or automatic announcements. The full executor ID is required; missing, malformed
+and nonmatching IDs are silent. Extra fields addressed to this node produce usage
+help. The normal channel/key validation, duplicate cache and shared five-second
+control-command cooldown apply. The report remains available during a transfer
+or low flash-power reserve when radio transmission itself is permitted.
+
+Example; values are illustrative:
+
+~~~text
+!abcdef01 BOOT reset:system-off-wake(00030000) prev:low-battery
+VBAT:3891 VDD:3310mV USB:0
+CC310 SHA:12 MAC:3 SW:0
+~~~
+
+- `reset` is an interpretation of the Arduino core's cached nRF52 RESETREAS
+  mask, followed by the complete hexadecimal mask. `watchdog`, `lockup`,
+  `reset-pin`, `software` and `system-off-wake` are reported when indicated.
+  Zero is `power-on/unknown`; it cannot prove that a brownout occurred.
+- `prev` is a consumed, retained record of the previous deliberate protective
+  stop: `boot-protect`, `low-battery`, `low-vdd` or `system-off`. It is accepted
+  only for a compatible wake/software-reset reason. Absent/foreign records and
+  unrelated watchdog, CPU lockup or pin-reset events stay `unknown`. It records
+  the requested stop, not proof that the preceding shutdown completed.
+- `VBAT` and `VDD` are the first physical readings in this boot's Legion power
+  gate, in millivolts. They are fixed boot samples, not current values or voltage
+  minima at the instant of a fault. Unavailable values are `NA`.
+- `USB` is VBUS detected at the node during that sample. A charger connected
+  only to an external solar/battery box is invisible to the node and may leave
+  `USB:0`. It does not indicate whether the solar panel is charging the battery.
+- `CC310 SHA` and `MAC` count successful hardware SHA-256 and ACK-proof HMAC
+  operations. `SW` counts failed accelerator attempts followed by the caller's
+  existing software calculation. These counters describe this new backend,
+  not all cryptographic work, and wrap at 32 bits. They reset on reboot.
+
+Mesh forwarding alone may not invoke SHA/HMAC. In particular, `MAC:0` can be
+normal when no pairwise PKI ACK proof has been computed. Zero fallbacks indicate
+no failed attempts, not proof that the accelerator was exercised. Identical
+digests/ACK proofs preserve standard Meshtastic interoperability. Existing
+AES key sizes and channel encryption choices retain their normal behavior.
+
+No reset history is written to flash. A complete power loss can erase the
+retained shutdown marker. The report and counters do not by themselves measure
+energy savings or certify the physical reset/accelerator path; those hardware
+tests remain pending for this alpha.
 
 ## /reboot - scheduled normal restart
 
@@ -165,7 +278,7 @@ app. NodeDB ignore flags are outside the manual rescue snapshot.
 - Capacity is 128 rows; overflow is explicitly labeled `partial`. An empty list
   uses one short response. Ignore/unignore commands invalidate the local ignore
   snapshot. Changes through other paths may wait until snapshot expiry to appear.
-- The six new commands share one pending request and a **five-second cooldown
+- The control commands share one pending request and a **five-second cooldown
   after processing** per Legion. Requests while pending/cooling down are silent.
   This gate is separate from telemetry/backup's 60 seconds.
 - Targeted requests wait 0.25-1 second; group requests wait 1-10 seconds, followed
@@ -198,7 +311,7 @@ app, so the RAK does not need another node to echo its own report.
 Example report; values are illustrative:
 
 ~~~text
-Legion0.5.1 !abcdef01 up:194400s
+2.8.2.LGN0.6.0a1 !abcdef01 up:194400s
 CPU:29.25 / max 34.50C BAT:82% 4.01 / min 3.96V
 N:-116 peak:-88dBm n:600
 RX:450 BAD:7 TX:32 REL:24 DROP:2
@@ -244,6 +357,33 @@ after an explicit backup command. Read [RECOVERY.md](RECOVERY.md) before using f
 reset: an armed rescue point is restored; delete it first to deliberately remain blank.
 The successful-recovery notice is separate from routine telemetry and is emitted
 only after a completed recovery.
+
+### Backup freshness (0.6.0 alpha)
+
+In the 0.6.0 alpha, `/backup status !abcdef01` also compares a
+valid rescue point with the current settings it captures:
+
+| Status text | Meaning |
+| --- | --- |
+| `valid rescue point; up to date; recovery armed` | Captured settings match. |
+| `valid rescue point; OUTDATED: owner,channels; recovery armed; /backup replace !abcdef01` | The named blocks differ; the saved rescue point remains usable. |
+| `valid rescue point; freshness unavailable` | The snapshot is valid, but a reliable comparison is currently unavailable. |
+| `no rescue point; recovery disabled` | No rescue point exists, or it was explicitly deleted. |
+| `rescue point invalid or incompatible` | The saved record fails existing validity, compatibility or device-binding checks. |
+
+Changed block names are `owner` (saved names/public identity), `config`
+(device/radio settings), `modules`, `channels` and `position` (fixed mode,
+latitude, longitude or altitude). Replies contain no configuration values or keys.
+Internal version markers, runtime owner fields, dynamic GPS data and position
+timestamps do not make the backup outdated. An open settings transaction,
+pending reboot, missing fixed position or invalid/unencodable current settings
+can make freshness unavailable. Incomplete recovery keeps its existing warning.
+
+Status is read-only and never refreshes or disables a valid rescue point.
+Review the changed settings, then use `/backup replace !abcdef01` explicitly to
+update it. The existing 60-second telemetry/backup cooldown still applies.
+These freshness replies require the alpha on the executor and still need
+RF validation on hardware.
 
 ## Telemetry/backup sampling and response limits
 

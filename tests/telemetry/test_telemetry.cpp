@@ -115,7 +115,8 @@ void test_standard_private_reply_and_local_copy()
     assert(sent.packet.priority == meshtastic_MeshPacket_Priority_BACKGROUND);
     assert(sent.source == RX_SRC_LOCAL && sent.toPhone);
     assert(text().find("!abcdef01") != std::string::npos);
-    assert(text().find("Legion0.5.1") != std::string::npos);
+    assert(text().find("2.8.2.LGN0.6.0a1") != std::string::npos);
+    assert(text().find("Legion0.5.1") == std::string::npos);
     assert(text().find("Legion0.3.0") == std::string::npos);
 }
 

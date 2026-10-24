@@ -9,14 +9,21 @@
 </p>
 
 Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.5.1**, based on **Meshtastic 2.8.2 develop/nightly**,
-commit [`04cb888`](https://github.com/meshtastic/firmware/commit/04cb8885118b959a9f538cd5881bd7d595758911).
-This pins a specific 2.8.2 source revision, not a published official nightly binary.
+Current prerelease: **Legion 0.6.0-alpha.1**, based on **Meshtastic 2.8.2 develop**,
+commit [`e039e34`](https://github.com/meshtastic/firmware/commit/e039e34171e697e36d4f1b66eedfb683ffffe4f5).
+This pins a source revision, not a published official nightly binary.
 
-Version 0.5.1 confirms low battery over eight checks at 20-second intervals,
-retaining the 3.50 V threshold and existing REG1 DC/DC and remote commands.
-All six 0.5.0 commands and manual backup restoration have now been tested on hardware.
-See [commands](COMMANDS.md) and [manual rescue backup](RECOVERY.md).
+**Experimental alpha: hardware/RF validation of this combined version is pending.**
+It integrates the base migration, APC S1, remote `/trace`, CC310 packet SHA/HMAC,
+read-only `/boot` diagnostics and backup freshness. Existing Legion features
+remain included. Earlier 0.4.x/0.5.x hardware results do not validate this build.
+Previous release assets remain available for rollback.
+
+APC starts **OFF** after every boot. `/apc observe|shadow|on|off|status !legionid`
+controls the RAM-only S1 implementation. RF output remains nominal; adaptive
+RF power is not implemented. Read [APC.md](APC.md), the
+[release notes](RELEASE_NOTES.md) and [alpha hardware test sequence](ALPHA-TESTING.md).
+See [0.6.0 planning](PLANNING-0.6.0.md) for the remaining validation.
 
 This repository contains a small set of patches and a build profile. The build
 downloads the upstream source pinned in `upstream.json`, applies the changes,
@@ -66,7 +73,7 @@ those demons and help this particular kit work better.
 
 ## Included changes
 
-### Private remote control (new in 0.5.0)
+### Private remote control
 
 Send commands as channel messages on the configured private **LegionRF** channel.
 The requesting node can run standard Meshtastic. Replies identify the responding
@@ -80,6 +87,9 @@ Legion and are also copied to its connected app.
 | `/ignore !peerid` | Every receiving Legion independently ignores that peer. |
 | `/unignore !peerid` | Every receiving Legion independently removes that peer from its effective ignore list. |
 | `/ignorelist [page]` | Each receiving Legion reports its own effective ignore list. |
+| `/trace !legionid !targetid` | Run a standard traceroute and return both paths asynchronously. |
+| `/boot !legionid` | Read boot evidence, first voltages and CC310 counters. |
+| `/apc observe\|shadow\|on\|off\|status !legionid` | Control APC S1; see [APC.md](APC.md) for status pages and policy. |
 
 Directory queries return one manually requested page at a time. Temporary
 snapshots keep page order stable for 15 minutes and are bound to the requesting
@@ -97,7 +107,8 @@ The new commands have a separate five-second cooldown, one pending request and
 duplicate suppression. Queue acceptance does not confirm reception by another
 node. Full syntax, errors and pagination limits are in [COMMANDS.md](COMMANDS.md).
 
-All six commands introduced in 0.5.0 have been tested on hardware and work correctly.
+The six commands introduced in 0.5.0 were tested on earlier hardware builds.
+Regression testing of the migrated alpha is pending.
 
 ### REG1 DC/DC (new in 0.5.0)
 
@@ -278,7 +289,7 @@ and download its artifacts:
 
 | Artifact | Profile | Purpose |
 | --- | --- | --- |
-| `RAK3401-legion-…` | `rak3401-legion` | REG1 DC/DC, remote commands, 8 MHz bulk SPI, energy recovery, persistence checks, private telemetry and manual rescue backup |
+| `RAK3401-legion-…` | `rak3401-legion` | Alpha with APC S1, trace, CC310, boot diagnostics, backup freshness and existing Legion features |
 | `RAK3401-baseline-…` | `rak3401-1watt` | Reference with the original behavior |
 
 Each package contains firmware files, metadata, `SHA256SUMS` and an archive of
@@ -286,26 +297,20 @@ the source used for the build. Actions artifacts are retained for 30 days.
 
 ### Firmware identification
 
-The release identifies itself as **`2.8.2.Legion0.5.1`** in MQTT map reports,
-device metadata read by the app, Bluetooth Device Information and startup logs.
-The `/telemetry` header derives `Legion0.5.1` from that same compiled version;
-temperature maximum and battery minimum labels include readable spacing.
-The hardware model remains **RAK3401**. Regular NodeInfo broadcasts do not carry
-the firmware version. Maps update after receiving the next MQTT map report.
+The full version is **0.6.0-alpha.1**. The existing 17-character field uses
+**`2.8.2.LGN0.6.0a1`** in MQTT map reports, device metadata, Bluetooth Device
+Information and startup logs. `LGN` means Legion; `a1` means alpha 1. The
+`/telemetry` header uses that same compiled string. Stable-version formatting
+remains `2.8.2.Legion0.x.y`. The hardware model remains **RAK3401**. Regular
+NodeInfo broadcasts do not carry the firmware version.
 
-Both version numbers and the build profile display name are generated from
-`meshtastic_version` and `legion_version` in `upstream.json`. Update those fields
-when changing the base or Legion version. Preparation verifies the base version
-against upstream `version.properties`. The advertised string must fit the
-existing **17-character** field: preparation and compilation reject an overlong
-version instead of truncating it. A longer future version number will require
-an explicitly shorter identification format before it can be built.
-
-Filenames retain the upstream version and source hash (`2.8.2.04cb888`).
-`legion-build.json` records `advertised_firmware_version` and both complete source
-commits. Packaging verifies the advertised string is present in the compiled ELF;
-release validation checks it matches the configured versions. The reference
-baseline keeps the original upstream firmware identification.
+The advertised string, full build-profile display name and manifest version are
+generated from `upstream.json`. Preparation verifies the pinned source version
+and rejects invalid or overlong identifiers instead of truncating them.
+Filenames retain the upstream version and source hash (`2.8.2.e039e34`).
+`legion-build.json` records both complete source commits, patch hashes, the alpha
+stage and explicit hardware-test flags. Packaging verifies the compiled version.
+The reference baseline retains upstream firmware identification.
 
 ## Build locally
 
@@ -334,6 +339,10 @@ upstream revision or unexpected local changes. To use another destination:
 `python scripts/build.py --dest /path/to/new/directory`.
 
 ## Validation status
+
+The following hardware observations are historical, from earlier Legion builds.
+**All combined alpha hardware checks remain pending**; follow [ALPHA-TESTING.md](ALPHA-TESTING.md).
+Software tests and both-profile builds cover the migrated alpha.
 
 | Area | Validation status |
 | --- | --- |

@@ -2,10 +2,14 @@
 // Commands must select the correct executor, originate one message only after channel revalidation,
 // retain coherent paginated reports, and never claim durable ignore changes after a deferred save.
 // These tests guard queue-vs-delivery confusion, command recursion, stale-hop SNR and legacy blocks.
+// Trace requests must correlate by packet, target and channel, preserve both route directions,
+// remain asynchronous, respect the 90s deadline across rollover, and stop exposing results after key changes.
 // SDK, radio, NodeDB storage and scheduler boundaries are simulated; hardware RF delivery is not tested.
 #include "MeshService.h"
 #include "NodeDB.h"
+#include "RadioLibInterface.h"
 #include "UptimeClock.h"
+#include "mesh/Router.h"
 #include "modules/AdminModule.h"
 #include "modules/LegionControlModule.h"
 #include "xmodem.h"
@@ -17,12 +21,20 @@
 FakeChannels channels;
 Owner owner;
 Config config;
-uint32_t ownNode = 0xabcdef01, rebootAtMsec = 0, radioGeneration = 0;
+uint32_t ownNode = 0xabcdef01, rebootAtMsec = 0, shutdownAtMsec = 0, radioGeneration = 0;
 bool allocationFails = false, supplyReady = true, flashSafe = true, recoveryBlocked = false;
+unsigned bootReports = 0;
+bool legionBootFormat(char *output, size_t size, uint32_t node)
+{
+    ++bootReports;
+    return std::snprintf(output, size, "!%08lx BOOT reset:watchdog(00000002) prev:unknown", (unsigned long)node) > 0;
+}
 NodeDB database;
 NodeDB *nodeDB = &database;
 MeshService meshService;
 MeshService *service = &meshService;
+Router testRouter;
+Router *router = &testRouter;
 XModem xModem;
 AdminModule admin;
 AdminModule *adminModule = &admin;
@@ -54,16 +66,19 @@ void channel(unsigned index, const char *name)
 }
 void reset()
 {
+    legionApcDisarm();
     channels = {};
     owner = {};
     config = {};
     database = {};
     meshService = {};
+    testRouter = {};
     admin = {};
     xModem = {};
-    Time::now = rebootAtMsec = radioGeneration = 0;
+    Time::now = rebootAtMsec = shutdownAtMsec = radioGeneration = 0;
     allocationFails = recoveryBlocked = false;
     supplyReady = flashSafe = true;
+    bootReports = 0;
     channel(2, "LegionRF");
     channel(0, "SFNarrow");
 }
@@ -438,6 +453,593 @@ void test_gate_rollover_and_bounded_fuzz()
     }
 }
 
+meshtastic_MeshPacket traceReply(size_t index = 0)
+{
+    const auto &request = meshService.sent.at(index).packet;
+    meshtastic_MeshPacket reply;
+    reply.from = request.to;
+    reply.to = ownNode;
+    reply.channel = request.channel;
+    reply.decoded.portnum = meshtastic_PortNum_TRACEROUTE_APP;
+    reply.decoded.request_id = request.id;
+    return reply;
+}
+
+meshtastic_RouteDiscovery exampleRoute()
+{
+    meshtastic_RouteDiscovery route;
+    route.route_count = 2;
+    route.route[0] = 0x11111111;
+    route.route[1] = 0x22222222;
+    route.route_back_count = 2;
+    route.route_back[0] = 0x33333333;
+    route.route_back[1] = 0x44444444;
+    return route;
+}
+
+void test_trace_parser_and_authorization()
+{
+    const auto parse = [](const std::string &s) {
+        return legion::parseControl(reinterpret_cast<const uint8_t *>(s.data()), s.size(), ownNode);
+    };
+    for (const auto &s : {"/trace", "/trace !bad !12345678", "/trace !00000001 !12345678"})
+        assert(parse(s).command == legion::ControlCommand::None);
+    for (const auto &s : {"/trace !abcdef01", "/trace !abcdef01 !bad", "/trace !abcdef01 !abcdef01", "/trace !abcdef01 !00000000",
+                          "/trace !abcdef01 !00000003", "/trace !abcdef01 !ffffffff", "/trace !abcdef01 !12345678 extra"})
+        assert(parse(s).command == legion::ControlCommand::Trace && !parse(s).valid);
+    const auto valid = parse(" /trace !ABCDEF01 !1234ABCD\n");
+    assert(valid.valid && valid.node == ownNode && valid.target == 0x1234abcd && !valid.group);
+    reset();
+    TestModule module;
+    auto wrongChannel = packet("/trace !abcdef01 !12345678");
+    wrongChannel.channel = 0;
+    module.handleReceived(wrongChannel);
+    Time::now = 10000;
+    module.runOnce();
+    assert(meshService.sent.empty());
+    deliver(module, "/trace !abcdef02 !12345678");
+    assert(meshService.sent.empty());
+    deliver(module, "/trace !abcdef01 !00000001");
+    assert(meshService.sent.size() == 1 && last().find("Usage: /trace") != std::string::npos);
+}
+
+void test_trace_standard_request_and_asymmetric_routes()
+{
+    reset();
+    channel(1, "Remote");
+    database.getOrCreateMeshNode(0x12345678)->channel = 1;
+    TestModule module;
+    deliver(module, "/trace !abcdef01 !12345678");
+    assert(meshService.sent.size() == 2);
+    const auto request = meshService.sent[0];
+    assert(request.packet.to == 0x12345678 && request.packet.channel == 1 && request.packet.from == ownNode);
+    assert(request.packet.decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP && request.packet.decoded.want_response);
+    assert(request.packet.want_ack && request.packet.decoded.payload.size == 0 && request.source == RX_SRC_USER &&
+           request.toPhone);
+    assert(last().find("waiting up to 90s") != std::string::npos && meshService.sent[1].packet.channel == 2);
+    next();
+    deliver(module, "/zerohop !abcdef01", 2);
+    assert(last().find("No eligible") != std::string::npos || last().find("n:0") != std::string::npos);
+    const auto reply = traceReply();
+    auto route = exampleRoute();
+    legionControlObserveTraceRoute(reply, route);
+    module.runOnce();
+    assert(last().find("1/2 out: !abcdef01 > !11111111 > !22222222 > !12345678") != std::string::npos);
+    assert(last().find("TR#98765432") != std::string::npos);
+    const auto sent = meshService.sent.size();
+    legionControlObserveTraceRoute(reply, {});
+    module.runOnce();
+    assert(meshService.sent.size() == sent);
+    Time::now += legion::TRACE_REPLY_GAP_MS - 1;
+    module.runOnce();
+    assert(meshService.sent.size() == sent);
+    ++Time::now;
+    module.runOnce();
+    assert(last().find("2/2 back: !12345678 > !33333333 > !44444444 > !abcdef01") != std::string::npos);
+    assert(database.saveCalls == 0);
+    for (size_t i = 1; i < meshService.sent.size(); ++i)
+        assert(meshService.sent[i].packet.channel == 2 && text(i).size() <= 199);
+}
+
+void test_trace_correlation_and_deadline()
+{
+    for (int mismatch = 0; mismatch < 7; ++mismatch) {
+        reset();
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        auto reply = traceReply();
+        if (mismatch == 0)
+            ++reply.decoded.request_id;
+        if (mismatch == 1)
+            ++reply.from;
+        if (mismatch == 2)
+            reply.to = NODENUM_BROADCAST;
+        if (mismatch == 3)
+            reply.channel = 2;
+        if (mismatch == 4)
+            reply.decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+        if (mismatch == 5)
+            reply.which_payload_variant = 0;
+        auto route = exampleRoute();
+        if (mismatch == 6)
+            route.route_count = 9;
+        legionControlObserveTraceRoute(reply, route);
+        Time::now += legion::TRACE_WAIT_MS - 1;
+        module.runOnce();
+        assert(meshService.sent.size() == 2);
+        ++Time::now;
+        module.runOnce();
+        assert(meshService.sent.size() == 3 && last().find("reachability unknown") != std::string::npos);
+        assert(last().find("Unreachable") == std::string::npos && testRouter.cancelled.size() == 1);
+        legionControlObserveTraceRoute(traceReply(), exampleRoute());
+        Time::now += 10000;
+        module.runOnce();
+        assert(meshService.sent.size() == 3);
+    }
+    for (int before = 0; before < 2; ++before) {
+        reset();
+        TestModule module;
+        Time::now = UINT32_MAX - 30000;
+        deliver(module, "/trace !abcdef01 !12345678");
+        Time::now += legion::TRACE_WAIT_MS - (before ? 1 : 0);
+        legionControlObserveTraceRoute(traceReply(), exampleRoute());
+        module.runOnce();
+        assert(last().find(before ? "1/2 out" : "No traceroute response") != std::string::npos);
+    }
+}
+
+void test_trace_routing_errors_and_local_failure()
+{
+    for (const auto error :
+         {meshtastic_Routing_Error_NONE, meshtastic_Routing_Error_NO_ROUTE, meshtastic_Routing_Error_MAX_RETRANSMIT,
+          meshtastic_Routing_Error_NO_RESPONSE, meshtastic_Routing_Error_TIMEOUT, meshtastic_Routing_Error_DUTY_CYCLE_LIMIT}) {
+        reset();
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        auto ack = traceReply();
+        ack.from = 0x77777777; // A relay may return a correlated NAK.
+        ack.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+        ++ack.decoded.request_id;
+        legionControlObserveTraceError(ack, error);
+        Time::now += 6000;
+        module.runOnce();
+        assert(meshService.sent.size() == 2);
+        --ack.decoded.request_id;
+        legionControlObserveTraceError(ack, error);
+        module.runOnce();
+        if (error == meshtastic_Routing_Error_NONE) {
+            assert(meshService.sent.size() == 2); // An ACK is not a traceroute response.
+            legionControlObserveTraceRoute(traceReply(), exampleRoute());
+            module.runOnce();
+            assert(last().find("1/2 out") != std::string::npos);
+        } else {
+            assert(meshService.sent.size() == 3);
+            assert((last().find("Unreachable") != std::string::npos) == (error == meshtastic_Routing_Error_NO_ROUTE));
+            legionControlObserveTraceRoute(traceReply(), exampleRoute());
+            Time::now += 6000;
+            module.runOnce();
+            assert(meshService.sent.size() == 3);
+        }
+    }
+    reset();
+    TestModule module;
+    meshService.onSend = [](const meshtastic_MeshPacket &request) {
+        if (request.decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP) {
+            auto error = traceReply();
+            error.from = ownNode;
+            error.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+            legionControlObserveTraceError(error, meshtastic_Routing_Error_NO_INTERFACE);
+        }
+    };
+    deliver(module, "/trace !abcdef01 !12345678");
+    Time::now += 6000;
+    module.runOnce();
+    assert(last().find("Routing failed") != std::string::npos);
+    reset();
+    TestModule rejected;
+    meshService.result = 1;
+    deliver(rejected, "/trace !abcdef01 !12345678");
+    assert(last().find("queue rejected") != std::string::npos);
+    Time::now += 100000;
+    rejected.runOnce();
+    assert(meshService.sent.size() == 2);
+    reset();
+    TestModule noAllocation;
+    allocationFails = true;
+    deliver(noAllocation, "/trace !abcdef01 !12345678");
+    allocationFails = false;
+    Time::now += 100000;
+    noAllocation.runOnce();
+    assert(meshService.sent.empty());
+}
+
+void test_trace_config_changes_and_busy()
+{
+    for (int change = 0; change < 7; ++change) {
+        reset();
+        channel(1, "Remote");
+        database.getOrCreateMeshNode(0x12345678)->channel = 1;
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        legionControlObserveTraceRoute(traceReply(), exampleRoute());
+        if (change == 0)
+            channels.entries[2].settings.psk.bytes[0]++;
+        if (change == 1)
+            channels.entries[1].settings.psk.bytes[0]++;
+        if (change == 2)
+            channels.entries[0].settings.psk.bytes[0]++;
+        if (change == 3)
+            ++radioGeneration;
+        if (change == 4)
+            supplyReady = false;
+        if (change == 5)
+            channels.entries[1].role = meshtastic_Channel_Role_DISABLED;
+        if (change == 6)
+            owner.is_licensed = true;
+        Time::now += 6000;
+        module.runOnce();
+        assert(testRouter.cancelled.size() == 1);
+        for (size_t i = 1; i < meshService.sent.size(); ++i)
+            assert(text(i).find("1/2 out") == std::string::npos);
+        assert(meshService.sent.size() == (change == 0 || change == 4 || change == 6 ? 2 : 3));
+    }
+    reset();
+    TestModule module;
+    deliver(module, "/trace !abcdef01 !12345678");
+    next();
+    deliver(module, "/trace !abcdef01 !22222222", 2);
+    assert(last().find("Trace busy") != std::string::npos);
+    legionControlObserveTraceRoute(traceReply(), exampleRoute());
+    module.runOnce();
+    Time::now += 6000;
+    module.runOnce();
+    next();
+    deliver(module, "/trace !abcdef01 !22222222", 3);
+    assert(last().find("Trace cooldown") != std::string::npos);
+    Time::now += 60000;
+    deliver(module, "/trace !abcdef01 !22222222", 4);
+    assert(last().find("Trace !22222222 queued") != std::string::npos);
+}
+
+void test_trace_pending_validation_and_bounded_output()
+{
+    for (int change = 0; change < 5; ++change) {
+        reset();
+        TestModule module;
+        module.handleReceived(packet("/trace !abcdef01 !12345678"));
+        if (change == 0)
+            ++radioGeneration;
+        if (change == 1)
+            database.getOrCreateMeshNode(0x12345678)->channel = 1;
+        if (change == 2)
+            xModem.busy = true;
+        if (change == 3)
+            recoveryBlocked = true;
+        if (change == 4)
+            admin.editing = true;
+        Time::now += 10000;
+        module.runOnce();
+        assert(meshService.sent.size() == 1 && meshService.sent[0].packet.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP);
+    }
+    for (int variant = 0; variant < 3; ++variant) {
+        reset();
+        TestModule module;
+        deliver(module, "/trace !abcdef01 !12345678");
+        meshtastic_RouteDiscovery route;
+        if (variant == 1) {
+            route.snr_towards_count = route.snr_back_count = 1;
+        } else if (variant == 2) {
+            route.route_count = route.route_back_count = 8;
+            for (size_t i = 0; i < 8; ++i)
+                route.route[i] = route.route_back[i] = 0x11111111 + i;
+            route.route[3] = NODENUM_BROADCAST;
+        }
+        legionControlObserveTraceRoute(traceReply(), route);
+        Time::now += 6000;
+        module.runOnce();
+        assert(last().size() <= 199);
+        assert(last().find(variant == 0   ? "route not reported"
+                           : variant == 1 ? "0 reported relays"
+                                          : "> ? >") != std::string::npos);
+        Time::now += 6000;
+        module.runOnce();
+        assert(last().size() <= 199 && last().find("2/2 back") != std::string::npos);
+    }
+    reset();
+    TestModule failedResult;
+    deliver(failedResult, "/trace !abcdef01 !12345678");
+    legionControlObserveTraceRoute(traceReply(), exampleRoute());
+    meshService.result = 1;
+    Time::now += 6000;
+    failedResult.runOnce();
+    Time::now += 6000;
+    failedResult.runOnce();
+    assert(meshService.sent.size() == 3); // Do not send part 2 when part 1 was rejected.
+}
+
+void test_boot_query_authorization_and_read_only_behavior()
+{
+    reset();
+    TestModule module;
+    deliver(module, "/boot !abcdef02");
+    assert(bootReports == 0 && meshService.sent.empty());
+    auto wrong = packet("/boot !abcdef01", 2);
+    wrong.channel = 0;
+    module.handleReceived(wrong);
+    Time::now += 10000;
+    module.runOnce();
+    assert(bootReports == 0 && meshService.sent.empty());
+    // Reading boot state must not require safe flash voltage or interrupt a transfer.
+    flashSafe = false;
+    xModem.busy = true;
+    recoveryBlocked = true;
+    deliver(module, "/boot !abcdef01", 3);
+    assert(bootReports == 1 && meshService.sent.size() == 1 && last().find("BOOT reset:watchdog") != std::string::npos);
+    assert(meshService.sent[0].packet.channel == 2 && database.saveCalls == 0);
+    next();
+    deliver(module, "/boot !abcdef01", 3);
+    assert(bootReports == 1); // Duplicate packet ID is not executed again.
+    next();
+    deliver(module, "/boot !abcdef01 extra", 4);
+    assert(last().find("Usage: /boot") != std::string::npos && bootReports == 1);
+    next();
+    module.handleReceived(packet("/boot !abcdef01", 5));
+    ++channels.entries[2].settings.psk.bytes[0];
+    Time::now += 10000;
+    module.runOnce();
+    assert(bootReports == 1);
+}
+
+void apcCommand(TestModule &module, const std::string &text, uint32_t id = 1, uint32_t from = 0x12345678)
+{
+    next();
+    deliver(module, text, id, from);
+}
+
+void apcSamples(TestModule &module, uint32_t seconds, uint16_t battery = 3700)
+{
+    for (uint32_t i = 0; i < seconds; i += 5) {
+        Time::now += 5000;
+        legionApcSample(battery, 3300, false, radioGeneration);
+        module.runOnce();
+    }
+}
+
+void test_apc_authorization_modes_and_status_snapshots()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc on !abcdef02");
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && meshService.sent.empty());
+    auto wrong = packet("/apc on !abcdef01", 2);
+    wrong.channel = 0;
+    module.handleReceived(wrong);
+    Time::now += 10000;
+    module.runOnce();
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && meshService.sent.empty());
+    apcCommand(module, "/apc shadow !abcdef01", 3);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Shadow && last().find("SHADOW selected") != std::string::npos);
+    apcSamples(module, 1800);
+    assert(legionApcControlSnapshot().state == legion::ApcState::Conserve);
+    apcCommand(module, "/apc shadow !abcdef01", 4);
+    assert(legionApcControlSnapshot().state == legion::ApcState::Conserve && last().find("unchanged") != std::string::npos);
+    apcCommand(module, "/apc status !abcdef01", 5);
+    assert(last().find("1/6") != std::string::npos && last().find("SHADOW CONSERVE") != std::string::npos);
+    const auto first = last();
+    apcSamples(module, 10, 3900);
+    for (unsigned page = 2; page <= 6; ++page) {
+        apcCommand(module, "/apc status !abcdef01 " + std::to_string(page), page + 10);
+        assert(last().find(std::to_string(page) + "/6") != std::string::npos && last().size() <= 199);
+        const auto headerLength = first.find("1/6");
+        assert(last().substr(0, headerLength) == first.substr(0, headerLength));
+    }
+    apcCommand(module, "/apc status !abcdef01 2", 30, 0x12345679);
+    assert(last().find("missing/expired") != std::string::npos);
+    apcCommand(module, "/apc status !abcdef01 0", 31);
+    assert(last().find("Usage: /apc") != std::string::npos);
+    apcCommand(module, "/apc status !abcdef01 7", 32);
+    assert(last().find("Usage: /apc") != std::string::npos);
+    Time::now += 900001;
+    apcCommand(module, "/apc status !abcdef01 2", 33);
+    assert(last().find("missing/expired") != std::string::npos);
+    apcCommand(module, "/apc off !abcdef01", 34);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && !legionApcSnapshot().enabled);
+    const auto samples = legionApcSnapshot().samples;
+    apcCommand(module, "/apc status !abcdef01", 35);
+    assert(last().find("OFF NORMAL off") != std::string::npos && legionApcSnapshot().samples == samples);
+    assert(database.saveCalls == 0);
+}
+
+void test_apc_packet_exemptions_and_shadow_active_behavior()
+{
+    reset();
+    TestModule module;
+    RadioLibInterface radio;
+    auto relay = packet("ordinary", 99);
+    relay.channel = 0;
+    relay.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+    relay.decoded.portnum = meshtastic_PortNum_TELEMETRY_APP;
+    relay.priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    assert(module.allowApcRelay(relay, radio) && radio.measurements == 0);
+    apcCommand(module, "/apc shadow !abcdef01", 1);
+    apcSamples(module, 1800);
+    for (unsigned i = 0; i < 20; ++i)
+        assert(module.allowApcRelay(relay, radio));
+    auto control = legionApcControlSnapshot();
+    assert(control.wouldSkip > 0 && control.skipped == 0);
+    apcCommand(module, "/apc on !abcdef01", 2);
+    assert(legionApcControlSnapshot().state == legion::ApcState::Normal);
+    const auto measured = radio.measurements;
+    assert(module.allowApcRelay(relay, radio) && radio.measurements == measured);
+    apcSamples(module, 1800);
+    bool limited = false;
+    for (unsigned i = 0; i < 20; ++i)
+        limited |= !module.allowApcRelay(relay, radio);
+    assert(limited && legionApcControlSnapshot().skipped > 0);
+    for (unsigned condition = 0; condition < 16; ++condition) {
+        auto protectedPacket = relay;
+        switch (condition) {
+        case 0:
+            protectedPacket.to = 0x12345678;
+            break;
+        case 1:
+            protectedPacket.which_payload_variant = 2;
+            break;
+        case 2:
+            protectedPacket.from = ownNode;
+            break;
+        case 3:
+            protectedPacket.from = 0;
+            break;
+        case 4:
+            protectedPacket.want_ack = true;
+            break;
+        case 5:
+            protectedPacket.decoded.want_response = true;
+            break;
+        case 6:
+            protectedPacket.decoded.request_id = 3;
+            break;
+        case 7:
+            protectedPacket.decoded.reply_id = 4;
+            break;
+        case 8:
+            protectedPacket.channel = 2;
+            break;
+        case 9:
+            protectedPacket.priority = meshtastic_MeshPacket_Priority_DEFAULT + 1;
+            break;
+        case 10:
+            protectedPacket.hop_limit = 0;
+            break;
+        case 11:
+            protectedPacket.via_mqtt = true;
+            break;
+        case 12:
+            protectedPacket.transport_mechanism = 0;
+            break;
+        case 13:
+            protectedPacket.decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+            break;
+        case 14:
+            protectedPacket.decoded.portnum = meshtastic_PortNum_TRACEROUTE_APP;
+            break;
+        default:
+            protectedPacket.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+            break;
+        }
+        const auto measurements = radio.measurements;
+        assert(module.allowApcRelay(protectedPacket, radio) && radio.measurements == measurements);
+    }
+    relay.decoded.portnum = meshtastic_PortNum_POSITION_APP;
+    radio.airtime = legion::APC_BURST_MS + 1;
+    assert(module.allowApcRelay(relay, radio));
+    apcCommand(module, "/apc off !abcdef01", 3);
+    assert(module.allowApcRelay(relay, radio));
+    assert(database.saveCalls == 0);
+}
+
+void test_apc_configuration_changes_and_busy_context_disarm()
+{
+    for (unsigned condition = 0; condition < 10; ++condition) {
+        reset();
+        TestModule module;
+        apcCommand(module, "/apc on !abcdef01", 1);
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+        switch (condition) {
+        case 0:
+            ++channels.entries[2].settings.psk.bytes[0];
+            break;
+        case 1:
+            ++radioGeneration;
+            break;
+        case 2:
+            config.device.role = 1;
+            break;
+        case 3:
+            admin.editing = true;
+            break;
+        case 4:
+            rebootAtMsec = 200000;
+            break;
+        case 5:
+            shutdownAtMsec = 200000;
+            break;
+        case 6:
+            xModem.busy = true;
+            break;
+        case 7:
+            ++config.lora.bandwidth;
+            break;
+        case 8:
+            ++config.lora.tx_power;
+            break;
+        default:
+            ++channels.entries[0].settings.psk.bytes[0];
+            break;
+        }
+        module.runOnce();
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && !legionApcSnapshot().enabled);
+    }
+    reset();
+    TestModule module;
+    config.device.role = 1;
+    apcCommand(module, "/apc on !abcdef01", 10);
+    assert(last().find("requires CLIENT") != std::string::npos && legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    config.device.role = 0;
+    next();
+    module.handleReceived(packet("/apc on !abcdef01", 11));
+    ++channels.entries[2].settings.psk.bytes[0];
+    Time::now += 10000;
+    module.runOnce();
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    assert(database.saveCalls == 0);
+}
+
+void test_apc_expired_capture_cannot_revive_after_clock_wrap()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc shadow !abcdef01", 1);
+    apcSamples(module, 60);
+    apcCommand(module, "/apc status !abcdef01", 2);
+    const auto captured = Time::now;
+    assert(last().find("1/6") != std::string::npos);
+    apcSamples(module, 920);
+    // The main loop has expired the capture before the 32-bit clock aliases it again.
+    Time::now = captured + 10000;
+    apcCommand(module, "/apc status !abcdef01 2", 3);
+    assert(last().find("missing/expired") != std::string::npos);
+}
+
+void test_apc_commands_work_after_weeks_without_requests()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc on !abcdef01", 1);
+    apcSamples(module, 25u * 24 * 60 * 60);
+    assert(legionApcControlSnapshot().hold == legion::ApcHold::None);
+    apcCommand(module, "/apc status !abcdef01", 2);
+    assert(last().find("ON CONSERVE") != std::string::npos);
+    apcCommand(module, "/apc off !abcdef01", 3);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+}
+
+void test_trace_cooldown_does_not_revive_after_weeks()
+{
+    reset();
+    TestModule module;
+    deliver(module, "/trace !abcdef01 !12345678", 1);
+    Time::now += 90001;
+    module.runOnce();
+    assert(last().find("reachability unknown") != std::string::npos);
+    Time::now += 25u * 24 * 60 * 60 * 1000;
+    module.runOnce();
+    next();
+    deliver(module, "/trace !abcdef01 !12345678", 2);
+    assert(last().find("queued; waiting up to 90s") != std::string::npos);
+}
+
 int main()
 {
 #define RUN(test)                                                                                                                \
@@ -454,4 +1056,17 @@ int main()
     RUN(test_ignore_union_persistence_and_idempotency);
     RUN(test_ignore_deferred_failure_capacity_and_group_scope);
     RUN(test_gate_rollover_and_bounded_fuzz);
+    RUN(test_trace_parser_and_authorization);
+    RUN(test_trace_standard_request_and_asymmetric_routes);
+    RUN(test_trace_correlation_and_deadline);
+    RUN(test_trace_routing_errors_and_local_failure);
+    RUN(test_trace_config_changes_and_busy);
+    RUN(test_trace_pending_validation_and_bounded_output);
+    RUN(test_boot_query_authorization_and_read_only_behavior);
+    RUN(test_apc_authorization_modes_and_status_snapshots);
+    RUN(test_apc_packet_exemptions_and_shadow_active_behavior);
+    RUN(test_apc_configuration_changes_and_busy_context_disarm);
+    RUN(test_apc_expired_capture_cannot_revive_after_clock_wrap);
+    RUN(test_apc_commands_work_after_weeks_without_requests);
+    RUN(test_trace_cooldown_does_not_revive_after_weeks);
 }

@@ -15,10 +15,21 @@ PROFILE_PATH = Path("variants/nrf52840/rak3401_legion/platformio.ini")
 
 
 def firmware_version(config):
-    for field in ("meshtastic_version", "legion_version"):
-        if not re.fullmatch(r"\d+\.\d+\.\d+", config[field], flags=re.ASCII):
-            raise ValueError(f"Invalid version: {field}")
-    version = f"{config['meshtastic_version']}.Legion{config['legion_version']}"
+    upstream = config["meshtastic_version"]
+    if not re.fullmatch(r"\d+\.\d+\.\d+", upstream, flags=re.ASCII):
+        raise ValueError("Invalid version: meshtastic_version")
+    legion = re.fullmatch(
+        r"(\d+\.\d+\.\d+)(?:-alpha\.([1-9]\d*))?",
+        config["legion_version"],
+        flags=re.ASCII,
+    )
+    if not legion:
+        raise ValueError("Invalid version: legion_version")
+    version = (
+        f"{upstream}.LGN{legion[1]}a{legion[2]}"
+        if legion[2]
+        else f"{upstream}.Legion{legion[1]}"
+    )
     if len(version) > 17:
         raise ValueError("Advertised firmware version exceeds the 17-character field")
     return version
@@ -47,6 +58,10 @@ def load_config():
     if config["repository"] != "https://github.com/meshtastic/firmware.git":
         raise ValueError("Unexpected upstream repository")
     firmware_version(config)
+    if ("-alpha." in config["legion_version"]) != (
+        config.get("release_stage") == "alpha"
+    ):
+        raise ValueError("Alpha version and release_stage must agree")
     return config
 
 

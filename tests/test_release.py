@@ -439,16 +439,131 @@ class ReleaseValidationTests(unittest.TestCase):
 
     def test_v051_release_keeps_validation_and_reports_new_battery_policy(self):
         self.v050_manifest()
-        self.manifest.update(legion_version="0.5.1", advertised_firmware_version="2.8.2.Legion0.5.1")
+        self.manifest.update(
+            legion_version="0.5.1", advertised_firmware_version="2.8.2.Legion0.5.1"
+        )
         self.write_manifest()
         metadata = release.prepare_release(self.directory, self.commit)
         self.assertEqual(metadata["tag"], "legion-v0.5.1-aaaaaaa")
-        for term in ("eight consecutive", "20 seconds", "3.50 V", "erase.uf2", "not verified"):
+        for term in (
+            "eight consecutive",
+            "20 seconds",
+            "3.50 V",
+            "erase.uf2",
+            "not verified",
+        ):
             self.assertIn(term, metadata["notes"])
         self.manifest["reg1_dcdc"] = False
         self.write_manifest()
         with self.assertRaises(ValueError):
             release.prepare_release(self.directory, self.commit)
+
+    def alpha_manifest(self):
+        self.v050_manifest()
+        self.manifest.update(
+            legion_version="0.6.0-alpha.1",
+            advertised_firmware_version="2.8.2.LGN0.6.0a1",
+            release_stage="alpha",
+            control_commands=[
+                "msg",
+                "reboot",
+                "zerohop",
+                "ignore",
+                "unignore",
+                "ignorelist",
+                "trace",
+                "boot",
+                "apc",
+            ],
+            apc_candidate_stage="S1",
+            apc_modes=["off", "observe", "shadow", "on"],
+            apc_boot_mode="off",
+        )
+        for field in (
+            "cc310_packet_sha256",
+            "cc310_ack_hmac_sha256",
+            "cc310_software_fallback",
+            "boot_diagnostics",
+            "backup_freshness_status",
+            "apc_battery_conservation",
+        ):
+            self.manifest[field] = True
+        for field in (
+            "apc_persistent_settings",
+            "apc_adaptive_rf_power",
+            "apc_hardware_tested",
+            "boot_diagnostics_flash_writes",
+            "backup_freshness_flash_writes",
+            "hardware_tested",
+            "ota_hardware_tested",
+            "energy_savings_measured",
+            "trace_hardware_tested",
+            "cc310_hardware_measured",
+            "boot_diagnostics_hardware_tested",
+            "backup_freshness_hardware_tested",
+        ):
+            self.manifest[field] = False
+
+    def test_alpha_release_is_identified_and_describes_pending_hardware_validation(
+        self,
+    ):
+        self.alpha_manifest()
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(metadata["tag"], "legion-v0.6.0-alpha.1-aaaaaaa")
+        self.assertTrue(metadata["prerelease"])
+        self.assertIn("0.6.0-alpha.1", metadata["title"])
+        for term in (
+            "alpha",
+            "/apc",
+            "/trace",
+            "/boot",
+            "freshness",
+            "OFF",
+            "nominal",
+            "pending",
+        ):
+            self.assertIn(term, metadata["notes"])
+
+    def test_alpha_retains_all_existing_software_release_safeguards(self):
+        for field in (
+            "source_tree_dirty",
+            "bulk_spi",
+            "private_telemetry",
+            "ble_dfu_validation",
+            "manual_recovery",
+            "update_validation",
+            "reg1_dcdc",
+            "control_commands",
+        ):
+            with self.subTest(field=field):
+                self.alpha_manifest()
+                self.manifest.pop(field)
+                self.write_manifest()
+                with self.assertRaises(ValueError):
+                    release.prepare_release(self.directory, self.commit)
+
+    def test_alpha_rejects_wrong_stage_old_base_or_misrepresented_apc_scope(self):
+        for field, value in (
+            ("release_stage", "experimental"),
+            ("commit", "04cb8885118b959a9f538cd5881bd7d595758911"),
+            ("commit", "e039e34"),
+            ("cc310_software_fallback", False),
+            ("backup_freshness_status", None),
+            ("apc_boot_mode", "on"),
+            ("apc_modes", ["off", "on"]),
+            ("apc_persistent_settings", True),
+            ("apc_adaptive_rf_power", True),
+            ("apc_hardware_tested", True),
+            ("hardware_tested", True),
+            ("energy_savings_measured", True),
+        ):
+            with self.subTest(field=field):
+                self.alpha_manifest()
+                self.manifest[field] = value
+                self.write_manifest()
+                with self.assertRaisesRegex(ValueError, "Alpha version|0.6.0 alpha"):
+                    release.prepare_release(self.directory, self.commit)
 
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()

@@ -12,6 +12,7 @@ struct meshtastic_NodeInfoLite {
     char short_name[5]{};
     bool has_hops_away = true, snrPresent = true, mqtt = false;
     uint8_t hops_away = 0;
+    uint8_t channel = 0;
     uint16_t slot = 1;
     float snr = 0;
 };
@@ -37,9 +38,9 @@ inline bool nodeInfoLiteHeardOnSlot(const meshtastic_NodeInfoLite *node, uint16_
 }
 struct Config {
     struct {
-        size_t ignore_incoming_count = 0;
-        uint32_t ignore_incoming[3]{};
-    } lora;
+        int role = meshtastic_Config_DeviceConfig_Role_CLIENT;
+    } device;
+    meshtastic_Config_LoRaConfig lora;
 };
 extern Config config;
 class NodeDB

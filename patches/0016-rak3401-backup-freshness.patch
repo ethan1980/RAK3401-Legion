@@ -1,0 +1,167 @@
+diff --git a/src/mesh/LegionRecovery.cpp b/src/mesh/LegionRecovery.cpp
+index c27c377..c542f96 100644
+--- a/src/mesh/LegionRecovery.cpp
++++ b/src/mesh/LegionRecovery.cpp
+@@ -111,6 +111,100 @@ bool snapshotValid(const RecoveryPage &page, meshtastic_BackupPreferences &backu
+            backup.config.position.fixed_position == static_cast<bool>(page.hasPosition);
+ }
+ 
++void captureOwner(meshtastic_User &saved)
++{
++    saved = meshtastic_User_init_zero;
++    std::memcpy(saved.long_name, owner.long_name, sizeof(owner.long_name));
++    std::memcpy(saved.short_name, owner.short_name, sizeof(owner.short_name));
++    saved.public_key = owner.public_key;
++}
++
++struct ProtoComparison {
++    const uint8_t *bytes;
++    size_t size;
++    size_t offset = 0;
++    bool matches = true;
++};
++
++bool compareProtoBytes(pb_ostream_t *stream, const pb_byte_t *bytes, size_t count)
++{
++    auto &comparison = *static_cast<ProtoComparison *>(stream->state);
++    const size_t offset = comparison.offset;
++    if (offset > comparison.size || count > comparison.size - offset ||
++        (count && std::memcmp(comparison.bytes + offset, bytes, count)))
++        comparison.matches = false;
++    comparison.offset += count;
++    // Finish encoding even after a difference, so malformed current data cannot look merely stale.
++    return true;
++}
++
++bool sameProto(const pb_msgdesc_t *fields, const void *saved, const void *current, uint8_t *scratch, size_t size, bool &same)
++{
++    pb_ostream_t encoded = pb_ostream_from_buffer(scratch, size);
++    if (!pb_encode(&encoded, fields, saved))
++        return false;
++    ProtoComparison comparison{scratch, encoded.bytes_written};
++    pb_ostream_t output = {compareProtoBytes, &comparison, size};
++    if (!pb_encode(&output, fields, current))
++        return false;
++    same = comparison.matches && output.bytes_written == comparison.size;
++    return true;
++}
++
++enum BackupChange : uint8_t {
++    OwnerChanged = 1,
++    ConfigChanged = 2,
++    ModulesChanged = 4,
++    ChannelsChanged = 8,
++    PositionChanged = 16
++};
++
++bool backupChanges(RecoveryPage &page, meshtastic_BackupPreferences &backup, uint8_t &changes)
++{
++    changes = 0;
++    if (config.version < DEVICESTATE_MIN_VER || config.version > DEVICESTATE_CUR_VER ||
++        moduleConfig.version < DEVICESTATE_MIN_VER || moduleConfig.version > POSITION_TELEMETRY_OPTIN_VER ||
++        backup.module_config.version > POSITION_TELEMETRY_OPTIN_VER || backup.channels.version > POSITION_TELEMETRY_OPTIN_VER ||
++        channelFile.version < DEVICESTATE_MIN_VER || channelFile.version > POSITION_TELEMETRY_OPTIN_VER || !config.has_lora ||
++        !channelFile.channels_count || owner.is_licensed || !identityValid(config, nodeDB->getNodeNum()))
++        return false;
++
++    meshtastic_User currentOwner;
++    captureOwner(currentOwner);
++    // Version markers are bookkeeping; fixed-position mode belongs to the position block.
++    backup.config.version = config.version;
++    backup.module_config.version = moduleConfig.version;
++    backup.channels.version = channelFile.version;
++    backup.config.position.fixed_position = config.position.fixed_position;
++    const struct {
++        const pb_msgdesc_t *fields;
++        const void *saved;
++        const void *current;
++        uint8_t change;
++    } blocks[] = {{&meshtastic_User_msg, &backup.owner, &currentOwner, OwnerChanged},
++                  {&meshtastic_LocalConfig_msg, &backup.config, &config, ConfigChanged},
++                  {&meshtastic_LocalModuleConfig_msg, &backup.module_config, &moduleConfig, ModulesChanged},
++                  {&meshtastic_ChannelFile_msg, &backup.channels, &channelFile, ChannelsChanged}};
++    for (const auto &block : blocks) {
++        bool same;
++        // The snapshot is already decoded; reuse only its RAM payload, never the flash record.
++        if (!sameProto(block.fields, block.saved, block.current, page.payload, sizeof(page.payload), same))
++            return false;
++        if (!same)
++            changes |= block.change;
++    }
++    if (static_cast<bool>(page.hasPosition) != config.position.fixed_position)
++        changes |= PositionChanged;
++    if (config.position.fixed_position) {
++        meshtastic_PositionLite position;
++        if (!nodeDB->copyNodePosition(nodeDB->getNodeNum(), position))
++            return false;
++        if (page.latitude != position.latitude_i || page.longitude != position.longitude_i || page.altitude != position.altitude)
++            changes |= PositionChanged;
++    }
++    return true;
++}
++
+ using legion::PreferenceRead;
+ 
+ PreferenceRead probe(const char *name, size_t maximum, const pb_msgdesc_t *fields, void *object)
+@@ -137,7 +231,7 @@ PreferenceRead probe(const char *name, size_t maximum, const pb_msgdesc_t *field
+         return PreferenceRead::Temporary;
+     pb_istream_t stream = pb_istream_from_buffer(bytes.get(), size);
+     const bool decoded = pb_decode(&stream, fields, object);
+-    // Config buffers include private keys; clear temporary encoded bytes before
++    // ConfigChanged buffers include private keys; clear temporary encoded bytes before
+     // releasing them.
+     volatile uint8_t *wipe = bytes.get();
+     for (size_t i = 0; i < size; ++i)
+@@ -293,11 +387,38 @@ void legionRecoveryCommand(LegionBackupCommand command, char *reply, size_t size
+     const bool exists = state == RecoveryRead::Valid && page->phase != RecoveryPhase::Deleted;
+     if (command == LegionBackupCommand::Status) {
+         auto backup = allocate<meshtastic_BackupPreferences>();
+-        if (exists && backup && snapshotValid(*page, *backup)) {
++        if (exists && !backup)
++            respond("not enough memory");
++        else if (exists && compatibleStorage() && snapshotValid(*page, *backup)) {
+             if (page->phase == RecoveryPhase::Restoring)
+                 respond("recovery incomplete; inspect logs before retrying");
+-            else
+-                respond("valid rescue point; recovery armed");
++            else if ((adminModule && adminModule->isEditingSettings()) || rebootAtMsec || persistenceBlocked)
++                respond("valid rescue point; freshness unavailable (configuration busy)");
++            else {
++                uint8_t changes;
++                if (!backupChanges(*page, *backup, changes))
++                    respond("valid rescue point; freshness unavailable; recovery armed");
++                else if (!changes)
++                    respond("valid rescue point; up to date; recovery armed");
++                else {
++                    char changed[sizeof("owner,config,modules,channels,position")]{};
++                    size_t used = 0;
++                    const struct {
++                        uint8_t change;
++                        const char *name;
++                    } names[] = {{OwnerChanged, "owner"},
++                                 {ConfigChanged, "config"},
++                                 {ModulesChanged, "modules"},
++                                 {ChannelsChanged, "channels"},
++                                 {PositionChanged, "position"}};
++                    for (const auto &entry : names)
++                        if (changes & entry.change)
++                            used += std::snprintf(changed + used, sizeof(changed) - used, "%s%s", used ? "," : "", entry.name);
++                    std::snprintf(reply, size,
++                                  "Backup !%08lx: valid rescue point; OUTDATED: %s; recovery armed; /backup replace !%08lx",
++                                  (unsigned long)node, changed, (unsigned long)node);
++                }
++            }
+         } else
+             respond(state == RecoveryRead::Empty || (state == RecoveryRead::Valid && !exists)
+                         ? "no rescue point; recovery disabled"
+@@ -338,9 +459,7 @@ void legionRecoveryCommand(LegionBackupCommand command, char *reply, size_t size
+     backup->config = config;
+     backup->module_config = moduleConfig;
+     backup->channels = channelFile;
+-    std::memcpy(backup->owner.long_name, owner.long_name, sizeof(owner.long_name));
+-    std::memcpy(backup->owner.short_name, owner.short_name, sizeof(owner.short_name));
+-    backup->owner.public_key = owner.public_key;
++    captureOwner(backup->owner);
+     const uint32_t generation = page->generation;
+     auto next = allocate<RecoveryPage>();
+     if (!next) {

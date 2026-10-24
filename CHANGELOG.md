@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.6.0-alpha.1 - 2026-10-24
+
+- APC S1 alpha: targeted OBSERVE/SHADOW/ON/OFF/status commands,
+  provisional filtered-voltage conservation states, optional decoded
+  position/telemetry relay budgets and frozen diagnostics. Preserve protected
+  traffic, nominal RF output, continuous reception and existing power safety.
+  Boot OFF; RAM-only state. RF-power adaptation and physical validation
+  remain pending.
+- Retire expired command/traceroute cooldowns and APC captures in the normal
+  loop, keeping control available after weeks without requests. Latch completed
+  APC warmup across long uptime and clock rollover.
+- Extend `/backup status !legionid` with read-only freshness checks and changed
+  block names. Preserve recovery from valid outdated snapshots and require an
+  explicit `/backup replace` to refresh them. Report unavailable comparisons
+  without guessing or exposing settings/keys; retain the existing flash format.
+- Accelerate packet SHA-256 and ACK-proof HMAC-SHA256 with the nRF52840 CC310,
+  with SDK-error fallback, aligned RAM staging and serialized accelerator users.
+- Add `/boot !legionid` for cached reset/shutdown evidence, first boot voltage
+  samples and CC310 success/fallback counters, without flash writes.
+- Add SDK-boundary vector, failure and concurrency tests plus boot-record and
+  command-authorization tests; physical execution/energy/reset tests are pending.
+- Add `/trace !legionid !targetid` using standard Meshtastic traceroute packets.
+- Wait asynchronously for up to 90 seconds; correlate exact replies and return
+  both paths on LegionRF with paced, bounded text messages.
+- Distinguish `NO_ROUTE`, no response and local queue errors; retain other
+  commands while waiting and cancel stale results after configuration changes.
+- Migrate the pinned Meshtastic 2.8.2 base from `04cb888` to `e039e34`,
+  including the upstream BLE OTA reset fix. Refresh radio/DFU patch context.
+- Publish as a prerelease with full version `0.6.0-alpha.1` and compact
+  firmware identity `2.8.2.LGN0.6.0a1`. Retain compiled DFU/DC-DC and rescue
+  reserve checks; require explicit alpha scope and pending-hardware metadata.
+- Both-profile builds, source regression and package checks precede publication;
+  combined hardware/RF validation follows on an accessible node.
+
 ## 0.5.1 - 2026-10-19
 
 - Confirm low battery with eight checks every 20 seconds, keeping 3.50 V.

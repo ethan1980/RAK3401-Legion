@@ -182,6 +182,29 @@ class FirmwareIdentificationTests(unittest.TestCase):
                         {"meshtastic_version": upstream, "legion_version": legion}
                     )
 
+    def test_alpha_identification_preserves_version_and_iteration_within_field(self):
+        for iteration in (1, 10):
+            config = {
+                "meshtastic_version": "2.8.2",
+                "legion_version": f"0.6.0-alpha.{iteration}",
+            }
+            version = prepare.firmware_version(config)
+            self.assertEqual(version, f"2.8.2.LGN0.6.0a{iteration}")
+            self.assertLessEqual(len(version), 17)
+            profile = prepare.render_profile(config).decode()
+            self.assertIn(f"-DRAK3401_LEGION_FIRMWARE_VERSION={version}", profile)
+            self.assertIn(f"RAK3401 Legion 0.6.0-alpha.{iteration}", profile)
+        for legion in (
+            "0.6.0-alpha.0",
+            "0.6.0-alpha.01",
+            "0.6.0-alpha.100",
+            "0.6.0-beta.1",
+        ):
+            with self.subTest(legion=legion), self.assertRaises(ValueError):
+                prepare.firmware_version(
+                    {"meshtastic_version": "2.8.2", "legion_version": legion}
+                )
+
     def test_base_version_must_match_the_source(self):
         with tempfile.TemporaryDirectory() as folder:
             dest = Path(folder)

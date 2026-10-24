@@ -14,6 +14,10 @@ def run_control_tests(firmware, compiler, *, leak_check=True):
     sources = (
         "modules/LegionControlModule.cpp",
         "modules/LegionControlModule.h",
+        "modules/LegionApc.cpp",
+        "modules/LegionApc.h",
+        "modules/LegionApcPolicy.h",
+        "modules/LegionApcController.h",
         "modules/LegionControlPolicy.h",
         "modules/LegionTelemetryPolicy.h",
         "mesh/LegionIgnore.cpp",

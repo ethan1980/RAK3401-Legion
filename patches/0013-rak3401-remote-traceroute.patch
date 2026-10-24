@@ -1,0 +1,440 @@
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index 2143ad2..cb39cca 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -8,6 +8,7 @@
+ #include "concurrency/LockGuard.h"
+ #include "main.h"
+ #include "mesh/LegionRecovery.h"
++#include "mesh/Router.h"
+ #include "power/RAK3401LegionPower.h"
+ #include "xmodem.h"
+ #if !MESHTASTIC_EXCLUDE_ADMIN
+@@ -97,6 +98,12 @@ uint8_t LegionControlModule::findDestination(const char *name, Channel &result)
+     return count;
+ }
+ 
++bool LegionControlModule::findTraceDestination(uint32_t target, Channel &result) const
++{
++    const auto node = nodeDB->getMeshNode(target);
++    return readChannel(node ? node->channel : channels.getPrimaryIndex(), result);
++}
++
+ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &packet)
+ {
+     if (packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
+@@ -117,8 +124,12 @@ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &
+         pending.control = control;
+         pending.from = getFrom(&packet);
+         pending.acceptedAt = now;
++        pending.generation = radioGeneration;
+         if (request.valid && request.command == legion::ControlCommand::Message)
+             pending.destinationMatches = findDestination(request.channel, pending.destination);
++        else if (request.valid && request.command == legion::ControlCommand::Trace)
++            pending.destinationMatches = findTraceDestination(request.target, pending.destination) &&
++                                         readChannel(channels.getPrimaryIndex(), pending.primary);
+     }
+     return ProcessMessage::CONTINUE;
+ }
+@@ -241,6 +252,9 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         case legion::ControlCommand::ZeroHop:
+             usage = "Usage: /zerohop !nodeid [positive page]";
+             break;
++        case legion::ControlCommand::Trace:
++            usage = "Usage: /trace !legionid !targetid (different, non-reserved full IDs)";
++            break;
+         case legion::ControlCommand::Ignore:
+             usage = "Usage: /ignore !peerid";
+             break;
+@@ -260,6 +274,10 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         report(command, now, request.command == legion::ControlCommand::ZeroHop);
+         return;
+     }
++    if (request.command == legion::ControlCommand::Trace) {
++        startTrace(command, now);
++        return;
++    }
+     if (legionRecoveryIsBlocked() || xModem.isBusy() || !legionBatterySafeForFlash()
+ #if !MESHTASTIC_EXCLUDE_ADMIN
+         || (adminModule && adminModule->isEditingSettings())
+@@ -322,9 +340,223 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+     }
+ }
+ 
++void LegionControlModule::startTrace(const Pending &command, uint32_t now)
++{
++    bool active;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        active = trace.id != 0;
++    }
++    if (active || (traceCooling && !Throttle::deadlinePassedAt(now, nextTraceAt))) {
++        reply(command.control.index, active ? "Trace busy; wait for the current result" : "Trace cooldown; retry in up to 60s");
++        return;
++    }
++    if (legionRecoveryIsBlocked() || xModem.isBusy()
++#if !MESHTASTIC_EXCLUDE_ADMIN
++        || (adminModule && adminModule->isEditingSettings())
++#endif
++    ) {
++        reply(command.control.index, "Busy; retry trace later");
++        return;
++    }
++    Channel destination, primary;
++    if (!command.destinationMatches || command.generation != radioGeneration ||
++        !findTraceDestination(command.request.target, destination) || !sameChannel(destination, command.destination) ||
++        !readChannel(channels.getPrimaryIndex(), primary) || !sameChannel(primary, command.primary)) {
++        reply(command.control.index, "Trace channel unavailable or changed; request cancelled");
++        return;
++    }
++    auto packet = router->allocForSending();
++    if (!packet) {
++        reply(command.control.index, "Trace allocation failed; request not queued");
++        return;
++    }
++    packet->to = command.request.target;
++    packet->channel = destination.index;
++    packet->decoded.portnum = meshtastic_PortNum_TRACEROUTE_APP;
++    packet->decoded.want_response = true;
++    packet->want_ack = true;
++    // An empty standard RouteDiscovery encodes to zero bytes.
++    packet->decoded.payload.size = 0;
++    const auto id = packet->id;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        trace = {};
++        trace.id = id;
++        trace.target = command.request.target;
++        trace.control = command.control;
++        trace.destination = destination;
++        trace.primary = primary;
++        trace.startedAt = trace.lastReplyAt = now;
++        trace.generation = radioGeneration;
++    }
++    // Arm before dispatch: a local routing error can arrive synchronously.
++    if (service->sendToMesh(packet, RX_SRC_USER, true) != 0) {
++        {
++            concurrency::LockGuard guard(&stateLock);
++            trace = {};
++        }
++        reply(command.control.index, "Trace queue rejected; no reachability result");
++        return;
++    }
++    traceCooling = true;
++    nextTraceAt = now + legion::TRACE_COOLDOWN_MS;
++    char status[100];
++    std::snprintf(status, sizeof(status), "Trace !%08lx queued; waiting up to 90s", (unsigned long)command.request.target);
++    reply(command.control.index, status);
++}
++
++bool LegionControlModule::matchesTrace(const meshtastic_MeshPacket &packet) const
++{
++    return trace.id && packet.which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
++           packet.decoded.request_id == trace.id && packet.to == nodeDB->getNodeNum() &&
++           packet.channel == trace.destination.index && trace.phase == TracePhase::Waiting &&
++           !Throttle::deadlinePassedAt(Time::getMillis(), trace.startedAt + legion::TRACE_WAIT_MS);
++}
++
++void LegionControlModule::observeTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route)
++{
++    if (route.route_count > sizeof(route.route) / sizeof(route.route[0]) ||
++        route.route_back_count > sizeof(route.route_back) / sizeof(route.route_back[0]) ||
++        route.snr_towards_count > sizeof(route.snr_towards) / sizeof(route.snr_towards[0]) ||
++        route.snr_back_count > sizeof(route.snr_back) / sizeof(route.snr_back[0]))
++        return;
++    concurrency::LockGuard guard(&stateLock);
++    if (matchesTrace(packet) && packet.decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP && packet.from == trace.target) {
++        trace.route = route;
++        trace.phase = TracePhase::Routes;
++    }
++}
++
++void LegionControlModule::observeTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error)
++{
++    concurrency::LockGuard guard(&stateLock);
++    if (matchesTrace(packet) && packet.decoded.portnum == meshtastic_PortNum_ROUTING_APP &&
++        error != meshtastic_Routing_Error_NONE) {
++        trace.error = error;
++        trace.phase = TracePhase::Error;
++    }
++}
++
++void legionControlObserveTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route)
++{
++    if (legionControlModule)
++        legionControlModule->observeTraceRoute(packet, route);
++}
++
++void legionControlObserveTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error)
++{
++    if (legionControlModule)
++        legionControlModule->observeTraceError(packet, error);
++}
++
++void LegionControlModule::formatTrace(const Trace &result, bool back, char *output, size_t size) const
++{
++    const auto &route = result.route;
++    static_assert(sizeof(route.route) / sizeof(route.route[0]) <= 8 &&
++                      sizeof(route.route_back) / sizeof(route.route_back[0]) <= 8,
++                  "Revisit the 199-byte trace report limit if route capacity grows");
++    const auto count = back ? route.route_back_count : route.route_count;
++    const auto nodes = back ? route.route_back : route.route;
++    const auto snrs = back ? route.snr_back_count : route.snr_towards_count;
++    size_t used = std::snprintf(output, size, "!%08lx TR#%08lx %s: ", (unsigned long)nodeDB->getNodeNum(),
++                                (unsigned long)result.id, back ? "2/2 back" : "1/2 out");
++    if (!count && !snrs) {
++        std::snprintf(output + used, size - used, "!%08lx route not reported; reply received", (unsigned long)result.target);
++        return;
++    }
++    used += std::snprintf(output + used, size - used, "!%08lx", (unsigned long)(back ? result.target : nodeDB->getNodeNum()));
++    for (size_t i = 0; i < count; ++i) {
++        if (legion::validPeer(nodes[i]))
++            used += std::snprintf(output + used, size - used, " > !%08lx", (unsigned long)nodes[i]);
++        else
++            used += std::snprintf(output + used, size - used, " > ?");
++    }
++    std::snprintf(output + used, size - used, " > !%08lx%s", (unsigned long)(back ? nodeDB->getNodeNum() : result.target),
++                  count ? "" : " (0 reported relays)");
++}
++
++void LegionControlModule::pollTrace(uint32_t now)
++{
++    Trace result;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        result = trace;
++    }
++    if (!result.id)
++        return;
++    Channel control, destination, primary;
++    const bool canReply = findControlChannel(control) && sameChannel(control, result.control) && legionPowerTxReady();
++    const bool valid = canReply && readChannel(result.destination.index, destination) &&
++                       sameChannel(destination, result.destination) && readChannel(channels.getPrimaryIndex(), primary) &&
++                       sameChannel(primary, result.primary) && result.generation == radioGeneration;
++    if (!valid) {
++        {
++            concurrency::LockGuard guard(&stateLock);
++            trace = {};
++        }
++        router->cancelSending(nodeDB->getNodeNum(), result.id);
++        if (canReply)
++            reply(control.index, "Trace cancelled; radio or channel settings changed");
++        return;
++    }
++    bool timedOut;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        // Re-read after validation so a response racing the timeout wins.
++        result = trace;
++        timedOut =
++            result.phase == TracePhase::Waiting && Throttle::deadlinePassedAt(now, result.startedAt + legion::TRACE_WAIT_MS);
++        if ((!timedOut && result.phase == TracePhase::Waiting) ||
++            !Throttle::deadlinePassedAt(now, result.lastReplyAt + legion::TRACE_REPLY_GAP_MS))
++            return;
++        if (!timedOut && result.phase == TracePhase::Routes && !result.part) {
++            trace.part = 1;
++            trace.lastReplyAt = now;
++        } else
++            trace = {};
++    }
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    if (!timedOut && result.phase == TracePhase::Routes) {
++        formatTrace(result, result.part != 0, output, sizeof(output));
++    } else {
++        const char *status = "No traceroute response within 90s; reachability unknown";
++        if (!timedOut) {
++            switch (result.error) {
++            case meshtastic_Routing_Error_NO_ROUTE:
++                status = "Unreachable: routing reported NO_ROUTE";
++                break;
++            case meshtastic_Routing_Error_MAX_RETRANSMIT:
++                status = "No acknowledgement: MAX_RETRANSMIT; reachability unknown";
++                break;
++            case meshtastic_Routing_Error_TIMEOUT:
++            case meshtastic_Routing_Error_NO_RESPONSE:
++                status = "No response: routing timeout; reachability unknown";
++                break;
++            default:
++                status = "Routing failed; no reachability result";
++                break;
++            }
++        }
++        const auto length =
++            std::snprintf(output, sizeof(output), "!%08lx TR#%08lx !%08lx: %s", (unsigned long)nodeDB->getNodeNum(),
++                          (unsigned long)result.id, (unsigned long)result.target, status);
++        if (!timedOut && length > 0 && static_cast<size_t>(length) < sizeof(output))
++            std::snprintf(output + length, sizeof(output) - length, " (error:%u)", (unsigned)result.error);
++    }
++    const bool queued = sendText(control.index, output);
++    if (!queued && result.phase == TracePhase::Routes && !result.part) {
++        concurrency::LockGuard guard(&stateLock);
++        trace = {};
++    }
++    if (timedOut)
++        router->cancelSending(nodeDB->getNodeNum(), result.id);
++}
++
+ int32_t LegionControlModule::runOnce()
+ {
+     const uint32_t now = Time::getMillis();
++    pollTrace(now);
+     Pending command;
+     bool executeCommand = false;
+     {
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 90bdba4..203051e 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -16,6 +16,8 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+   public:
+     LegionControlModule();
+     void observeLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
++    void observeTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
++    void observeTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
+ 
+   protected:
+     ProcessMessage handleReceived(const meshtastic_MeshPacket &packet) override;
+@@ -30,8 +32,8 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     };
+     struct Pending {
+         legion::ControlRequest request;
+-        Channel control, destination;
+-        uint32_t from = 0, acceptedAt = 0;
++        Channel control, destination, primary;
++        uint32_t from = 0, acceptedAt = 0, generation = 0;
+         uint8_t destinationMatches = 0;
+     };
+     struct Report {
+@@ -40,14 +42,28 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+         uint32_t from = 0, createdAt = 0, generation = 0;
+         bool valid = false;
+     };
++    enum class TracePhase : uint8_t { Waiting, Routes, Error };
++    struct Trace {
++        Channel control, destination, primary;
++        uint32_t id = 0, target = 0, startedAt = 0, lastReplyAt = 0, generation = 0;
++        meshtastic_RouteDiscovery route{};
++        meshtastic_Routing_Error error = meshtastic_Routing_Error_NONE;
++        TracePhase phase = TracePhase::Waiting;
++        uint8_t part = 0;
++    };
+     bool readChannel(uint8_t index, Channel &result) const;
+     bool findControlChannel(Channel &result) const;
+     uint8_t findDestination(const char *name, Channel &result) const;
++    bool findTraceDestination(uint32_t target, Channel &result) const;
+     static bool sameChannel(const Channel &a, const Channel &b);
+     bool sendText(uint8_t channel, const char *text, bool message = false);
+     void reply(uint8_t channel, const char *text);
+     void execute(const Pending &command, uint32_t now);
+     void report(const Pending &command, uint32_t now, bool zeroHop);
++    void startTrace(const Pending &command, uint32_t now);
++    void pollTrace(uint32_t now);
++    bool matchesTrace(const meshtastic_MeshPacket &packet) const;
++    void formatTrace(const Trace &result, bool back, char *output, size_t size) const;
+ 
+     concurrency::Lock stateLock;
+     legion::ControlGate requests;
+@@ -55,8 +71,13 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     Pending pending;
+     Report zeroHopReport, ignoreReport;
+     uint16_t nextReport = 0;
++    Trace trace;
++    uint32_t nextTraceAt = 0;
++    bool traceCooling = false;
+ };
+ 
+ extern LegionControlModule *legionControlModule;
+ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
++void legionControlObserveTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
++void legionControlObserveTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
+ #endif
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index d3aa404..3a9c2ba 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -11,11 +11,15 @@ constexpr size_t CONTROL_TEXT_MAX = 199;
+ constexpr uint32_t CONTROL_COOLDOWN_MS = 5000;
+ constexpr uint32_t CONTROL_SNAPSHOT_MS = 15 * 60 * 1000;
+ constexpr size_t CONTROL_DIRECTORY_MAX = 128;
++constexpr uint32_t TRACE_WAIT_MS = 90000;
++constexpr uint32_t TRACE_COOLDOWN_MS = 60000;
++constexpr uint32_t TRACE_REPLY_GAP_MS = 6000;
+ 
+-enum class ControlCommand : uint8_t { None, Message, Reboot, ZeroHop, Ignore, Unignore, IgnoreList };
++enum class ControlCommand : uint8_t { None, Message, Reboot, ZeroHop, Ignore, Unignore, IgnoreList, Trace };
+ struct ControlRequest {
+     ControlCommand command = ControlCommand::None;
+     uint32_t node = 0;
++    uint32_t target = 0;
+     uint16_t page = 1;
+     char channel[12]{};
+     char text[CONTROL_TEXT_MAX + 1]{};
+@@ -180,6 +184,8 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+         result.command = ControlCommand::Reboot;
+     else if (parser.token("/zerohop"))
+         result.command = ControlCommand::ZeroHop;
++    else if (parser.token("/trace"))
++        result.command = ControlCommand::Trace;
+     else if (parser.token("/ignore")) {
+         result.command = ControlCommand::Ignore;
+         result.group = true;
+@@ -204,6 +210,8 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+         result.valid = parser.message(result);
+     else if (result.command == ControlCommand::ZeroHop)
+         result.valid = parser.page(result.page);
++    else if (result.command == ControlCommand::Trace)
++        result.valid = parser.node(result.target) && validPeer(result.target) && result.target != ownNode && parser.end();
+     else
+         result.valid = parser.end();
+     return result;
+diff --git a/src/modules/RoutingModule.cpp b/src/modules/RoutingModule.cpp
+index 1ed9b0f..6a87431 100644
+--- a/src/modules/RoutingModule.cpp
++++ b/src/modules/RoutingModule.cpp
+@@ -5,6 +5,9 @@
+ #include "Router.h"
+ #include "configuration.h"
+ #include "main.h"
++#if RAK3401_LEGION_CONTROL
++#include "LegionControlModule.h"
++#endif
+ 
+ RoutingModule *routingModule;
+ 
+@@ -29,6 +32,11 @@ bool RoutingModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, mesh
+ 
+     printPacket("Routing sniffing", &mp);
+     router->sniffReceived(&mp, r);
++#if RAK3401_LEGION_CONTROL
++    if (r && mp.which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
++        mp.decoded.portnum == meshtastic_PortNum_ROUTING_APP && r->which_variant == meshtastic_Routing_error_reason_tag)
++        legionControlObserveTraceError(mp, r->error_reason);
++#endif
+ 
+     // FIXME - move this to a non promsicious PhoneAPI module?
+     // Note: we are careful not to send back packets that started with the phone back to the phone
+diff --git a/src/modules/TraceRouteModule.cpp b/src/modules/TraceRouteModule.cpp
+index 4549f19..74925a3 100644
+--- a/src/modules/TraceRouteModule.cpp
++++ b/src/modules/TraceRouteModule.cpp
+@@ -7,6 +7,9 @@
+ #include "graphics/SharedUIDisplay.h"
+ #include "mesh/Router.h"
+ #include "meshUtils.h"
++#if RAK3401_LEGION_CONTROL
++#include "LegionControlModule.h"
++#endif
+ #include <vector>
+ 
+ #if HAS_TRAFFIC_MANAGEMENT
+@@ -153,6 +156,10 @@ void TraceRouteModule::alterReceivedProtobuf(meshtastic_MeshPacket &p, meshtasti
+     p.decoded.payload.size =
+         pb_encode_to_bytes(p.decoded.payload.bytes, sizeof(p.decoded.payload.bytes), &meshtastic_RouteDiscovery_msg, r);
+ 
++#if RAK3401_LEGION_CONTROL
++    legionControlObserveTraceRoute(p, *r);
++#endif
++
+     if (tracingNode != 0) {
+         // check isResponseFromTarget
+         bool isResponseFromTarget = (incoming.request_id != 0 && p.from == tracingNode);

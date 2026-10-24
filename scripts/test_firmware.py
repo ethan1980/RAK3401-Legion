@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from test_control import run_control_tests, run_dcdc_tests
+from test_hardware import run_hardware_tests
+from test_apc import run_apc_tests
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = (
@@ -69,6 +71,8 @@ def run_tests(firmware, *, leak_check=True):
     run_dfu_tests(firmware, compiler, leak_check=leak_check)
     run_control_tests(firmware, compiler, leak_check=leak_check)
     run_dcdc_tests(firmware, compiler, leak_check=leak_check)
+    run_hardware_tests(firmware, compiler, leak_check=leak_check)
+    run_apc_tests(firmware, compiler, leak_check=leak_check)
 
 
 def run_dfu_tests(firmware, compiler, *, leak_check=True):

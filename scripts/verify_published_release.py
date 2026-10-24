@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify GitHub's uploaded asset digests before withdrawing older releases."""
+"""Verify the published prerelease, source commit and uploaded asset digests."""
 
 import argparse
 import hashlib
@@ -15,10 +15,11 @@ def verify_published_release(directory, commit, published):
     expected = prepare_release(directory, commit)
     if (
         published.get("draft") is not False
+        or published.get("prerelease") is not True
         or published.get("tag_name") != expected["tag"]
         or published.get("target_commitish") != commit
     ):
-        raise ValueError("Published release must match the build commit and tag")
+        raise ValueError("Published prerelease must match the build commit and tag")
     files = {path.name: path for path in directory.iterdir() if path.is_file()}
     assets = published.get("assets", [])
     by_name = {asset["name"]: asset for asset in assets}

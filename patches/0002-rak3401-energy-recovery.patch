@@ -1,5 +1,5 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index 0d0a037bd7774e1f0d091b3634a0bce0793f8817..bcf3d076f18f080af66c9eea3844b666f16c021c 100644
+index ee1152e..657f507 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -367,12 +367,19 @@ void printInfo()
@@ -23,7 +23,7 @@ index 0d0a037bd7774e1f0d091b3634a0bce0793f8817..bcf3d076f18f080af66c9eea3844b666
      pinMode(LED_POWER, OUTPUT);
      digitalWrite(LED_POWER, LED_STATE_ON);
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index 55f0d7b82ea32d34210375f30b47b30ae1e214d3..f890fcda9c183088a50bc3028d82738cd711c4fe 100644
+index 19c2cae..4c3614a 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
 @@ -13,6 +13,10 @@
@@ -48,8 +48,8 @@ index 55f0d7b82ea32d34210375f30b47b30ae1e214d3..f890fcda9c183088a50bc3028d82738c
 +#endif
  }
  
- bool RadioLibInterface::preambleHoldActive()
-@@ -1383,7 +1391,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+ uint32_t RadioLibInterface::maxRxFrameMsec()
+@@ -1469,7 +1477,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
  
      /* NOTE: Minimize the actions before startTransmit() to keep the time between
               channel scan and actual transmit as low as possible to avoid collisions. */
@@ -65,7 +65,7 @@ index 55f0d7b82ea32d34210375f30b47b30ae1e214d3..f890fcda9c183088a50bc3028d82738c
          // Never reaches completeSending(), so any per-packet radio state has to be released here.
          RadioTxHooks::packetReleased(this, txp);
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index 3d2ccab267bf297d1eebdc22dfccac3a63445ac5..cb6a513f8f07d5934f8f419abdd1e3376c02733a 100644
+index 3d2ccab..cb6a513 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
 @@ -34,6 +34,10 @@
@@ -111,7 +111,7 @@ index 3d2ccab267bf297d1eebdc22dfccac3a63445ac5..cb6a513f8f07d5934f8f419abdd1e337
          auto ok = sd_power_system_off();
 diff --git a/src/power/LegionPowerPolicy.h b/src/power/LegionPowerPolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee0b19f2b54a3fd8edc62444f4568a98ad964395
+index 0000000..ee0b19f
 --- /dev/null
 +++ b/src/power/LegionPowerPolicy.h
 @@ -0,0 +1,81 @@
@@ -198,7 +198,7 @@ index 0000000000000000000000000000000000000000..ee0b19f2b54a3fd8edc62444f4568a98
 +} // namespace legion
 diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef0bde4b1ade77770fce4ee5fecc773dca25cb2e
+index 0000000..ef0bde4
 --- /dev/null
 +++ b/src/power/RAK3401LegionPower.cpp
 @@ -0,0 +1,226 @@
@@ -430,7 +430,7 @@ index 0000000000000000000000000000000000000000..ef0bde4b1ade77770fce4ee5fecc773d
 +#endif
 diff --git a/src/power/RAK3401LegionPower.h b/src/power/RAK3401LegionPower.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..14dc3f16c41ef229530fcce1e5428d1c92232c91
+index 0000000..14dc3f1
 --- /dev/null
 +++ b/src/power/RAK3401LegionPower.h
 @@ -0,0 +1,17 @@
@@ -452,7 +452,7 @@ index 0000000000000000000000000000000000000000..14dc3f16c41ef229530fcce1e5428d1c
 +void legionPrepareSystemOff(bool enableBatteryWake);
 +#endif
 diff --git a/variants/nrf52840/rak3401_1watt/variant.cpp b/variants/nrf52840/rak3401_1watt/variant.cpp
-index 188b747e899fe9d74dfd7a2add9d8603c4f7e355..13b0ec5821cd6852b85b81f4cee147bcff4b6e96 100644
+index 188b747..13b0ec5 100644
 --- a/variants/nrf52840/rak3401_1watt/variant.cpp
 +++ b/variants/nrf52840/rak3401_1watt/variant.cpp
 @@ -23,6 +23,10 @@
@@ -499,7 +499,7 @@ index 188b747e899fe9d74dfd7a2add9d8603c4f7e355..13b0ec5821cd6852b85b81f4cee147bc
  #endif
 +#endif
 diff --git a/variants/nrf52840/rak3401_1watt/variant.h b/variants/nrf52840/rak3401_1watt/variant.h
-index 329ec21e4d3ad85b0d1fb0006bf862dc55988ad9..c5af463927b22987c110a3758ba501b006a1e62a 100644
+index 329ec21..c5af463 100644
 --- a/variants/nrf52840/rak3401_1watt/variant.h
 +++ b/variants/nrf52840/rak3401_1watt/variant.h
 @@ -210,12 +210,16 @@ static const uint8_t SCK = PIN_SPI_SCK;

@@ -1,4 +1,4 @@
-# Manual rescue backup - Legion 0.5.1
+# Manual rescue backup - Legion 0.6.0 alpha
 
 Legion can save one rescue point on the configured node and restore it if a
 later boot confirms missing or corrupt essential preferences. **Nothing is
@@ -31,14 +31,14 @@ icon or radio ACK alone does not confirm a backup. Plain `/backup` never silentl
 overwrites an existing rescue point. After changes, use `replace` explicitly.
 An unchanged replacement avoids another flash write.
 
-The 0.6.0 development firmware extends `status` with **up to date** or
+The 0.6.0 alpha extends `status` with **up to date** or
 **OUTDATED**, followed only by changed block names: `owner`, `config`, `modules`,
 `channels` and `position`. A valid but outdated rescue point remains armed;
 `status` neither replaces it nor writes flash. Use `replace` explicitly after
 reviewing the changes. Busy configuration, missing fixed-position data or
 invalid/unencodable current settings return **freshness unavailable** instead
 of guessing. Existing absent, invalid and incomplete-recovery states remain
-distinct. See [COMMANDS.md](COMMANDS.md#backup-freshness-060-development) for examples.
+distinct. See [COMMANDS.md](COMMANDS.md#backup-freshness-060-alpha) for examples.
 
 Backup commands and telemetry share one pending request, a 60-second cooldown
 and the existing duplicate-request cache. Wait at least a minute between commands.

@@ -38,9 +38,9 @@ inline bool nodeInfoLiteHeardOnSlot(const meshtastic_NodeInfoLite *node, uint16_
 }
 struct Config {
     struct {
-        size_t ignore_incoming_count = 0;
-        uint32_t ignore_incoming[3]{};
-    } lora;
+        int role = meshtastic_Config_DeviceConfig_Role_CLIENT;
+    } device;
+    meshtastic_Config_LoRaConfig lora;
 };
 extern Config config;
 class NodeDB

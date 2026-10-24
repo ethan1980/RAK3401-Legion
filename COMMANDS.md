@@ -1,10 +1,16 @@
 # Legion commands
 
-The current release is **Legion 0.5.1**. Remote messaging, reboot, zero-hop reports
+The current prerelease is **Legion 0.6.0-alpha.1**. Hardware/RF validation of
+this combined alpha remains pending. Remote messaging, reboot, zero-hop reports
 and ignored-node management require 0.5.0 on the executing RAK3401. Telemetry
 requires 0.3.0 or later; manual rescue backup requires 0.4.0 or later.
 The phone app and the requesting/receiving node can use standard Meshtastic.
 Commands are ordinary text messages; no app plugin or remote-admin key is needed.
+
+APC S1 is included in this experimental alpha. The commands
+`/apc observe|shadow|on|off|status !legionid` and optional status pages 2-6 are
+documented in [APC.md](APC.md). Modes are RAM-only and boot OFF. S1 conserves
+eligible position/telemetry relays; adaptive RF output is not enabled.
 
 ## Required private channel
 
@@ -63,7 +69,7 @@ possible. No fallback channel is used. The destination identity and encryption
 settings are rechecked before dispatch. Firmware-generated local messages do
 not re-enter Legion's command handlers on the transmitting node.
 
-## /trace - remote traceroute (0.6.0 development)
+## /trace - remote traceroute (0.6.0 alpha)
 
 ~~~text
 /trace !abcdef01 !12345678
@@ -73,7 +79,7 @@ The first ID selects the Legion that originates the traceroute. The second is
 the destination, which can run ordinary compatible Meshtastic firmware. Both
 full IDs are required; reserved IDs, the executing node itself and extra fields
 are rejected. Send this command as a broadcast in the private **LegionRF**
-conversation. It is not available in the published 0.5.1 firmware.
+conversation. It requires the 0.6.0 alpha on the executor.
 
 The Legion uses the target's recorded channel, or its primary channel for an
 unknown target. The target must share that channel's encryption and radio
@@ -118,7 +124,7 @@ command retries or settings writes are added. Standard routing retries and
 airtime limits still apply. Reply queue acceptance is not proof that the
 requester received it. RF validation of this feature is pending.
 
-## /boot - boot and accelerator diagnostics (0.6.0 development)
+## /boot - boot and accelerator diagnostics (0.6.0 alpha)
 
 ~~~text
 /boot !abcdef01
@@ -168,7 +174,7 @@ AES key sizes and channel encryption choices retain their normal behavior.
 No reset history is written to flash. A complete power loss can erase the
 retained shutdown marker. The report and counters do not by themselves measure
 energy savings or certify the physical reset/accelerator path; those hardware
-tests remain pending. This command is not in the published 0.5.1 firmware.
+tests remain pending for this alpha.
 
 ## /reboot - scheduled normal restart
 
@@ -305,7 +311,7 @@ app, so the RAK does not need another node to echo its own report.
 Example report; values are illustrative:
 
 ~~~text
-Legion0.5.1 !abcdef01 up:194400s
+2.8.2.LGN0.6.0a1 !abcdef01 up:194400s
 CPU:29.25 / max 34.50C BAT:82% 4.01 / min 3.96V
 N:-116 peak:-88dBm n:600
 RX:450 BAD:7 TX:32 REL:24 DROP:2
@@ -352,9 +358,9 @@ reset: an armed rescue point is restored; delete it first to deliberately remain
 The successful-recovery notice is separate from routine telemetry and is emitted
 only after a completed recovery.
 
-### Backup freshness (0.6.0 development)
+### Backup freshness (0.6.0 alpha)
 
-In the 0.6.0 development firmware, `/backup status !abcdef01` also compares a
+In the 0.6.0 alpha, `/backup status !abcdef01` also compares a
 valid rescue point with the current settings it captures:
 
 | Status text | Meaning |
@@ -376,8 +382,8 @@ can make freshness unavailable. Incomplete recovery keeps its existing warning.
 Status is read-only and never refreshes or disables a valid rescue point.
 Review the changed settings, then use `/backup replace !abcdef01` explicitly to
 update it. The existing 60-second telemetry/backup cooldown still applies.
-These freshness replies are not part of the released 0.5.1 firmware and still
-require RF validation on hardware.
+These freshness replies require the alpha on the executor and still need
+RF validation on hardware.
 
 ## Telemetry/backup sampling and response limits
 

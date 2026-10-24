@@ -1,4 +1,4 @@
-"""Keep withdrawal gated on an intact, published replacement release."""
+"""Require an intact experimental prerelease with exact source provenance."""
 
 import copy
 import hashlib
@@ -43,6 +43,7 @@ class PublishedReleaseTests(unittest.TestCase):
         )
         self.published = {
             "draft": False,
+            "prerelease": True,
             "tag_name": "legion-v0.1.0-aaaaaaa",
             "target_commitish": self.commit,
             "assets": [
@@ -65,6 +66,8 @@ class PublishedReleaseTests(unittest.TestCase):
     def test_draft_wrong_tag_or_wrong_commit_cannot_authorize_withdrawal(self):
         for field, value in (
             ("draft", True),
+            ("prerelease", False),
+            ("prerelease", None),
             ("tag_name", "legion-v0.4.2-elsewhere"),
             ("target_commitish", "c" * 40),
         ):

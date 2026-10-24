@@ -9,6 +9,7 @@
 #define RAK3401_LEGION_TELEMETRY 1
 #define RAK3401_LEGION_CONTROL 1
 #define RAK3401_LEGION_BOOT 1
+#define RAK3401_LEGION_APC 1
 #define MESHTASTIC_EXCLUDE_ADMIN 0
 #define RAK3401_LEGION_POWER 1
 #define RAK3401_LEGION_RECOVERY 1
@@ -24,8 +25,11 @@ constexpr int meshtastic_MeshPacket_decoded_tag = 1;
 constexpr int meshtastic_PortNum_TEXT_MESSAGE_APP = 1;
 constexpr int meshtastic_PortNum_TRACEROUTE_APP = 70;
 constexpr int meshtastic_PortNum_ROUTING_APP = 5;
+constexpr int meshtastic_PortNum_POSITION_APP = 3;
+constexpr int meshtastic_PortNum_TELEMETRY_APP = 67;
+constexpr int meshtastic_Config_DeviceConfig_Role_CLIENT = 0;
 constexpr int meshtastic_MeshPacket_Priority_BACKGROUND = 10;
-constexpr int meshtastic_MeshPacket_Priority_DEFAULT = 0;
+constexpr int meshtastic_MeshPacket_Priority_DEFAULT = 64;
 constexpr int meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA = 1;
 constexpr int meshtastic_Channel_Role_DISABLED = 0;
 constexpr int meshtastic_Channel_Role_PRIMARY = 1;
@@ -55,15 +59,27 @@ struct Payload {
     size_t size = 0;
     uint8_t bytes[240]{};
 };
+struct meshtastic_Config_LoRaConfig {
+    bool use_preset = false, tx_enabled = true, override_duty_cycle = false, sx126x_rx_boosted_gain = false;
+    bool serial_hal_only = false;
+    int modem_preset = 0, region = 3, fem_lna_mode = 0, tx_power = 27;
+    uint16_t bandwidth = 62, channel_num = 0;
+    uint32_t spread_factor = 7, coding_rate = 5, hop_limit = 3;
+    float frequency_offset = 0, override_frequency = 869.618f;
+    size_t ignore_incoming_count = 0;
+    uint32_t ignore_incoming[3]{};
+};
 struct Decoded {
     int portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
     bool want_response = false;
     uint32_t request_id = 0;
+    uint32_t reply_id = 0;
     Payload payload;
 };
 struct meshtastic_MeshPacket {
     uint32_t from = 0, to = NODENUM_BROADCAST, id = 0;
     uint8_t channel = 0;
+    uint8_t hop_limit = 3;
     int which_payload_variant = meshtastic_MeshPacket_decoded_tag;
     int priority = 0;
     bool want_ack = false;

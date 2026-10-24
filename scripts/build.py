@@ -106,6 +106,9 @@ def package(firmware, target, output):
             "RECOVERY.md",
             "RELEASE_NOTES.md",
             "CHANGELOG.md",
+            "APC.md",
+            "ALPHA-TESTING.md",
+            "PLANNING-0.6.0.md",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {
@@ -130,6 +133,7 @@ def package(firmware, target, output):
                 "ignorelist",
                 "trace",
                 "boot",
+                "apc",
             ]
             if target == "legion"
             else []
@@ -147,6 +151,13 @@ def package(firmware, target, output):
         "boot_diagnostics": target == "legion",
         "boot_diagnostics_flash_writes": False,
         "boot_diagnostics_hardware_tested": False,
+        "apc_candidate_stage": "S1" if target == "legion" else None,
+        "apc_battery_conservation": target == "legion",
+        "apc_modes": ["off", "observe", "shadow", "on"] if target == "legion" else [],
+        "apc_boot_mode": "off" if target == "legion" else None,
+        "apc_persistent_settings": False,
+        "apc_adaptive_rf_power": False,
+        "apc_hardware_tested": False,
         "reg1_dcdc": target == "legion",
         "dcdc_validation": dcdc_validation,
         "ble_dfu_validation": dfu_validation,

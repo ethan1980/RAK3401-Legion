@@ -55,7 +55,7 @@ jobs:
           retention-days: 30
 
   release:
-    name: Publish experimental release
+    name: Publish alpha prerelease
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04

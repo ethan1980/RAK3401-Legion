@@ -61,18 +61,13 @@ def prepare_release(directory, commit):
 
     version = manifest["legion_version"]
     upstream = manifest["meshtastic_version"]
-    if version in ("0.4.2", "0.5.0", "0.5.1") and manifest.get("source_tree_dirty") is not False:
+    level = tuple(map(int, version.partition("-")[0].split(".")))
+    alpha = "-alpha." in version
+    if alpha != (manifest.get("release_stage") == "alpha"):
+        raise ValueError("Alpha version and release_stage must agree")
+    if level >= (0, 4, 2) and manifest.get("source_tree_dirty") is not False:
         raise ValueError(f"Legion {version} requires an explicitly clean source tree")
-    if version in (
-        "0.2.0",
-        "0.3.0",
-        "0.3.5",
-        "0.4.0",
-        "0.4.1",
-        "0.4.2",
-        "0.5.0",
-        "0.5.1",
-    ) and not all(
+    if level >= (0, 2, 0) and not all(
         manifest.get(name) is True
         for name in (
             "bulk_spi",
@@ -82,7 +77,7 @@ def prepare_release(directory, commit):
         )
     ):
         raise ValueError(f"Legion {version} requires all declared firmware features")
-    if version in ("0.3.0", "0.3.5", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.5.1") and not (
+    if level >= (0, 3, 0) and not (
         manifest.get("private_telemetry") is True
         and manifest.get("spi_hz") == 8000000
         and manifest.get("telemetry_channel") == "LegionRF"
@@ -92,7 +87,7 @@ def prepare_release(directory, commit):
         raise ValueError(
             f"Legion {version} requires 8 MHz SPI and private on-demand telemetry"
         )
-    if version in ("0.3.5", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.5.1"):
+    if level >= (0, 3, 5):
         dfu = manifest.get("ble_dfu_validation") or {}
         if not (
             dfu.get("method") == "compiled-cortex-m4-emulation"
@@ -106,7 +101,7 @@ def prepare_release(directory, commit):
             raise ValueError(
                 f"Legion {version} requires verified compiled BLE DFU reset"
             )
-    if version in ("0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.5.1"):
+    if level >= (0, 4, 0):
         update = manifest.get("update_validation") or {}
         if not (
             manifest.get("manual_recovery") is True
@@ -120,7 +115,7 @@ def prepare_release(directory, commit):
             raise ValueError(
                 f"Legion {version} requires manual recovery and verified update boundaries"
             )
-    if version in ("0.4.1", "0.4.2", "0.5.0", "0.5.1"):
+    if level >= (0, 4, 1):
         dfu = manifest.get("ble_dfu_validation") or {}
         if not (
             dfu.get("registration_emulated") is True
@@ -133,18 +128,20 @@ def prepare_release(directory, commit):
                 f"Legion {version} requires immediate DFU registration and main-loop handoff"
             )
     if (
-        version in ("0.4.2", "0.5.0", "0.5.1")
+        level >= (0, 4, 2)
         and dfu.get("write_authorization_contract_checked") is not True
     ):
         raise ValueError(
             f"Legion {version} requires checked DFU write authorization parameters"
         )
-    if version in ("0.5.0", "0.5.1"):
+    if level >= (0, 5, 0):
+        commands = ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist"]
+        if level >= (0, 6, 0):
+            commands += ["trace", "boot", "apc"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
-            and manifest.get("control_commands")
-            == ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist"]
+            and manifest.get("control_commands") == commands
             and manifest.get("control_text_limit_bytes") == 199
             and manifest.get("control_cooldown_seconds") == 5
             and manifest.get("reg1_dcdc") is True
@@ -155,11 +152,52 @@ def prepare_release(directory, commit):
             and dcdc.get("hardware_tested") is False
         ):
             raise ValueError(
-                "Legion 0.5.0 requires remote commands and checked REG1 DC/DC activation"
+                f"Legion {version} requires remote commands and checked REG1 DC/DC activation"
+            )
+    if level >= (0, 6, 0):
+        if not (
+            alpha
+            and manifest.get("release_stage") == "alpha"
+            and re.fullmatch(r"[0-9a-f]{40}", manifest.get("commit", ""))
+            and manifest["commit"] != "04cb8885118b959a9f538cd5881bd7d595758911"
+            and all(
+                manifest.get(name) is True
+                for name in (
+                    "cc310_packet_sha256",
+                    "cc310_ack_hmac_sha256",
+                    "cc310_software_fallback",
+                    "boot_diagnostics",
+                    "backup_freshness_status",
+                    "apc_battery_conservation",
+                )
+            )
+            and manifest.get("apc_candidate_stage") == "S1"
+            and manifest.get("apc_modes") == ["off", "observe", "shadow", "on"]
+            and manifest.get("apc_boot_mode") == "off"
+            and all(
+                manifest.get(name) is False
+                for name in (
+                    "apc_persistent_settings",
+                    "apc_adaptive_rf_power",
+                    "apc_hardware_tested",
+                    "boot_diagnostics_flash_writes",
+                    "backup_freshness_flash_writes",
+                    "hardware_tested",
+                    "ota_hardware_tested",
+                    "energy_savings_measured",
+                    "trace_hardware_tested",
+                    "cc310_hardware_measured",
+                    "boot_diagnostics_hardware_tested",
+                    "backup_freshness_hardware_tested",
+                )
+            )
+        ):
+            raise ValueError(
+                "Legion 0.6.0 alpha requires the migrated base, S1 scope and explicit pending hardware validation"
             )
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
-    if version in ("0.5.0", "0.5.1"):
+    if level >= (0, 5, 0):
         features += (
             "### New commands\n\n"
             "| Command | Behavior |\n| --- | --- |\n"
@@ -257,7 +295,7 @@ def prepare_release(directory, commit):
             "Legion 0.2.0 and 0.3.0 downloads are withdrawn after this release "
             "is published; their source tags and Git history are retained.\n\n"
         )
-    if manifest.get("private_telemetry") and version not in ("0.5.0", "0.5.1"):
+    if manifest.get("private_telemetry") and level < (0, 5, 0):
         features += (
             "Private on-demand diagnostics: create a SECONDARY channel named exactly "
             "`LegionRF` with your own random 16- or 32-byte PSK. No shared key is built "
@@ -273,29 +311,44 @@ def prepare_release(directory, commit):
             "for setup, fields and limits. The private channel shares the existing "
             "LoRa frequency and airtime. Requests cannot wake an energy-sleeping node.\n\n"
         )
-    if manifest.get("energy_recovery") and version not in ("0.5.0", "0.5.1"):
+    if manifest.get("energy_recovery") and level < (0, 5, 0):
         features += (
             "RAK-specific battery recovery and TX reserve are enabled. Battery sleep: below "
             "3.50 V for three readings; boot reserve: 3.60 V. Hardware wake: approximately "
             "3.78 V nominal before hysteresis/tolerances. Normal TX power, region, channels "
             "and role remain configured by Meshtastic.\n\n"
         )
-    if manifest.get("flash_write_deduplication") and version not in ("0.5.0", "0.5.1"):
+    if manifest.get("flash_write_deduplication") and level < (0, 5, 0):
         features += (
             "Identical encoded protobuf files are preserved without another write.\n\n"
         )
-    if manifest.get("flash_readback_crc32") and version not in ("0.5.0", "0.5.1"):
+    if manifest.get("flash_readback_crc32") and level < (0, 5, 0):
         features += "Temporary writes are verified with CRC32 and exact length before rename.\n\n"
     if version == "0.5.1":
-        features = (Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md").read_text() + "\n\n"
+        features += (
+            "Battery sleep requires eight consecutive readings below 3.50 V, checked every 20 seconds. "
+            "The new timing still requires hardware validation. Manual rescue restoration was observed "
+            "after erase.uf2, bootloader 0.4.4 and Legion D1 UF2 installation; recovery announcement "
+            "reception was not verified. Physical interrupted-write testing remains pending.\n\n"
+        )
+    if alpha:
+        features = (
+            Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md"
+        ).read_text() + "\n\n"
+        for name in ("COMMANDS.md", "RECOVERY.md", "APC.md", "ALPHA-TESTING.md"):
+            features = features.replace(
+                f"]({name})",
+                f"](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/{name})",
+            )
     downloads = (
         "- Firmware packages: see the release assets.\n\n"
-        if version in ("0.4.2", "0.5.0", "0.5.1")
+        if level >= (0, 4, 2)
         else f"- USB firmware: `{uf2[0]}`\n- Wireless firmware: `{ota[0]}`\n\n"
     )
     return {
         "tag": f"legion-v{version}-{commit[:7]}",
         "title": f"Legion {version} - Meshtastic {upstream} ({commit[:7]})",
+        "prerelease": True,
         "notes": (
             "Experimental firmware for the RAK3401 1W with RAK13302.\n\n"
             f"- Legion version: `{version}`\n"

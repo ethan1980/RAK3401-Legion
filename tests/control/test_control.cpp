@@ -7,6 +7,7 @@
 // SDK, radio, NodeDB storage and scheduler boundaries are simulated; hardware RF delivery is not tested.
 #include "MeshService.h"
 #include "NodeDB.h"
+#include "RadioLibInterface.h"
 #include "UptimeClock.h"
 #include "mesh/Router.h"
 #include "modules/AdminModule.h"
@@ -20,7 +21,7 @@
 FakeChannels channels;
 Owner owner;
 Config config;
-uint32_t ownNode = 0xabcdef01, rebootAtMsec = 0, radioGeneration = 0;
+uint32_t ownNode = 0xabcdef01, rebootAtMsec = 0, shutdownAtMsec = 0, radioGeneration = 0;
 bool allocationFails = false, supplyReady = true, flashSafe = true, recoveryBlocked = false;
 unsigned bootReports = 0;
 bool legionBootFormat(char *output, size_t size, uint32_t node)
@@ -65,6 +66,7 @@ void channel(unsigned index, const char *name)
 }
 void reset()
 {
+    legionApcDisarm();
     channels = {};
     owner = {};
     config = {};
@@ -73,7 +75,7 @@ void reset()
     testRouter = {};
     admin = {};
     xModem = {};
-    Time::now = rebootAtMsec = radioGeneration = 0;
+    Time::now = rebootAtMsec = shutdownAtMsec = radioGeneration = 0;
     allocationFails = recoveryBlocked = false;
     supplyReady = flashSafe = true;
     bootReports = 0;
@@ -788,6 +790,256 @@ void test_boot_query_authorization_and_read_only_behavior()
     assert(bootReports == 1);
 }
 
+void apcCommand(TestModule &module, const std::string &text, uint32_t id = 1, uint32_t from = 0x12345678)
+{
+    next();
+    deliver(module, text, id, from);
+}
+
+void apcSamples(TestModule &module, uint32_t seconds, uint16_t battery = 3700)
+{
+    for (uint32_t i = 0; i < seconds; i += 5) {
+        Time::now += 5000;
+        legionApcSample(battery, 3300, false, radioGeneration);
+        module.runOnce();
+    }
+}
+
+void test_apc_authorization_modes_and_status_snapshots()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc on !abcdef02");
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && meshService.sent.empty());
+    auto wrong = packet("/apc on !abcdef01", 2);
+    wrong.channel = 0;
+    module.handleReceived(wrong);
+    Time::now += 10000;
+    module.runOnce();
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && meshService.sent.empty());
+    apcCommand(module, "/apc shadow !abcdef01", 3);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Shadow && last().find("SHADOW selected") != std::string::npos);
+    apcSamples(module, 1800);
+    assert(legionApcControlSnapshot().state == legion::ApcState::Conserve);
+    apcCommand(module, "/apc shadow !abcdef01", 4);
+    assert(legionApcControlSnapshot().state == legion::ApcState::Conserve && last().find("unchanged") != std::string::npos);
+    apcCommand(module, "/apc status !abcdef01", 5);
+    assert(last().find("1/6") != std::string::npos && last().find("SHADOW CONSERVE") != std::string::npos);
+    const auto first = last();
+    apcSamples(module, 10, 3900);
+    for (unsigned page = 2; page <= 6; ++page) {
+        apcCommand(module, "/apc status !abcdef01 " + std::to_string(page), page + 10);
+        assert(last().find(std::to_string(page) + "/6") != std::string::npos && last().size() <= 199);
+        const auto headerLength = first.find("1/6");
+        assert(last().substr(0, headerLength) == first.substr(0, headerLength));
+    }
+    apcCommand(module, "/apc status !abcdef01 2", 30, 0x12345679);
+    assert(last().find("missing/expired") != std::string::npos);
+    apcCommand(module, "/apc status !abcdef01 0", 31);
+    assert(last().find("Usage: /apc") != std::string::npos);
+    apcCommand(module, "/apc status !abcdef01 7", 32);
+    assert(last().find("Usage: /apc") != std::string::npos);
+    Time::now += 900001;
+    apcCommand(module, "/apc status !abcdef01 2", 33);
+    assert(last().find("missing/expired") != std::string::npos);
+    apcCommand(module, "/apc off !abcdef01", 34);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && !legionApcSnapshot().enabled);
+    const auto samples = legionApcSnapshot().samples;
+    apcCommand(module, "/apc status !abcdef01", 35);
+    assert(last().find("OFF NORMAL off") != std::string::npos && legionApcSnapshot().samples == samples);
+    assert(database.saveCalls == 0);
+}
+
+void test_apc_packet_exemptions_and_shadow_active_behavior()
+{
+    reset();
+    TestModule module;
+    RadioLibInterface radio;
+    auto relay = packet("ordinary", 99);
+    relay.channel = 0;
+    relay.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+    relay.decoded.portnum = meshtastic_PortNum_TELEMETRY_APP;
+    relay.priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    assert(module.allowApcRelay(relay, radio) && radio.measurements == 0);
+    apcCommand(module, "/apc shadow !abcdef01", 1);
+    apcSamples(module, 1800);
+    for (unsigned i = 0; i < 20; ++i)
+        assert(module.allowApcRelay(relay, radio));
+    auto control = legionApcControlSnapshot();
+    assert(control.wouldSkip > 0 && control.skipped == 0);
+    apcCommand(module, "/apc on !abcdef01", 2);
+    assert(legionApcControlSnapshot().state == legion::ApcState::Normal);
+    const auto measured = radio.measurements;
+    assert(module.allowApcRelay(relay, radio) && radio.measurements == measured);
+    apcSamples(module, 1800);
+    bool limited = false;
+    for (unsigned i = 0; i < 20; ++i)
+        limited |= !module.allowApcRelay(relay, radio);
+    assert(limited && legionApcControlSnapshot().skipped > 0);
+    for (unsigned condition = 0; condition < 16; ++condition) {
+        auto protectedPacket = relay;
+        switch (condition) {
+        case 0:
+            protectedPacket.to = 0x12345678;
+            break;
+        case 1:
+            protectedPacket.which_payload_variant = 2;
+            break;
+        case 2:
+            protectedPacket.from = ownNode;
+            break;
+        case 3:
+            protectedPacket.from = 0;
+            break;
+        case 4:
+            protectedPacket.want_ack = true;
+            break;
+        case 5:
+            protectedPacket.decoded.want_response = true;
+            break;
+        case 6:
+            protectedPacket.decoded.request_id = 3;
+            break;
+        case 7:
+            protectedPacket.decoded.reply_id = 4;
+            break;
+        case 8:
+            protectedPacket.channel = 2;
+            break;
+        case 9:
+            protectedPacket.priority = meshtastic_MeshPacket_Priority_DEFAULT + 1;
+            break;
+        case 10:
+            protectedPacket.hop_limit = 0;
+            break;
+        case 11:
+            protectedPacket.via_mqtt = true;
+            break;
+        case 12:
+            protectedPacket.transport_mechanism = 0;
+            break;
+        case 13:
+            protectedPacket.decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+            break;
+        case 14:
+            protectedPacket.decoded.portnum = meshtastic_PortNum_TRACEROUTE_APP;
+            break;
+        default:
+            protectedPacket.decoded.portnum = meshtastic_PortNum_ROUTING_APP;
+            break;
+        }
+        const auto measurements = radio.measurements;
+        assert(module.allowApcRelay(protectedPacket, radio) && radio.measurements == measurements);
+    }
+    relay.decoded.portnum = meshtastic_PortNum_POSITION_APP;
+    radio.airtime = legion::APC_BURST_MS + 1;
+    assert(module.allowApcRelay(relay, radio));
+    apcCommand(module, "/apc off !abcdef01", 3);
+    assert(module.allowApcRelay(relay, radio));
+    assert(database.saveCalls == 0);
+}
+
+void test_apc_configuration_changes_and_busy_context_disarm()
+{
+    for (unsigned condition = 0; condition < 10; ++condition) {
+        reset();
+        TestModule module;
+        apcCommand(module, "/apc on !abcdef01", 1);
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+        switch (condition) {
+        case 0:
+            ++channels.entries[2].settings.psk.bytes[0];
+            break;
+        case 1:
+            ++radioGeneration;
+            break;
+        case 2:
+            config.device.role = 1;
+            break;
+        case 3:
+            admin.editing = true;
+            break;
+        case 4:
+            rebootAtMsec = 200000;
+            break;
+        case 5:
+            shutdownAtMsec = 200000;
+            break;
+        case 6:
+            xModem.busy = true;
+            break;
+        case 7:
+            ++config.lora.bandwidth;
+            break;
+        case 8:
+            ++config.lora.tx_power;
+            break;
+        default:
+            ++channels.entries[0].settings.psk.bytes[0];
+            break;
+        }
+        module.runOnce();
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && !legionApcSnapshot().enabled);
+    }
+    reset();
+    TestModule module;
+    config.device.role = 1;
+    apcCommand(module, "/apc on !abcdef01", 10);
+    assert(last().find("requires CLIENT") != std::string::npos && legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    config.device.role = 0;
+    next();
+    module.handleReceived(packet("/apc on !abcdef01", 11));
+    ++channels.entries[2].settings.psk.bytes[0];
+    Time::now += 10000;
+    module.runOnce();
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    assert(database.saveCalls == 0);
+}
+
+void test_apc_expired_capture_cannot_revive_after_clock_wrap()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc shadow !abcdef01", 1);
+    apcSamples(module, 60);
+    apcCommand(module, "/apc status !abcdef01", 2);
+    const auto captured = Time::now;
+    assert(last().find("1/6") != std::string::npos);
+    apcSamples(module, 920);
+    // The main loop has expired the capture before the 32-bit clock aliases it again.
+    Time::now = captured + 10000;
+    apcCommand(module, "/apc status !abcdef01 2", 3);
+    assert(last().find("missing/expired") != std::string::npos);
+}
+
+void test_apc_commands_work_after_weeks_without_requests()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc on !abcdef01", 1);
+    apcSamples(module, 25u * 24 * 60 * 60);
+    assert(legionApcControlSnapshot().hold == legion::ApcHold::None);
+    apcCommand(module, "/apc status !abcdef01", 2);
+    assert(last().find("ON CONSERVE") != std::string::npos);
+    apcCommand(module, "/apc off !abcdef01", 3);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+}
+
+void test_trace_cooldown_does_not_revive_after_weeks()
+{
+    reset();
+    TestModule module;
+    deliver(module, "/trace !abcdef01 !12345678", 1);
+    Time::now += 90001;
+    module.runOnce();
+    assert(last().find("reachability unknown") != std::string::npos);
+    Time::now += 25u * 24 * 60 * 60 * 1000;
+    module.runOnce();
+    next();
+    deliver(module, "/trace !abcdef01 !12345678", 2);
+    assert(last().find("queued; waiting up to 90s") != std::string::npos);
+}
+
 int main()
 {
 #define RUN(test)                                                                                                                \
@@ -811,4 +1063,10 @@ int main()
     RUN(test_trace_config_changes_and_busy);
     RUN(test_trace_pending_validation_and_bounded_output);
     RUN(test_boot_query_authorization_and_read_only_behavior);
+    RUN(test_apc_authorization_modes_and_status_snapshots);
+    RUN(test_apc_packet_exemptions_and_shadow_active_behavior);
+    RUN(test_apc_configuration_changes_and_busy_context_disarm);
+    RUN(test_apc_expired_capture_cannot_revive_after_clock_wrap);
+    RUN(test_apc_commands_work_after_weeks_without_requests);
+    RUN(test_trace_cooldown_does_not_revive_after_weeks);
 }

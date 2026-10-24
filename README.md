@@ -38,6 +38,8 @@ Earlier-release results remain distinct from results for this alpha.
 
 ## Use Legion
 
+[Spanish friendly user manual](docs/Legion-Spanish-friendly-user-manual.pdf) (PDF).
+
 Download the firmware from [Releases](https://github.com/ethan1980/RAK3401-Legion/releases):
 use **UF2 over USB** or the **OTA ZIP with nRF Connect**. Installation of this
 alpha with nRF Connect is confirmed; the Meshtastic apps' updater and a subsequent

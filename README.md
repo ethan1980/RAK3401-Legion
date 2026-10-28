@@ -5,7 +5,7 @@
 # RAK3401 Legion
 
 <p align="center">
-  <strong><a href="README.md">Overview</a> · <a href="COMMANDS.md">Commands</a> · <a href="RECOVERY.md">Rescue backup</a> · <a href="ENERGY-RECOVERY.md">Energy recovery</a> · <a href="APC.md">APC</a> · <a href="RELEASE_NOTES.md">Release notes</a> · <a href="CHANGELOG.md">Changelog</a> · <a href="https://github.com/ethan1980/RAK3401-Legion/releases">Downloads</a> · <a href="LICENSE">License</a></strong>
+  <strong><a href="README.md">Overview</a> · <a href="COMMANDS.md">Commands</a> · <a href="AUTOMATIC-FEATURES.md">Automatic features</a> · <a href="RECOVERY.md">Rescue backup</a> · <a href="ENERGY-RECOVERY.md">Energy recovery</a> · <a href="APC.md">APC</a> · <a href="RELEASE_NOTES.md">Release notes</a> · <a href="CHANGELOG.md">Changelog</a> · <a href="https://github.com/ethan1980/RAK3401-Legion/releases">Downloads</a> · <a href="LICENSE">License</a></strong>
 </p>
 
 Meshtastic firmware for the **RAK3401 1W with RAK13302**.
@@ -24,16 +24,20 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [Remote node tools](COMMANDS.md#command-reference) | Sends text, schedules restarts, lists direct RF peers, manages each node's ignore list and creates or deletes secondary channels. | Command operation confirmed on hardware. |
 | [Remote traceroute](COMMANDS.md#direct-peer-and-traceroute-reports) | Returns outbound and return mesh paths on LegionRF. | Direct, relayed and timeout replies observed. |
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
-| [CC310 hashing](COMMANDS.md#component-fields) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback; `/components` also reports SPI and REG1. | Hardware use and component queries confirmed. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE, SHADOW and ON tested; CONSERVE and RESERVE observed. |
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Energy sleep and automatic return observed. |
-| [Flash persistence](ENERGY-RECOVERY.md#usb-apc-and-configuration-resilience) | Skips identical saves and verifies temporary writes before replacement. | Identical-save and readback checks verified in software. |
-| Bulk radio SPI at 8 MHz | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
-| REG1 DC/DC | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation and readback confirmed on hardware. |
+| [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
+| [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
+| [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves and verifies temporary writes before replacement. | Identical-save and readback checks verified in software. |
+| [REG1 DC/DC](AUTOMATIC-FEATURES.md#reg1-dcdc) | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation and readback confirmed on hardware. |
 
 “Tested” describes observed operation, not complete validation of every condition.
 The summary reflects observed operation across Legion builds.
+
+CC310, bulk SPI, flash persistence and REG1 DC/DC are
+[automatic features](AUTOMATIC-FEATURES.md): no activation command or app setting
+is required.
 
 ## Use Legion
 
@@ -59,6 +63,7 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 ```
 
 - [Commands](COMMANDS.md): channel setup, command syntax and report fields.
+- [Automatic features](AUTOMATIC-FEATURES.md): what CC310, bulk SPI, flash persistence and REG1 DC/DC do, and how to check their status.
 - [Rescue backup](RECOVERY.md): backup, freshness and restoration behavior.
 - [Energy recovery](ENERGY-RECOVERY.md): voltage measurements, protection thresholds, sleep and automatic wake.
 - [APC](APC.md): Adaptive Power Control modes and battery policy.

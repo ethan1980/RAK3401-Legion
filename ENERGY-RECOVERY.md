@@ -1,6 +1,6 @@
 # Energy recovery and resilience
 
-[Overview](README.md) · [Commands](COMMANDS.md) · [Rescue backup](RECOVERY.md) · [APC](APC.md)
+[Overview](README.md) · [Commands](COMMANDS.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [APC](APC.md)
 
 Legion's energy policy protects startup, radio transmission and configuration
 saves when the supply becomes weak. It can put the node into energy sleep and
@@ -87,11 +87,11 @@ The [manual rescue point](RECOVERY.md)
 restores settings after confirmed essential preference loss; a low-voltage
 shutdown alone does not authorize overwriting healthy preferences.
 
-Legion also skips byte-identical preference saves and verifies temporary writes
-using CRC32 and exact length before replacement. Encoding must complete before
-committing a critical configuration file. The large NodeDB file retains upstream's
-space-saving, non-atomic replacement. These measures reduce unnecessary writes
-and protect critical saves; they do not make arbitrary power cuts harmless.
+For normal configuration saves,
+[automatic flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) skips
+identical content and verifies temporary writes before replacement. It works
+alongside the voltage guards described above; see that section for the save
+sequence and the large NodeDB file's replacement limits.
 
 ## Available readings and hardware status
 

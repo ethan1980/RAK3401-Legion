@@ -1,6 +1,6 @@
 # Legion commands
 
-[Overview](README.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
+[Overview](README.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
 
 These commands are available in **Legion 0.6.1**. The requesting node and
 phone app can use standard Meshtastic. See the
@@ -164,6 +164,9 @@ The report adds no flash writes. `NA` means unavailable.
 ## Component fields
 
 `/components !abcdef01` is read-only; it does not reinitialize a component or save settings.
+CC310, bulk SPI and REG1 DC/DC operate automatically. See
+[Automatic features](AUTOMATIC-FEATURES.md) for their purpose and the separate
+flash-persistence behavior. The command reports CC310, SPI and REG1 status only.
 
 | Field | Meaning |
 | --- | --- |

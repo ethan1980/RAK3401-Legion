@@ -20,9 +20,7 @@ remote tools. Current consumption and battery-life gains have not been measured.
 
 | Feature | What it does | Hardware status |
 | --- | --- | --- |
-| [Private telemetry](COMMANDS.md#telemetry-fields) | Reports battery, CPU temperature, sampled RF noise and packet counters on demand. | Operation confirmed on hardware. |
-| [Remote node tools](COMMANDS.md#command-reference) | Sends text, schedules restarts, lists direct RF peers, manages each node's ignore list and creates or deletes secondary channels. | Command operation confirmed on hardware. |
-| [Remote traceroute](COMMANDS.md#direct-peer-and-traceroute-reports) | Returns outbound and return mesh paths on LegionRF. | Direct, relayed and timeout replies observed. |
+| [Remote node tools](COMMANDS.md#command-reference) | Provides private telemetry, remote traceroute, text messages, scheduled restarts, direct RF peer lists, ignore-list management and secondary-channel editing. | Command operation confirmed on hardware. |
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE, SHADOW and ON tested; CONSERVE and RESERVE observed. |

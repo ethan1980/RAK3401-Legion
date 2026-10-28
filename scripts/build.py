@@ -109,6 +109,7 @@ def package(firmware, target, output):
             "LICENSE",
             "README.md",
             "COMMANDS.md",
+            "AUTOMATIC-FEATURES.md",
             "RECOVERY.md",
             "ENERGY-RECOVERY.md",
             "RELEASE_NOTES.md",

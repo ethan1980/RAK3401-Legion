@@ -147,6 +147,7 @@ jobs:
           allowed = {
               "README.md", "DFU.md", "RECOVERY.md", "COMMANDS.md", "CHANGELOG.md", "APC.md",
               "RELEASE_NOTES.md", "ENERGY-RECOVERY.md", "ALPHA-TESTING.md", "PLANNING-0.6.0.md",
+              "AUTOMATIC-FEATURES.md",
               "upstream.json", "scripts/prepare_release.py", "scripts/build.py",
               "tests/test_release.py", ".github/workflows/build.yml",
               ".gitattributes", "docs/Legion-Spanish-friendly-user-manual.pdf",
@@ -162,7 +163,7 @@ jobs:
                   ["git", "show", f"{before}:scripts/build.py"], text=True
               )
               current = Path("scripts/build.py").read_text()
-              for document in ("ALPHA-TESTING.md", "PLANNING-0.6.0.md", "ENERGY-RECOVERY.md", "docs"):
+              for document in ("ALPHA-TESTING.md", "PLANNING-0.6.0.md", "ENERGY-RECOVERY.md", "AUTOMATIC-FEATURES.md", "docs"):
                   entry = f'            "{document}",\n'
                   previous = previous.replace(entry, "")
                   current = current.replace(entry, "")

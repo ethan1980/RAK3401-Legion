@@ -19,14 +19,14 @@ def firmware_version(config):
     if not re.fullmatch(r"\d+\.\d+\.\d+", upstream, flags=re.ASCII):
         raise ValueError("Invalid version: meshtastic_version")
     legion = re.fullmatch(
-        r"(\d+\.\d+\.\d+)(?:-alpha\.([1-9]\d*))?",
+        r"(\d+\.\d+\.\d+)(?:-(alpha|rc)\.([1-9]\d*))?",
         config["legion_version"],
         flags=re.ASCII,
     )
     if not legion:
         raise ValueError("Invalid version: legion_version")
     version = (
-        f"{upstream}.LGN{legion[1]}a{legion[2]}"
+        f"{upstream}.LGN{legion[1]}{'a' if legion[2] == 'alpha' else 'rc'}{legion[3]}"
         if legion[2]
         else f"{upstream}.Legion{legion[1]}"
     )
@@ -58,10 +58,13 @@ def load_config():
     if config["repository"] != "https://github.com/meshtastic/firmware.git":
         raise ValueError("Unexpected upstream repository")
     firmware_version(config)
-    if ("-alpha." in config["legion_version"]) != (
-        config.get("release_stage") == "alpha"
-    ):
-        raise ValueError("Alpha version and release_stage must agree")
+    expected = (
+        "alpha"
+        if "-alpha." in config["legion_version"]
+        else ("candidate" if "-rc." in config["legion_version"] else "stable")
+    )
+    if config.get("release_stage", "stable") != expected:
+        raise ValueError("Version and release_stage must agree")
     return config
 
 

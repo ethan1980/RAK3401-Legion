@@ -101,7 +101,6 @@ VBAT/VDD/USB samples of that boot, not live values at the instant of a fault.
 [APC status](APC.md#reading-status) provides session voltage statistics when
 observation is active. All use the existing private LegionRF channel.
 
-**Hardware status: partially tested.** Energy sleep and automatic return have
-been observed on earlier builds. Exact analog thresholds, the current low-battery
-timing and the complete alpha behavior are not fully hardware-validated. Whole-node
+**Hardware status:** Energy sleep and automatic return have been observed on
+Legion hardware. Whole-node
 sleep current, energy savings and battery-life gains have not been measured.

@@ -8,6 +8,7 @@
 #include "CryptoEngine.h"
 #include "mesh/HardwareRNG.h"
 #include "platform/nrf52/LegionBoot.h"
+#include "platform/nrf52/LegionComponents.h"
 #include "platform/nrf52/LegionCrypto.h"
 #include "platform/nrf52/NRF52CryptoSession.h"
 #include <algorithm>
@@ -261,7 +262,20 @@ void testBoot(const std::string &scenario)
     assert(legionBootFormat(output, sizeof(output), 0xabcdef01));
     const std::string report = output;
     assert(report.find("!abcdef01 BOOT") == 0 && report.find("VBAT:3891 VDD:3310mV USB:0") != std::string::npos);
-    assert(report.size() <= 199 && report.find("CC310 SHA:0 MAC:0 SW:0") != std::string::npos);
+    assert(report.size() <= 199 && report.find("CC310") == std::string::npos);
+    const auto before = legionCryptoStats();
+    assert(legionComponentsFormat(output, sizeof(output), 0xabcdef01));
+    assert(std::string(output).find("SPI:OFF NA BULK:ON") != std::string::npos);
+    assert(std::string(output).find("DC/DC:OFF REG1") != std::string::npos);
+    powerRegisters.DCDCEN = 1;
+    legionComponentsSpiAvailable(true);
+    assert(legionComponentsFormat(output, sizeof(output), 0xabcdef01));
+    assert(std::string(output).find("CC310 SHA:0 MAC:0 SW:0") != std::string::npos);
+    assert(std::string(output).find("SPI:ON 8MHz BULK:ON") != std::string::npos);
+    assert(std::string(output).find("DC/DC:ON REG1") != std::string::npos);
+    const auto after = legionCryptoStats();
+    assert(before.sha == after.sha && before.hmac == after.hmac && before.fallback == after.fallback);
+    assert(!legionComponentsFormat(output, 12, 0xabcdef01) && !legionComponentsFormat(nullptr, 0, 0xabcdef01));
     assert(!legionBootFormat(output, 12, 0xabcdef01) && !legionBootFormat(nullptr, 0, 0xabcdef01));
     assert(legionBootRecordShutdown(LegionShutdown::BootProtect) == (scenario != "foreign" && scenario != "api_failure"));
     if (scenario != "foreign" && scenario != "api_failure") {

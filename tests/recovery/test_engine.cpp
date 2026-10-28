@@ -32,7 +32,7 @@ AdminModule administrator;
 AdminModule *adminModule = &administrator;
 CryptoEngine cryptography;
 CryptoEngine *crypto = &cryptography;
-uint32_t rebootAtMsec = 0;
+uint32_t rebootAtMsec = 0, shutdownAtMsec = 0;
 unsigned rawWrites = 0;
 
 // Peer databases are deliberately absent from rescue snapshots; traversing one is a regression.
@@ -105,7 +105,7 @@ void reset()
     fakeFs = {};
     powerSafe = positionPresent = true;
     administrator.editing = false;
-    rebootAtMsec = 0;
+    rebootAtMsec = shutdownAtMsec = 0;
     config = {};
     moduleConfig = {};
     channelFile = {};
@@ -467,11 +467,95 @@ void test_stale_status_does_not_replace_or_disarm_recovery()
     expectFreshness("up to date;");
 }
 
+meshtastic_Channel newChannel()
+{
+    meshtastic_Channel channel{};
+    channel.index = 1;
+    channel.has_settings = true;
+    channel.role = meshtastic_Channel_Role_SECONDARY;
+    std::strcpy(channel.settings.name, "Field");
+    channel.settings.psk.size = 16;
+    std::memset(channel.settings.psk.bytes, 0x73, 16);
+    return channel;
+}
+
+void test_channel_save_verifies_disk_without_changing_ram_or_backup()
+{
+    reset();
+    arm();
+    assert(legionBackupStatus().state == LegionBackupState::UpToDate);
+    const auto rescueWrites = rawWrites;
+    const auto previous = channelFile;
+    const auto channel = newChannel();
+    assert(legionSaveChannel(channel) == LegionChannelSave::Saved);
+    assert(!std::memcmp(&channelFile, &previous, sizeof(previous)));
+    meshtastic_ChannelFile saved{};
+    assert(probe(channelFileName, meshtastic_ChannelFile_size, &meshtastic_ChannelFile_msg, &saved) == PreferenceRead::Valid);
+    assert(!std::memcmp(&saved.channels[1], &channel, sizeof(channel)));
+    assert(!std::memcmp(&saved.channels[2], &previous.channels[2], sizeof(channel)));
+    channelFile = saved;
+    assert(legionBackupStatus().state == LegionBackupState::Outdated);
+    expectFreshness("OUTDATED: channels;");
+    assert(rawWrites == rescueWrites);
+    meshtastic_Channel removed = meshtastic_Channel_init_zero;
+    removed.index = 1;
+    removed.has_settings = true;
+    assert(legionSaveChannel(removed) == LegionChannelSave::Saved);
+    assert(probe(channelFileName, meshtastic_ChannelFile_size, &meshtastic_ChannelFile_msg, &saved) == PreferenceRead::Valid);
+    assert(saved.channels[1].role == meshtastic_Channel_Role_DISABLED && !saved.channels[1].settings.psk.size &&
+           !saved.channels[1].settings.name[0]);
+    assert(rawWrites == rescueWrites);
+}
+
+void test_channel_failures_keep_old_file_and_uncertainty_blocks_writes()
+{
+    for (unsigned failure = 0; failure < 3; ++failure) {
+        reset();
+        const auto before = fakeFs.get(channelFileName);
+        fakeFs.failRename = failure == 0;
+        fakeFs.shortWrites = failure == 1;
+        fakeFs.corruptClose = failure == 2;
+        assert(legionSaveChannel(newChannel()) == LegionChannelSave::Failed);
+        assert(fakeFs.get(channelFileName) == before && !persistenceBlocked);
+        assert(channelFile.channels[1].role == meshtastic_Channel_Role_DISABLED);
+    }
+    reset();
+    const auto before = fakeFs.mutations;
+    powerSafe = false;
+    assert(legionSaveChannel(newChannel()) == LegionChannelSave::Unavailable && fakeFs.mutations == before);
+    powerSafe = true;
+    auto channel = newChannel();
+    channel.index = 0;
+    assert(legionSaveChannel(channel) == LegionChannelSave::Unavailable);
+    channel.index = 2;
+    assert(legionSaveChannel(channel) == LegionChannelSave::Unavailable);
+    fakeFs.failOpenName = channelFileName;
+    assert(legionSaveChannel(newChannel()) == LegionChannelSave::Uncertain && persistenceBlocked);
+    const auto after = fakeFs.mutations;
+    fakeFs.failOpenName.clear();
+    assert(legionSaveChannel(newChannel()) == LegionChannelSave::Unavailable && fakeFs.mutations == after);
+}
+
+void test_corrupt_present_backup_status_does_not_arm_or_repair_it()
+{
+    reset();
+    assert(legionBackupStatus().state == LegionBackupState::NotPresent);
+    auto *stored = reinterpret_cast<RecoveryPage *>(legion::RECOVERY_BASE);
+    stored->magic = legion::RECOVERY_MAGIC;
+    const auto writes = rawWrites;
+    assert(legionBackupStatus().state == LegionBackupState::Invalid);
+    assert(readOnlyStatus().find("rescue point invalid or incompatible") != std::string::npos);
+    assert(legionRecoveryBoot() == LegionBootRecovery::None && rawWrites == writes);
+}
+
 int main()
 {
     void *memory = mmap(reinterpret_cast<void *>(legion::RECOVERY_BASE), 8192, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     assert(memory == reinterpret_cast<void *>(legion::RECOVERY_BASE));
+    test_channel_save_verifies_disk_without_changing_ram_or_backup();
+    test_channel_failures_keep_old_file_and_uncertainty_blocks_writes();
+    test_corrupt_present_backup_status_does_not_arm_or_repair_it();
     test_real_protobuf_snapshot_preserves_identity_settings_and_position();
     test_missing_and_corrupt_preferences_restore_before_a_notice();
     test_temporary_reads_and_supported_v26_markers_do_not_restore();

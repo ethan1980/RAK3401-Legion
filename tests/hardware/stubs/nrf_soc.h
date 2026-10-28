@@ -1,7 +1,7 @@
 #pragma once
 #include "nrf_sdm.h"
 struct FakePower {
-    uint32_t GPREGRET = 0xa8, GPREGRET2 = 0;
+    uint32_t GPREGRET = 0xa8, GPREGRET2 = 0, DCDCEN = 0;
 };
 extern FakePower powerRegisters;
 #define NRF_POWER (&powerRegisters)

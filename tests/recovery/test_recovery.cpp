@@ -16,10 +16,13 @@ struct Flash : RecoveryFlash {
     std::array<RecoveryPage, 2> pages;
     size_t cut = sizeof(RecoveryPage);
     bool unsafe = false;
+    bool unreadable = false;
     unsigned writes = 0;
     Flash() { std::memset(pages.data(), 0xff, sizeof(pages)); }
     bool read(uint8_t slot, RecoveryPage &out) override
     {
+        if (unreadable)
+            return false;
         out = pages.at(slot);
         return true;
     }
@@ -93,7 +96,19 @@ void test_first_snapshot_is_never_armed_partially()
         RecoveryPage result;
         RecoveryStore reboot(flash);
         assert(reboot.load(result) == RecoveryRead::Empty);
+        assert(reboot.hasStoredData() == (cut != 0));
     }
+}
+
+void test_unavailable_flash_is_not_an_absent_backup()
+{
+    Flash flash;
+    RecoveryStore store(flash);
+    RecoveryPage page;
+    assert(store.load(page) == RecoveryRead::Empty && !store.hasStoredData());
+    flash.unreadable = true;
+    assert(store.load(page) == RecoveryRead::Unavailable);
+    assert(flash.writes == 0);
 }
 
 void test_delete_survives_reboot_and_the_next_interrupted_create()
@@ -277,6 +292,7 @@ void test_failed_restore_budget_is_persistent_and_bounded()
 
 int main()
 {
+    test_unavailable_flash_is_not_an_absent_backup();
     test_every_flash_word_preserves_a_complete_generation();
     test_first_snapshot_is_never_armed_partially();
     test_delete_survives_reboot_and_the_next_interrupted_create();

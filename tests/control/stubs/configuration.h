@@ -10,6 +10,8 @@
 #define RAK3401_LEGION_CONTROL 1
 #define RAK3401_LEGION_BOOT 1
 #define RAK3401_LEGION_APC 1
+#define RAK3401_LEGION_COMPONENTS 1
+#define MESHTASTIC_EXCLUDE_BEACON 0
 #define MESHTASTIC_EXCLUDE_ADMIN 0
 #define RAK3401_LEGION_POWER 1
 #define RAK3401_LEGION_RECOVERY 1
@@ -94,12 +96,16 @@ struct ChannelSettings {
         size_t size = 0;
         uint8_t bytes[32]{};
     } psk;
+    bool uplink_enabled = false, downlink_enabled = false, use_aead = false;
 };
 struct FakeChannel {
+    int32_t index = 0;
     bool has_settings = false;
     int role = meshtastic_Channel_Role_DISABLED;
     ChannelSettings settings;
 };
+using meshtastic_Channel = FakeChannel;
+#define meshtastic_Channel_init_zero {}
 class FakeChannels
 {
   public:
@@ -111,6 +117,8 @@ class FakeChannels
     bool usesPublicKey(size_t index) const { return publicKeys.at(index); }
     bool isAEADEnabled(size_t index) const { return aead.at(index); }
     const char *getName(size_t index) const { return entries.at(index).settings.name; }
+    void setChannel(const FakeChannel &channel) { entries.at(channel.index) = channel; }
+    void onConfigChanged() {}
 };
 extern FakeChannels channels;
 struct Owner {

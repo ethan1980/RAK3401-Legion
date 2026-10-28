@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -89,6 +90,17 @@ class PublishedReleaseTests(unittest.TestCase):
                         self.commit,
                         {**self.published, "assets": assets},
                     )
+
+    def test_stable_publication_must_not_be_marked_as_a_prerelease(self):
+        expected = {"tag": self.published["tag_name"], "prerelease": False}
+        with patch("verify_published_release.prepare_release", return_value=expected):
+            published = {**self.published, "prerelease": False}
+            self.assertEqual(
+                verify_published_release(self.directory, self.commit, published),
+                expected["tag"],
+            )
+            with self.assertRaisesRegex(ValueError, "commit and tag"):
+                verify_published_release(self.directory, self.commit, self.published)
 
     def test_wrong_remote_hash_size_or_upload_state_is_rejected(self):
         for field, value in (

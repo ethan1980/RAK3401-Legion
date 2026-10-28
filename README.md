@@ -8,42 +8,41 @@
   <strong><a href="README.md">Overview</a> · <a href="COMMANDS.md">Commands</a> · <a href="RECOVERY.md">Rescue backup</a> · <a href="ENERGY-RECOVERY.md">Energy recovery</a> · <a href="APC.md">APC</a> · <a href="RELEASE_NOTES.md">Release notes</a> · <a href="CHANGELOG.md">Changelog</a> · <a href="https://github.com/ethan1980/RAK3401-Legion/releases">Downloads</a> · <a href="LICENSE">License</a></strong>
 </p>
 
-Experimental Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.6.0-alpha.1**, based on Meshtastic **2.8.2 develop**
-at [`e039e34`](https://github.com/meshtastic/firmware/commit/e039e34171e697e36d4f1b66eedfb683ffffe4f5).
-The node reports **`2.8.2.LGN0.6.0a1`**.
+Meshtastic firmware for the **RAK3401 1W with RAK13302**.
+Current release: **Legion 0.6.1**, based on Meshtastic **2.8.2 develop**
+at [`c39728e`](https://github.com/meshtastic/firmware/commit/c39728e3fb9304fc3b1160ebf14801b3b5f0a213).
+The node reports **`2.8.2.Legion0.6.1`**.
 
 Legion focuses on this kit's radio operation, energy resilience and private
-remote tools. This release is an **experimental alpha**, with partial hardware
-validation. Current consumption and battery-life gains have not been measured.
+remote tools. Current consumption and battery-life gains have not been measured.
 
 ## What Legion adds
 
 | Feature | What it does | Hardware status |
 | --- | --- | --- |
-| [Private telemetry](COMMANDS.md#telemetry-fields) | Reports battery, CPU temperature, sampled RF noise and packet counters on demand. | Tested in this alpha. |
-| [Remote node tools](COMMANDS.md#command-reference) | Sends text from a selected node, schedules restarts, lists direct RF peers and manages ignored nodes. | Tested in earlier releases; core operation confirmed in this alpha. |
-| [Remote traceroute](COMMANDS.md#direct-peer-and-traceroute-reports) | Returns outbound and return mesh paths on LegionRF. | Direct, relayed and timeout replies tested in this alpha. |
-| [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence, first boot voltages and accelerator counters. | Partially tested in this alpha. |
-| [CC310 hashing](COMMANDS.md#boot-fields) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use confirmed; performance and energy gains unmeasured. |
-| [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup/restoration tested on earlier builds; freshness partially tested in this alpha. |
-| [APC — Adaptive Power Control](APC.md) | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE basic operation tested; SHADOW/ON not yet hardware-validated. |
-| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Partially tested; sleep/wake observed on earlier builds. |
-| [Flash persistence](ENERGY-RECOVERY.md#usb-apc-and-configuration-resilience) | Skips identical saves and verifies temporary writes before replacement. | Software-tested; physical power-loss tolerance unverified. |
-| Bulk radio SPI at 8 MHz | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | In use; controlled long-term comparison unverified. |
-| REG1 DC/DC | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation tested on earlier builds; whole-node savings unmeasured. |
+| [Private telemetry](COMMANDS.md#telemetry-fields) | Reports battery, CPU temperature, sampled RF noise and packet counters on demand. | Operation confirmed on hardware. |
+| [Remote node tools](COMMANDS.md#command-reference) | Sends text, schedules restarts, lists direct RF peers, manages each node's ignore list and creates or deletes secondary channels. | Command operation confirmed on hardware. |
+| [Remote traceroute](COMMANDS.md#direct-peer-and-traceroute-reports) | Returns outbound and return mesh paths on LegionRF. | Direct, relayed and timeout replies observed. |
+| [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
+| [CC310 hashing](COMMANDS.md#component-fields) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback; `/components` also reports SPI and REG1. | Hardware use and component queries confirmed. |
+| [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
+| [APC — Adaptive Power Control](APC.md) | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE, SHADOW and ON tested; CONSERVE and RESERVE observed. |
+| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Energy sleep and automatic return observed. |
+| [Flash persistence](ENERGY-RECOVERY.md#usb-apc-and-configuration-resilience) | Skips identical saves and verifies temporary writes before replacement. | Identical-save and readback checks verified in software. |
+| Bulk radio SPI at 8 MHz | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
+| REG1 DC/DC | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation and readback confirmed on hardware. |
 
 “Tested” describes observed operation, not complete validation of every condition.
-Earlier-release results remain distinct from results for this alpha.
+The summary reflects observed operation across Legion builds.
 
 ## Use Legion
 
-[Spanish friendly user manual](docs/Legion-Spanish-friendly-user-manual.pdf) (PDF).
+[Spanish friendly user manual](docs/Legion-Spanish-friendly-user-manual.pdf) ·
+[English friendly user manual](docs/Legion-English-friendly-user-manual.pdf) (PDF).
 
 Download the firmware from [Releases](https://github.com/ethan1980/RAK3401-Legion/releases):
-use **UF2 over USB** or the **OTA ZIP with nRF Connect**. Installation of this
-alpha with nRF Connect is confirmed; the Meshtastic apps' updater and a subsequent
-update initiated from this alpha are not yet validated. Ordinary application
+use **UF2 over USB** or the **OTA ZIP with nRF Connect**. OTA installation from
+the previous alpha has been confirmed. Ordinary application
 updates preserve preferences and do not require an erase or factory reset.
 Previous releases remain available for rollback.
 
@@ -55,6 +54,7 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 ```text
 /telemetry !abcdef01
 /boot !abcdef01
+/components !abcdef01
 /apc status !abcdef01
 ```
 

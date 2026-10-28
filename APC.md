@@ -2,12 +2,12 @@
 
 [Overview](README.md) · [Commands](COMMANDS.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md)
 
-**APC means Adaptive Power Control.** Legion's experimental **S1** implementation
+**APC means Adaptive Power Control.** Legion's **S1** implementation
 adapts optional relay activity to battery conditions. It keeps reception and RF
 output nominal; adaptive RF-power selection is not implemented in this stage.
 
-**Hardware status:** OBSERVE basic operation and reporting are tested. Extended
-operation is still under validation; SHADOW/ON are not yet hardware-validated.
+**Hardware status:** OBSERVE, SHADOW and ON have been tested on hardware, including
+CONSERVE and RESERVE operation with channel messages and private messages working.
 Energy savings and autonomy gains have not been measured.
 
 ## Modes and commands
@@ -25,8 +25,10 @@ Send channel messages on the private secondary **LegionRF** channel. Replace
 | `/apc status !abcdef01 2` | Returns page 2 of that report; pages 2–6 are available. |
 
 Allow at least six seconds after a reply before another control command.
-**Every boot starts OFF.** Modes and statistics are RAM-only, with no automatic
-reports or settings writes. Repeating a mode keeps its current session. OFF
+**Every boot starts OFF.** Modes and statistics are RAM-only, without automatic
+settings writes. Detailed reports are on demand; Legion separately sends the
+brief daily APC/backup reminder described in [Commands](COMMANDS.md#timing-and-replies).
+Repeating a mode keeps its current session. OFF
 retains stopped results; the next activation starts a new session. Switching
 between running modes retains session counters but resets decision warmup.
 
@@ -76,6 +78,8 @@ regulatory limits and radio queue in charge of admitted traffic.
 A relevant settings/channel change, restart/shutdown request, transfer or recovery
 disarms APC. Reactivation is explicit. It does not change the configured role,
 frequency, modem settings, hop count or RF power.
+Creating or deleting a channel with `/createch` or `/deletech` also sets APC OFF;
+the daily reminder does not change its mode, counters or current report capture.
 
 ## Reading status
 

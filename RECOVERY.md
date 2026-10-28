@@ -54,6 +54,11 @@ GPS updates do not make the snapshot stale. An active settings edit, pending
 restart or unavailable fixed-position data can prevent comparison. To save
 intentional changes, use `/backup replace` explicitly.
 
+Creating or deleting a channel can make the saved settings OUTDATED; it does not
+refresh the rescue point. The daily LegionRF reminder uses the same comparison
+and reports `UP TO DATE`, `NOT PRESENT`, `OUTDATED`, `INVALID` or `UNKNOWN` without
+writing a new backup.
+
 ## Restoration behavior
 
 At boot, a valid, device-bound rescue point can restore consistently missing or
@@ -89,6 +94,5 @@ boot/TX/flash thresholds, energy sleep and automatic wake.
 
 ## Hardware status
 
-Backup commands and manual restoration were tested on earlier Legion builds.
-The alpha's freshness feature is partially tested. Recovery-notice reception
-and physical interrupted-write recovery are not yet hardware-validated.
+Backup commands and manual restoration have been observed on Legion hardware.
+Freshness compares the saved and current settings without changing the rescue point.

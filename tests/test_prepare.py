@@ -163,7 +163,7 @@ class FirmwareIdentificationTests(unittest.TestCase):
                 self.assertEqual(prepare.firmware_version(config), version)
                 profile = prepare.render_profile(config).decode()
                 self.assertIn(f"-DRAK3401_LEGION_FIRMWARE_VERSION={version}", profile)
-                self.assertIn(f"RAK3401 Legion {legion} (experimental)", profile)
+                self.assertIn(f"RAK3401 Legion {legion}", profile)
                 self.assertNotIn("@", profile)
 
     def test_overlong_or_invalid_versions_fail_before_truncation(self):
@@ -204,6 +204,20 @@ class FirmwareIdentificationTests(unittest.TestCase):
                 prepare.firmware_version(
                     {"meshtastic_version": "2.8.2", "legion_version": legion}
                 )
+
+    def test_release_candidate_identification_fits_without_truncation(self):
+        config = {"meshtastic_version": "2.8.2", "legion_version": "0.6.1-rc.1"}
+        self.assertEqual(prepare.firmware_version(config), "2.8.2.LGN0.6.1rc1")
+        for version in ("0.6.1-rc.0", "0.6.1-rc.01", "0.6.1-rc.10"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                prepare.firmware_version({**config, "legion_version": version})
+
+    def test_stable_profile_enables_component_queries_and_existing_features(self):
+        config = {"meshtastic_version": "2.8.2", "legion_version": "0.6.1"}
+        profile = prepare.render_profile(config).decode()
+        for flag in ("CONTROL", "COMPONENTS", "APC", "CC310", "RECOVERY", "DCDC"):
+            self.assertIn(f"-DRAK3401_LEGION_{flag}=1", profile)
+        self.assertNotIn("(experimental)", profile)
 
     def test_base_version_must_match_the_source(self):
         with tempfile.TemporaryDirectory() as folder:

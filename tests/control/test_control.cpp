@@ -10,6 +10,10 @@
 #include "RadioLibInterface.h"
 #include "UptimeClock.h"
 #include "mesh/Router.h"
+#include "mesh/LegionRecovery.h"
+#include "modules/MeshBeaconModule.h"
+#include "modules/LegionSecretText.h"
+#include "platform/nrf52/LegionComponents.h"
 #include "modules/AdminModule.h"
 #include "modules/LegionControlModule.h"
 #include "xmodem.h"
@@ -58,6 +62,7 @@ class TestModule : public LegionControlModule
 void channel(unsigned index, const char *name)
 {
     auto &ch = channels.entries[index];
+    ch.index = index;
     ch.has_settings = true;
     ch.role = index ? meshtastic_Channel_Role_SECONDARY : meshtastic_Channel_Role_PRIMARY;
     std::strcpy(ch.settings.name, name);
@@ -79,6 +84,13 @@ void reset()
     allocationFails = recoveryBlocked = false;
     supplyReady = flashSafe = true;
     bootReports = 0;
+    componentsReports = channelSaveCalls = backupStatusReads = 0;
+    channelSaveResult = LegionChannelSave::Saved;
+    simulatedBackupStatus = {};
+    persistedChannel = {};
+    Time::monotonic = 0;
+    MeshBeaconModule::channelEditAllowed = true;
+    MeshBeaconModule::changes = 0;
     channel(2, "LegionRF");
     channel(0, "SFNarrow");
 }
@@ -121,7 +133,7 @@ void test_parser_targets_and_utf8()
     for (const auto &s : {"/msg", "/msg !bad hi text", "/msg !00000001 SFNarrow hi", "/reboot !12345678", "/zerohop"})
         assert(parse(s).command == legion::ControlCommand::None);
     for (const auto &s : {"/msg !abcdef01", "/msg !abcdef01 SFNarrow", "/reboot !abcdef01 extra", "/zerohop !abcdef01 0",
-                          "/zerohop !abcdef01 -1", "/ignore !bad", "/ignorelist 0", "/ignorelist x"})
+                          "/zerohop !abcdef01 -1", "/ignore !abcdef01 !bad", "/ignorelist !abcdef01 0", "/ignorelist !abcdef01 x"})
         assert(!parse(s).valid && parse(s).command != legion::ControlCommand::None);
     const auto quoted = parse(" /msg !ABCDEF01 \"My channel\" hola 🌍\n");
     assert(quoted.valid && !std::strcmp(quoted.channel, "My channel") && !std::strcmp(quoted.text, "hola 🌍\n"));
@@ -130,7 +142,10 @@ void test_parser_targets_and_utf8()
     assert(!parse(std::string("/msg !abcdef01 S a") + std::string(1, '\0') + "b").valid);
     assert(!parse("/msg !abcdef01 S \xc0\x80").valid);
     assert(!parse("/msg !abcdef01 S \xed\xa0\x80").valid);
-    assert(parse("/ignore !12345678").group && parse("/ignorelist 2").page == 2);
+    assert(parse("/ignore !12345678").command == legion::ControlCommand::None);
+    const auto individual = parse("/ignore !abcdef01 !12345678");
+    assert(individual.valid && individual.node == ownNode && individual.target == 0x12345678);
+    assert(parse("/ignorelist !abcdef01 2").page == 2);
 }
 
 void test_message_queue_channel_and_duplicates()
@@ -383,7 +398,7 @@ void test_ignore_union_persistence_and_idempotency()
         assert(database.legionSetIgnored(id, true) == LegionIgnoreResult::Invalid);
 }
 
-void test_ignore_deferred_failure_capacity_and_group_scope()
+void test_ignore_deferred_failure_capacity_and_individual_scope()
 {
     reset();
     database.saveSucceeds = false;
@@ -418,15 +433,21 @@ void test_ignore_deferred_failure_capacity_and_group_scope()
         ownNode = local;
         TestModule module;
         deliver(module, "/ignore !11111111");
+        assert(meshService.sent.empty() && database.saveCalls == 0);
+        deliver(module, "/ignore !abcdef01 !11111111", 20);
+        if (local != 0xabcdef01) {
+            assert(meshService.sent.empty() && database.saveCalls == 0);
+            continue;
+        }
         assert(last().find("Ignored !11111111") != std::string::npos);
         next();
-        deliver(module, "/ignorelist", 2);
+        deliver(module, "/ignorelist !abcdef01", 2);
         assert(last().find("n:1") != std::string::npos && last().find("!11111111") != std::string::npos);
         next();
-        deliver(module, "/unignore !11111111", 3);
+        deliver(module, "/unignore !abcdef01 !11111111", 3);
         assert(last().find("Unignored") != std::string::npos);
         next();
-        deliver(module, "/ignorelist", 4);
+        deliver(module, "/ignorelist !abcdef01", 4);
         assert(last().find("No ignored nodes") != std::string::npos);
     }
     ownNode = 0xabcdef01;
@@ -488,7 +509,7 @@ void test_trace_parser_and_authorization()
                           "/trace !abcdef01 !00000003", "/trace !abcdef01 !ffffffff", "/trace !abcdef01 !12345678 extra"})
         assert(parse(s).command == legion::ControlCommand::Trace && !parse(s).valid);
     const auto valid = parse(" /trace !ABCDEF01 !1234ABCD\n");
-    assert(valid.valid && valid.node == ownNode && valid.target == 0x1234abcd && !valid.group);
+    assert(valid.valid && valid.node == ownNode && valid.target == 0x1234abcd);
     reset();
     TestModule module;
     auto wrongChannel = packet("/trace !abcdef01 !12345678");
@@ -1040,6 +1061,220 @@ void test_trace_cooldown_does_not_revive_after_weeks()
     assert(last().find("queued; waiting up to 90s") != std::string::npos);
 }
 
+void test_channel_parser_keys_names_and_secret_redaction()
+{
+    reset();
+    auto parse = [](const std::string &s) {
+        return legion::parseControl(reinterpret_cast<const uint8_t *>(s.data()), s.size(), ownNode);
+    };
+    const auto key = parse("/createch !abcdef01 \"My channel\" AQIDBAUGBwgJCgsMDQ4PEA==");
+    assert(key.valid && key.keySize == 16 && !std::strcmp(key.channel, "My channel"));
+    for (uint8_t i = 0; i < 16; ++i) assert(key.key[i] == i + 1);
+    assert(parse("/createch !abcdef01 Test AQ==").keySize == 1);
+    assert(parse("/createch !abcdef01 Test AA==").valid);
+    assert(parse("/createch !abcdef01 Test AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=").keySize == 32);
+    for (const auto &s : {"/createch !abcdef01 Test password", "/createch !abcdef01 Test dGVzdA==",
+                          "/createch !abcdef01 Test AR==", "/createch !abcdef01 Test AQ=", "/createch !abcdef01 Test AQ-_",
+                          "/createch !abcdef01 Test AQ== extra", "/createch !abcdef01 123456789012 AQ==",
+                          "/createch !abcdef01 \" \" AQ==", "/createch !abcdef01 \"A\nB\" AQ==",
+                          "/deletech !abcdef01 Test AQ==", "/deletech !abcdef01"})
+        assert(!parse(s).valid);
+    assert(parse("/createch !abcdef02 Test AQ==").command == legion::ControlCommand::None);
+    assert(parse("/deletech !abcdef01 \"My channel\"").valid);
+    for (const auto &s : {"/createch !abcdef01 Test AQ==", " \t/createch !bad SECRET", "/createch"})
+        assert(legion::secretControlText(reinterpret_cast<const uint8_t *>(s), std::strlen(s)));
+    for (const auto &s : {"/createchannel key", "hello /createch key", "/deletech !abcdef01 Test"})
+        assert(!legion::secretControlText(reinterpret_cast<const uint8_t *>(s), std::strlen(s)));
+}
+
+void test_channel_creation_deletion_and_apc_backup_boundaries()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/apc on !abcdef01", 40);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+    channels.entries[1].settings.uplink_enabled = channels.entries[1].settings.downlink_enabled = true;
+    channels.entries[1].settings.use_aead = true;
+    next();
+    deliver(module, "/createch !abcdef01 Test AQIDBAUGBwgJCgsMDQ4PEA==", 41);
+    const auto &created = channels.entries[1];
+    assert(channelSaveCalls == 1 && created.role == meshtastic_Channel_Role_SECONDARY && created.index == 1);
+    assert(!std::strcmp(created.settings.name, "Test") && created.settings.psk.size == 16);
+    assert(!created.settings.uplink_enabled && !created.settings.downlink_enabled && !created.settings.use_aead);
+    assert(last().find("Created channel Test in slot 1; saved") != std::string::npos);
+    assert(last().find("AQID") == std::string::npos && last().find("APC OFF") != std::string::npos);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off && MeshBeaconModule::changes == 1);
+    next();
+    deliver(module, "/createch !abcdef01 test AQ==", 42);
+    assert(channelSaveCalls == 1 && last().find("already exists") != std::string::npos);
+    next();
+    deliver(module, "/deletech !abcdef01 SFNarrow", 43);
+    assert(channelSaveCalls == 1 && last().find("protected") != std::string::npos);
+    next();
+    deliver(module, "/deletech !abcdef01 LegionRF", 44);
+    assert(channelSaveCalls == 1 && last().find("protected") != std::string::npos);
+    next();
+    deliver(module, "/deletech !abcdef01 TEST", 45);
+    assert(channelSaveCalls == 2 && channels.entries[1].role == meshtastic_Channel_Role_DISABLED);
+    assert(!channels.entries[1].settings.name[0] && !channels.entries[1].settings.psk.size);
+    assert(channels.entries[2].role == meshtastic_Channel_Role_SECONDARY && !std::strcmp(channels.entries[0].settings.name,"SFNarrow"));
+    next();
+    deliver(module, "/createch !abcdef01 Otra AQ==", 46);
+    assert(channels.entries[1].role == meshtastic_Channel_Role_SECONDARY && persistedChannel.index == 1);
+    assert(database.saveCalls == 0 && backupStatusReads == 0);
+}
+
+void test_channel_revalidation_capacity_failures_and_beacon_guard()
+{
+    for (unsigned failure = 0; failure < 8; ++failure) {
+        reset();
+        TestModule module;
+        module.handleReceived(packet("/createch !abcdef01 Test AQ=="));
+        if (failure == 0) channel(1, "Concurrent");
+        if (failure == 1) ++channels.entries[2].settings.psk.bytes[0];
+        if (failure == 2) ++radioGeneration;
+        if (failure == 3) MeshBeaconModule::channelEditAllowed = false;
+        if (failure == 4) channelSaveResult = LegionChannelSave::Failed;
+        if (failure == 5) channelSaveResult = LegionChannelSave::Uncertain;
+        if (failure == 6) flashSafe = false;
+        if (failure == 7) admin.editing = true;
+        Time::now = 10000;
+        module.runOnce();
+        if (!meshService.sent.empty()) assert(last().find("Created") == std::string::npos);
+        assert(std::strcmp(channels.entries[1].settings.name, "Test") && MeshBeaconModule::changes == 0);
+        if (failure < 4 || failure > 5) assert(channelSaveCalls == 0);
+    }
+    reset();
+    TestModule full;
+    for (unsigned i = 1; i < 8; ++i) if (i != 2) channel(i, "Full");
+    deliver(full, "/createch !abcdef01 Test AQ==");
+    assert(!channelSaveCalls && last().find("No free") != std::string::npos);
+    next();
+    deliver(full, "/deletech !abcdef01 Full", 2);
+    assert(!channelSaveCalls && last().find("Ambiguous") != std::string::npos);
+    reset();
+    TestModule changed;
+    channel(1, "Test");
+    changed.handleReceived(packet("/deletech !abcdef01 Test"));
+    channel(1, "Other");
+    Time::now = 10000;
+    changed.runOnce();
+    assert(!channelSaveCalls && channels.entries[1].role == meshtastic_Channel_Role_SECONDARY);
+}
+
+void test_components_are_targeted_read_only_and_preserve_apc_capture()
+{
+    reset();
+    TestModule module;
+    deliver(module, "/components !abcdef02");
+    assert(!componentsReports && meshService.sent.empty());
+    apcCommand(module, "/apc on !abcdef01", 20);
+    apcCommand(module, "/apc status !abcdef01", 21);
+    const auto snapshot = last().substr(0, last().find("1/6"));
+    flashSafe = false;
+    next();
+    deliver(module, "/components !abcdef01", 22);
+    assert(componentsReports == 1 && last().find("COMPONENTS") != std::string::npos && !database.saveCalls);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+    apcCommand(module, "/apc status !abcdef01 2", 23);
+    assert(last().find(snapshot) == 0);
+}
+
+void test_daily_schedule_boot_anchor_window_and_wrap()
+{
+    using S = legion::DailySchedule;
+    S schedule;
+    assert(!schedule.due(S::DAY_MS - 1));
+    assert(schedule.due(S::DAY_MS));
+    assert(!schedule.due(S::DAY_MS + 59999));
+    assert(schedule.due(S::DAY_MS + 60000));
+    schedule.queued(S::DAY_MS + 60000);
+    assert(!schedule.due(S::DAY_MS + 120000));
+    assert(!schedule.due(2 * S::DAY_MS + S::WINDOW_MS + 1));
+    assert(!schedule.due(2 * S::DAY_MS + S::WINDOW_MS + 60000));
+    assert(schedule.due(3 * S::DAY_MS));
+    schedule.queued(3 * S::DAY_MS);
+    assert(schedule.due(50 * S::DAY_MS));
+    schedule.queued(50 * S::DAY_MS);
+    assert(!schedule.due(50 * S::DAY_MS + 1000));
+    S rebooted;
+    assert(!rebooted.due(10000));
+}
+
+void test_daily_private_off_status_retry_and_no_backlog()
+{
+    using S = legion::DailySchedule;
+    reset();
+    TestModule module;
+    simulatedBackupStatus.state = LegionBackupState::UpToDate;
+    Time::now = uint32_t(S::DAY_MS - 1);
+    module.runOnce();
+    assert(meshService.sent.empty());
+    Time::now = uint32_t(S::DAY_MS);
+    meshService.result = 1;
+    module.runOnce();
+    assert(meshService.sent.size() == 1 && last() == "!abcdef01 DAILY\nAPC:OFF\nBACKUP:UP TO DATE");
+    assert(meshService.sent[0].packet.channel == 2 && !meshService.sent[0].packet.want_ack &&
+           meshService.sent[0].packet.priority == meshtastic_MeshPacket_Priority_BACKGROUND);
+    meshService.result = 0;
+    Time::now += 59999;
+    module.runOnce();
+    assert(meshService.sent.size() == 1);
+    ++Time::now;
+    module.runOnce();
+    assert(meshService.sent.size() == 2);
+    Time::now += 60000;
+    module.runOnce();
+    assert(meshService.sent.size() == 2);
+    simulatedBackupStatus.state = LegionBackupState::Outdated;
+    Time::monotonic = 50 * S::DAY_MS;
+    Time::now = uint32_t(Time::monotonic);
+    module.runOnce();
+    assert(meshService.sent.size() == 3 && last().find("BACKUP:OUTDATED") != std::string::npos);
+    assert(!database.saveCalls && !channelSaveCalls);
+    reset();
+    TestModule missing;
+    channels.entries[2].role = meshtastic_Channel_Role_DISABLED;
+    Time::now = uint32_t(S::DAY_MS);
+    missing.runOnce();
+    assert(meshService.sent.empty() && !backupStatusReads);
+    channel(2, "LegionRF");
+    Time::now += 60000;
+    missing.runOnce();
+    assert(meshService.sent.size() == 1 && last().find("BACKUP:UNKNOWN") != std::string::npos);
+}
+
+void test_daily_manual_priority_capture_and_busy_window()
+{
+    using S = legion::DailySchedule;
+    reset();
+    TestModule module;
+    Time::now = uint32_t(S::DAY_MS - 1000);
+    module.handleReceived(packet("/apc status !abcdef01", 80));
+    Time::now += 2000;
+    module.runOnce();
+    assert(meshService.sent.size() == 1 && last().find("1/6") != std::string::npos && !backupStatusReads);
+    const auto prefix = last().substr(0, last().find("1/6"));
+    module.runOnce();
+    assert(meshService.sent.size() == 2 && backupStatusReads == 1 && last().find("DAILY") != std::string::npos);
+    next();
+    deliver(module, "/apc status !abcdef01 2", 81);
+    assert(last().find(prefix) == 0 && backupStatusReads == 1);
+    reset();
+    TestModule busy;
+    Time::now = uint32_t(S::DAY_MS);
+    xModem.busy = true;
+    busy.runOnce();
+    assert(meshService.sent.empty());
+    xModem.busy = false;
+    Time::now += uint32_t(S::WINDOW_MS + 1);
+    busy.runOnce();
+    assert(meshService.sent.empty() && !backupStatusReads);
+    Time::now = uint32_t(2 * S::DAY_MS);
+    busy.runOnce();
+    assert(meshService.sent.size() == 1);
+}
+
 int main()
 {
 #define RUN(test)                                                                                                                \
@@ -1054,7 +1289,7 @@ int main()
     RUN(test_snapshot_pages_owner_expiry_and_utf8);
     RUN(test_directory_capacity_and_all_pages);
     RUN(test_ignore_union_persistence_and_idempotency);
-    RUN(test_ignore_deferred_failure_capacity_and_group_scope);
+    RUN(test_ignore_deferred_failure_capacity_and_individual_scope);
     RUN(test_gate_rollover_and_bounded_fuzz);
     RUN(test_trace_parser_and_authorization);
     RUN(test_trace_standard_request_and_asymmetric_routes);
@@ -1069,4 +1304,11 @@ int main()
     RUN(test_apc_expired_capture_cannot_revive_after_clock_wrap);
     RUN(test_apc_commands_work_after_weeks_without_requests);
     RUN(test_trace_cooldown_does_not_revive_after_weeks);
+    RUN(test_channel_parser_keys_names_and_secret_redaction);
+    RUN(test_channel_creation_deletion_and_apc_backup_boundaries);
+    RUN(test_channel_revalidation_capacity_failures_and_beacon_guard);
+    RUN(test_components_are_targeted_read_only_and_preserve_apc_capture);
+    RUN(test_daily_schedule_boot_anchor_window_and_wrap);
+    RUN(test_daily_private_off_status_retry_and_no_backlog);
+    RUN(test_daily_manual_priority_capture_and_busy_window);
 }

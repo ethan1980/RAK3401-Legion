@@ -135,6 +135,7 @@ def run_engine_tests(firmware, compiler, *, leak_check=True):
     sources = (
         "src/mesh/LegionRecovery.cpp",
         "src/mesh/LegionRecovery.h",
+        "src/mesh/LegionBackupStatus.h",
         "src/mesh/LegionRecoveryPolicy.h",
         "src/mesh/LegionRecoveryRunner.h",
         "src/mesh/LegionRecoveryStore.h",

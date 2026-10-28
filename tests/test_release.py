@@ -565,6 +565,72 @@ class ReleaseValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Alpha version|0.6.0 alpha"):
                     release.prepare_release(self.directory, self.commit)
 
+    def stable_manifest(self):
+        self.alpha_manifest()
+        self.manifest.update(
+            legion_version="0.6.1",
+            advertised_firmware_version="2.8.2.Legion0.6.1",
+            release_stage="stable",
+            components_diagnostics=True,
+            ignore_executor_required=True,
+            remote_channel_edits_verified=True,
+            remote_channel_edits_disarm_apc=True,
+            remote_channel_edits_replace_backup=False,
+            remote_channel_psk_format="canonical-base64-1-16-32-bytes",
+            mesh_beacon_channel_edit_guard=True,
+            createch_debug_psk_redacted=True,
+            daily_status=True,
+            daily_status_interval_seconds=86400,
+            daily_status_window_seconds=900,
+            daily_status_retry_seconds=60,
+            daily_status_first_report="24h-from-boot",
+            daily_status_persistent_schedule=False,
+            apc_hardware_tested=True,
+            hardware_tested=True,
+            ota_hardware_tested=True,
+        )
+        self.manifest["control_commands"] += ["components", "createch", "deletech"]
+
+    def test_stable_release_has_current_notes_without_pending_test_text(self):
+        self.stable_manifest()
+        self.write_manifest()
+        metadata = release.prepare_release(self.directory, self.commit)
+        self.assertFalse(metadata["prerelease"])
+        self.assertEqual(metadata["tag"], "legion-v0.6.1-aaaaaaa")
+        for term in (
+            "/components",
+            "/createch",
+            "/deletech",
+            "/ignore !nodeid !peerid",
+            "24 hours",
+            "2.8.2.Legion0.6.1",
+        ):
+            self.assertIn(term, metadata["notes"])
+        self.assertNotIn("pending", metadata["notes"].lower())
+        self.assertNotIn("not yet", metadata["notes"].lower())
+        self.assertNotIn("experimental firmware", metadata["notes"].lower())
+
+    def test_stable_release_requires_the_new_controls_and_retains_safeguards(self):
+        for field, value in (
+            ("release_stage", "candidate"),
+            ("ignore_executor_required", False),
+            ("components_diagnostics", False),
+            ("remote_channel_edits_verified", False),
+            ("remote_channel_edits_disarm_apc", False),
+            ("remote_channel_edits_replace_backup", True),
+            ("remote_channel_psk_format", "password"),
+            ("daily_status_interval_seconds", 60),
+            ("daily_status_first_report", "immediate"),
+            ("daily_status_persistent_schedule", True),
+            ("apc_adaptive_rf_power", True),
+        ):
+            with self.subTest(field=field):
+                self.stable_manifest()
+                self.manifest[field] = value
+                self.write_manifest()
+                with self.assertRaises(ValueError):
+                    release.prepare_release(self.directory, self.commit)
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

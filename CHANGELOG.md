@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1 — 2026-10-28
+
+- Publish the stable `2.8.2.Legion0.6.1` release on Meshtastic `c39728e`.
+- Make ignore, unignore and ignorelist individual commands with an explicit executor ID.
+- Add createch/deletech for verified secondary-channel changes; protect the primary
+  and LegionRF, preserve slot indices and disarm APC after a successful change.
+- Add components for CC310, radio SPI and REG1; keep boot focused on startup evidence.
+- Add the private daily APC/backup reminder, counted from each boot.
+- Update command documentation and the illustrated friendly manual in Spanish and English.
+
 ## 0.6.0-alpha.1 — 2026-10-24
 
 - Migrate to Meshtastic 2.8.2 develop at `e039e34`, including its BLE OTA reset fix.

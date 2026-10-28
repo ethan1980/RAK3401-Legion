@@ -138,6 +138,8 @@ def prepare_release(directory, commit):
         commands = ["msg", "reboot", "zerohop", "ignore", "unignore", "ignorelist"]
         if level >= (0, 6, 0):
             commands += ["trace", "boot", "apc"]
+        if level >= (0, 6, 1):
+            commands += ["components", "createch", "deletech"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -154,7 +156,7 @@ def prepare_release(directory, commit):
             raise ValueError(
                 f"Legion {version} requires remote commands and checked REG1 DC/DC activation"
             )
-    if level >= (0, 6, 0):
+    if level == (0, 6, 0):
         if not (
             alpha
             and manifest.get("release_stage") == "alpha"
@@ -194,6 +196,53 @@ def prepare_release(directory, commit):
         ):
             raise ValueError(
                 "Legion 0.6.0 alpha requires the migrated base, S1 scope and explicit pending hardware validation"
+            )
+    if level >= (0, 6, 1):
+        if not (
+            manifest.get("release_stage") == "stable"
+            and "-" not in version
+            and re.fullmatch(r"[0-9a-f]{40}", manifest.get("commit", ""))
+            and all(
+                manifest.get(name) is True
+                for name in (
+                    "cc310_packet_sha256",
+                    "cc310_ack_hmac_sha256",
+                    "cc310_software_fallback",
+                    "boot_diagnostics",
+                    "backup_freshness_status",
+                    "apc_battery_conservation",
+                    "components_diagnostics",
+                    "ignore_executor_required",
+                    "remote_channel_edits_verified",
+                    "remote_channel_edits_disarm_apc",
+                    "mesh_beacon_channel_edit_guard",
+                    "createch_debug_psk_redacted",
+                    "daily_status",
+                )
+            )
+            and manifest.get("apc_candidate_stage") == "S1"
+            and manifest.get("apc_modes") == ["off", "observe", "shadow", "on"]
+            and manifest.get("apc_boot_mode") == "off"
+            and manifest.get("remote_channel_psk_format")
+            == "canonical-base64-1-16-32-bytes"
+            and manifest.get("daily_status_interval_seconds") == 86400
+            and manifest.get("daily_status_window_seconds") == 900
+            and manifest.get("daily_status_retry_seconds") == 60
+            and manifest.get("daily_status_first_report") == "24h-from-boot"
+            and all(
+                manifest.get(name) is False
+                for name in (
+                    "apc_persistent_settings",
+                    "apc_adaptive_rf_power",
+                    "boot_diagnostics_flash_writes",
+                    "backup_freshness_flash_writes",
+                    "remote_channel_edits_replace_backup",
+                    "daily_status_persistent_schedule",
+                )
+            )
+        ):
+            raise ValueError(
+                "Legion 0.6.1 requires stable identification, individual controls, verified channels and daily status"
             )
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
@@ -331,7 +380,7 @@ def prepare_release(directory, commit):
             "after erase.uf2, bootloader 0.4.4 and Legion D1 UF2 installation; recovery announcement "
             "reception was not verified. Physical interrupted-write testing remains pending.\n\n"
         )
-    if alpha:
+    if alpha or level >= (0, 6, 1):
         features = (
             Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md"
         ).read_text() + "\n\n"
@@ -347,6 +396,7 @@ def prepare_release(directory, commit):
                 f"]({name})",
                 f"](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/{name})",
             )
+    prerelease = level < (0, 6, 1) or "-" in version
     downloads = (
         "- Firmware packages: see the release assets.\n\n"
         if level >= (0, 4, 2)
@@ -355,10 +405,14 @@ def prepare_release(directory, commit):
     return {
         "tag": f"legion-v{version}-{commit[:7]}",
         "title": f"Legion {version} - Meshtastic {upstream} ({commit[:7]})",
-        "prerelease": True,
+        "prerelease": prerelease,
         "notes": (
-            "Experimental firmware for the RAK3401 1W with RAK13302.\n\n"
-            f"- Legion version: `{version}`\n"
+            (
+                "Experimental firmware for the RAK3401 1W with RAK13302.\n\n"
+                if prerelease
+                else "Stable firmware for the RAK3401 1W with RAK13302.\n\n"
+            )
+            + f"- Legion version: `{version}`\n"
             f"- Meshtastic base: `{upstream}`, commit `{manifest['commit']}`\n"
             f"- Legion build commit: `{commit}`\n"
             f"- Advertised firmware: `{advertised_version}` (MQTT, device metadata and BLE)\n"
@@ -368,8 +422,12 @@ def prepare_release(directory, commit):
             "retain the upstream version and source hash; both complete source commits "
             "are recorded above and in `legion-build.json`.\n\n"
             "The assets include source, build metadata, debug files and `SHA256SUMS`.\n"
-            "Experimental: controlled measurements of voltage thresholds, sleep current, "
-            "battery savings and long-term radio stability remain pending on the complete kit.\n"
+            + (
+                "Experimental: controlled measurements of voltage thresholds, sleep current, "
+                "battery savings and long-term radio stability remain pending on the complete kit.\n"
+                if prerelease
+                else ""
+            )
         ),
     }
 
@@ -383,7 +441,11 @@ def main():
     metadata = prepare_release(args.directory, args.commit)
     args.notes.write_text(metadata["notes"])
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-        output.write(f"tag={metadata['tag']}\ntitle={metadata['title']}\n")
+        output.write(
+            f"tag={metadata['tag']}\ntitle={metadata['title']}\n"
+            f"prerelease={str(metadata['prerelease']).lower()}\n"
+            f"latest={str(not metadata['prerelease']).lower()}\n"
+        )
 
 
 if __name__ == "__main__":

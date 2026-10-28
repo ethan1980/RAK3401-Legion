@@ -1,9 +1,9 @@
 {
   "repository": "https://github.com/meshtastic/firmware.git",
-  "commit": "e039e34171e697e36d4f1b66eedfb683ffffe4f5",
+  "commit": "c39728e3fb9304fc3b1160ebf14801b3b5f0a213",
   "meshtastic_version": "2.8.2",
-  "legion_version": "0.6.0-alpha.1",
-  "release_stage": "alpha",
+  "legion_version": "0.6.1",
+  "release_stage": "stable",
   "patches": [
     "patches/0001-rak3401-bulk-spi.patch",
     "patches/0002-rak3401-energy-recovery.patch",
@@ -21,6 +21,32 @@
     "patches/0014-rak3401-cc310-hashing.patch",
     "patches/0015-rak3401-boot-diagnostics.patch",
     "patches/0016-rak3401-backup-freshness.patch",
-    "patches/0017-rak3401-apc-conservation.patch"
-  ]
+    "patches/0017-rak3401-apc-conservation.patch",
+    "patches/0018-rak3401-061-controls-and-daily-status.patch"
+  ],
+  "hardware_observation": {
+    "source": "owner-confirmed field testing",
+    "commands_tested": true,
+    "components_tested": true,
+    "apc_modes_tested": [
+      "observe",
+      "shadow",
+      "on",
+      "off"
+    ],
+    "apc_states_observed": [
+      "normal",
+      "conserve",
+      "reserve"
+    ],
+    "rf_power": "nominal",
+    "energy_savings_measured": false
+  },
+  "ota_hardware_observation": {
+    "completion_confirmed": true,
+    "from_version": "0.6.0-alpha.1",
+    "to_version": "0.6.1-rc.1",
+    "method": "BLE OTA",
+    "reported_date": "2026-10-28"
+  }
 }

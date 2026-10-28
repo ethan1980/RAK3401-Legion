@@ -3,6 +3,8 @@
 #include <cstdint>
 #define RAK3401_LEGION_CC310 1
 #define RAK3401_LEGION_BOOT 1
+#define RAK3401_LEGION_COMPONENTS 1
+#define RAK3401_LEGION_SPI_BULK 1
 #define ARCH_NRF52 1
 #define RAK3401 1
 #define RAK13302 1

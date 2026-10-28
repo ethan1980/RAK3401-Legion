@@ -1,15 +1,26 @@
-# Legion 0.6.0-alpha.1
+# Legion 0.6.1
 
-**Experimental alpha for the RAK3401 1W with RAK13302.** Hardware validation is
-partial; this is not a stable release. Previous downloads remain available.
+**Stable release for the RAK3401 1W with RAK13302.** Previous downloads remain available.
 
-Published firmware build: [`979d23a`](https://github.com/ethan1980/RAK3401-Legion/commit/979d23ab6d88d540052342627b430275a6f45004).
-Documentation updates do not replace its firmware assets.
+The node reports **`2.8.2.Legion0.6.1`**. The release assets include the exact
+upstream and Legion build commits in `legion-build.json`.
 
 ## New in this release
 
-- **Meshtastic base:** 2.8.2 develop at `e039e34171e697e36d4f1b66eedfb683ffffe4f5`,
-  including the upstream BLE OTA reset fix.
+- **Meshtastic base:** 2.8.2 develop at `c39728e3fb9304fc3b1160ebf14801b3b5f0a213`,
+  including the upstream Mesh Beacon channel handling fixes.
+- **Individual ignore commands:** `/ignore !nodeid !peerid`,
+  `/unignore !nodeid !peerid` and `/ignorelist !nodeid [page]`. Only the selected
+  Legion acts; existing ignore entries are preserved.
+- **Remote channels:** `/createch !nodeid name psk` creates a secondary channel
+  in the first available slot using a Base64 PSK; `/deletech !nodeid name` clears
+  a secondary channel without renumbering the others. Primary and LegionRF are
+  protected. A successful change sets APC OFF and leaves backup replacement explicit.
+- **Component diagnostics:** `/components !nodeid` reports CC310 counters,
+  configured radio SPI, bulk transfers and REG1 DC/DC. `/boot` retains reset
+  evidence and first boot voltages.
+- **Daily reminder:** a brief APC/backup summary on private LegionRF every
+  24 hours from boot, with no accumulated backlog or automatic backup replacement.
 - **APC — Adaptive Power Control:** `/apc observe|shadow|on|off|status !nodeid`.
   S1 adapts optional position/telemetry relay budgets to battery conditions.
   Protected traffic and reception are preserved; RF output remains nominal.
@@ -18,33 +29,31 @@ Documentation updates do not replace its firmware assets.
   paths asynchronously, with distinct routing-error and timeout replies.
 - **CC310 hashing:** packet SHA-256 and ACK-proof HMAC-SHA256 acceleration,
   retaining compatible digests and software fallback.
-- **Boot diagnostics:** `/boot !nodeid` reports reset evidence, first boot
-  voltages and CC310 counters without flash writes.
+- **Boot diagnostics:** `/boot !nodeid` reports reset evidence and first boot
+  voltages without flash writes.
 - **Backup freshness:** read-only `/backup status !nodeid` identifies outdated
   saved settings. Replacement remains explicit and the rescue format is unchanged.
 
 Existing remote tools, private telemetry, manual rescue, REG1 DC/DC, 8 MHz bulk
 SPI, verified preference writes and energy recovery remain included.
-The node reports **`2.8.2.LGN0.6.0a1`**.
 
 ## Download and use
 
-- **USB:** `firmware-rak3401-legion-2.8.2.e039e34.uf2`.
-- **BLE OTA:** `firmware-rak3401-legion-2.8.2.e039e34-ota.zip`.
+- **USB:** `firmware-rak3401-legion-2.8.2.c39728e.uf2`.
+- **BLE OTA:** `firmware-rak3401-legion-2.8.2.c39728e-ota.zip`.
 
 Both packages contain the application only. They preserve the **0xE8000–0xEA000**
 rescue reserve and do not update the bootloader or SoftDevice. Source, debug
 files, build metadata and `SHA256SUMS` are included with the release.
 
-OTA installation using **nRF Connect** is confirmed. The Meshtastic apps' updater
-and a subsequent update initiated from the running alpha are not yet validated.
+OTA installation from the previous alpha has been confirmed.
 Ordinary updates do not require an erase or factory reset.
 
 ## Validation status
 
-Core messaging/remote tools, telemetry, direct/relayed traceroute and normal
-restart operation have been observed on alpha hardware. Boot diagnostics, CC310
-use, backup freshness and APC OBSERVE are partially validated. **SHADOW/ON and
-extended hardware validation remain pending.** Energy savings are unmeasured.
+Command operation, including components and channel creation/deletion, has been
+confirmed on hardware. APC OBSERVE, SHADOW and ON have been tested, including
+CONSERVE and RESERVE operation with normal channel and private communications.
+Energy savings are unmeasured.
 
 [Commands](https://github.com/ethan1980/RAK3401-Legion/blob/main/COMMANDS.md) · [Rescue backup](https://github.com/ethan1980/RAK3401-Legion/blob/main/RECOVERY.md) · [Energy recovery](https://github.com/ethan1980/RAK3401-Legion/blob/main/ENERGY-RECOVERY.md) · [APC](https://github.com/ethan1980/RAK3401-Legion/blob/main/APC.md) · [Changelog](https://github.com/ethan1980/RAK3401-Legion/blob/main/CHANGELOG.md)

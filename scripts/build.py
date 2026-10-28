@@ -51,6 +51,12 @@ def package(firmware, target, output):
     elf = build / f"firmware-{environment}-{upstream_version}.elf"
     if advertised_version.encode("ascii") + b"\0" not in elf.read_bytes():
         raise RuntimeError("Compiled firmware does not contain its advertised version")
+    if target == "legion":
+        for command in (b"/components", b"/createch", b"/deletech"):
+            if command + b"\0" not in elf.read_bytes():
+                raise RuntimeError(
+                    f"Compiled firmware is missing command {command.decode()}"
+                )
     print(f"Verified firmware identification: {advertised_version}")
     dfu_validation = validate_dfu(elf) if target == "legion" else None
     dcdc_validation = validate_dcdc(elf) if target == "legion" else None
@@ -108,6 +114,7 @@ def package(firmware, target, output):
             "RELEASE_NOTES.md",
             "CHANGELOG.md",
             "APC.md",
+            "docs",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {
@@ -133,12 +140,31 @@ def package(firmware, target, output):
                 "trace",
                 "boot",
                 "apc",
+                "components",
+                "createch",
+                "deletech",
             ]
             if target == "legion"
             else []
         ),
         "control_text_limit_bytes": 199 if target == "legion" else None,
         "control_cooldown_seconds": 5 if target == "legion" else None,
+        "ignore_executor_required": target == "legion",
+        "remote_channel_edits_verified": target == "legion",
+        "remote_channel_psk_format": (
+            "canonical-base64-1-16-32-bytes" if target == "legion" else None
+        ),
+        "remote_channel_edits_disarm_apc": target == "legion",
+        "remote_channel_edits_replace_backup": False,
+        "mesh_beacon_channel_edit_guard": target == "legion",
+        "createch_debug_psk_redacted": target == "legion",
+        "daily_status": target == "legion",
+        "daily_status_interval_seconds": 86400 if target == "legion" else None,
+        "daily_status_window_seconds": 900 if target == "legion" else None,
+        "daily_status_retry_seconds": 60 if target == "legion" else None,
+        "daily_status_first_report": "24h-from-boot" if target == "legion" else None,
+        "daily_status_persistent_schedule": False,
+        "components_diagnostics": target == "legion",
         "trace_wait_seconds": 90 if target == "legion" else None,
         "trace_start_cooldown_seconds": 60 if target == "legion" else None,
         "trace_reply_gap_seconds": 6 if target == "legion" else None,
@@ -156,7 +182,10 @@ def package(firmware, target, output):
         "apc_boot_mode": "off" if target == "legion" else None,
         "apc_persistent_settings": False,
         "apc_adaptive_rf_power": False,
-        "apc_hardware_tested": False,
+        "apc_hardware_tested": bool(
+            target == "legion"
+            and config.get("hardware_observation", {}).get("apc_modes_tested")
+        ),
         "reg1_dcdc": target == "legion",
         "dcdc_validation": dcdc_validation,
         "ble_dfu_validation": dfu_validation,
@@ -169,7 +198,10 @@ def package(firmware, target, output):
         "telemetry_channel": "LegionRF" if target == "legion" else None,
         "telemetry_cooldown_seconds": 60 if target == "legion" else None,
         "telemetry_automatic_reports": False,
-        "hardware_tested": False,
+        "hardware_tested": bool(
+            target == "legion"
+            and config.get("hardware_observation", {}).get("commands_tested")
+        ),
         "ota_hardware_tested": bool(
             target == "legion"
             and config.get("ota_hardware_observation", {}).get("completion_confirmed")
@@ -215,6 +247,11 @@ def main():
     parser.add_argument("--target", choices=TARGETS, default="legion")
     parser.add_argument("--dest", type=Path, default=ROOT / ".work/firmware")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
+    parser.add_argument(
+        "--no-leak-check",
+        action="store_true",
+        help="Keep ASan/UBSan enabled but disable unsupported host LeakSanitizer",
+    )
     args = parser.parse_args()
     firmware = prepare(args.dest)
     run(
@@ -234,6 +271,7 @@ def main():
             str(ROOT / "scripts/test_firmware.py"),
             "--firmware",
             str(firmware),
+            *(["--no-leak-check"] if args.no_leak_check else []),
         ],
         check=True,
     )

@@ -26,6 +26,8 @@ def run_hardware_tests(firmware, compiler, *, leak_check=True):
         "platform/nrf52/NRF52CryptoEngine.cpp",
         "platform/nrf52/LegionBoot.cpp",
         "platform/nrf52/LegionBoot.h",
+        "platform/nrf52/LegionComponents.cpp",
+        "platform/nrf52/LegionComponents.h",
         "mesh/HardwareRNG.cpp",
         "mesh/HardwareRNG.h",
     )

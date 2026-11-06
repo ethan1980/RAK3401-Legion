@@ -637,7 +637,7 @@ index 9d5a66e..d30fca5 100644
          switch (request.command) {
 +#if RAK3401_LEGION_TRAFFIC
 +        case legion::ControlCommand::Guard:
-+            usage = "Usage: /guard status !legionid|observe|on|off|clear [!peerid]";
++            usage = "Usage: /guard status|observe|on|off !legionid; /guard clear !legionid !peerid";
 +            break;
 +        case legion::ControlCommand::SpamList:
 +            usage = "Usage: /spamlist !legionid [positive page]";

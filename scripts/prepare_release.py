@@ -140,6 +140,8 @@ def prepare_release(directory, commit):
             commands += ["trace", "boot", "apc"]
         if level >= (0, 6, 1):
             commands += ["components", "createch", "deletech"]
+        if level >= (0, 6, 5):
+            commands += ["guard", "spamlist"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -173,7 +175,7 @@ def prepare_release(directory, commit):
                     "apc_battery_conservation",
                 )
             )
-            and manifest.get("apc_candidate_stage") == "S1"
+            and manifest.get("apc_candidate_stage") == ("S2" if level >= (0, 6, 5) else "S1")
             and manifest.get("apc_modes") == ["off", "observe", "shadow", "on"]
             and manifest.get("apc_boot_mode") == "off"
             and all(
@@ -220,7 +222,7 @@ def prepare_release(directory, commit):
                     "daily_status",
                 )
             )
-            and manifest.get("apc_candidate_stage") == "S1"
+            and manifest.get("apc_candidate_stage") == ("S2" if level >= (0, 6, 5) else "S1")
             and manifest.get("apc_modes") == ["off", "observe", "shadow", "on"]
             and manifest.get("apc_boot_mode") == "off"
             and manifest.get("remote_channel_psk_format")
@@ -233,7 +235,7 @@ def prepare_release(directory, commit):
                 manifest.get(name) is False
                 for name in (
                     "apc_persistent_settings",
-                    "apc_adaptive_rf_power",
+                    *([] if level >= (0, 6, 5) else ["apc_adaptive_rf_power"]),
                     "boot_diagnostics_flash_writes",
                     "backup_freshness_flash_writes",
                     "remote_channel_edits_replace_backup",
@@ -244,6 +246,22 @@ def prepare_release(directory, commit):
             raise ValueError(
                 "Legion 0.6.1 requires stable identification, individual controls, verified channels and daily status"
             )
+    if level >= (0, 6, 5):
+        if not (
+            manifest.get("commit") == "d5f16191ca28b01b5024f590f04a67f25d66f1b1"
+            and manifest.get("apc_adaptive_rf_power") is True
+            and manifest.get("apc_rf_minimum_dbm") == 21
+            and manifest.get("antispam") is True
+            and manifest.get("antispam_boot_mode") == "observe"
+            and manifest.get("antispam_modes") == ["off", "observe", "on"]
+            and manifest.get("antispam_quarantine_seconds") == 600
+            and manifest.get("antispam_persistent_settings") is False
+            and manifest.get("daily_status_antispam") is True
+            and manifest.get("scramble") is False
+        ):
+            raise ValueError("Legion 0.6.5 requires the approved base, S2, RAM-only antispam and daily status; scramble is deferred")
+        if not all(manifest.get(key) is True for key in ("hardware_tested", "ota_hardware_tested", "apc_hardware_tested", "antispam_hardware_tested")):
+            raise ValueError("Legion 0.6.5 publication requires candidate hardware/OTA/APC/antispam validation")
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
     if level >= (0, 5, 0):
@@ -396,6 +414,24 @@ def prepare_release(directory, commit):
                 f"]({name})",
                 f"](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/{name})",
             )
+    if level >= (0, 6, 5):
+        features = (
+            "Rebased on Meshtastic v2.8.2.d5f1619, replacing the withdrawn 4c89b69 candidate. "
+            "APC now combines S1 relay budgets and S2 RF selection. Boot mode is OFF; "
+            "`/apc on !nodeid` enables both stages; `/apc status !nodeid [1-7]` includes RF diagnostics. "
+            "Nominal 27 dBm yields 24/21 dBm for routine CONSERVE/RESERVE relays and 24 dBm for relayed text/opaque PKI. "
+            "Own and control traffic stay nominal; reductions do not modify configured power.\n\n"
+            "Antispam starts OBSERVE and keeps all state in RAM. Use `/guard status|observe|on|off !nodeid`, "
+            "`/guard clear !nodeid !peerid` and `/spamlist !nodeid [page]` on private LegionRF. "
+            "The primary broadcast-text detector has duplicate suppression, per-origin rate/repetition evidence "
+            "and fixed ten-minute quarantines. Manual ignore lists are preserved. DAILY every 24 hours includes "
+            "antispam mode and active or simulated quarantines alongside APC and backup.\n\n"
+            "Scramble is reserved for 0.7.0. Application-only OTA preserves the existing rescue reserve. "
+            "RF output and energy savings have not been measured.\n\n"
+            f"Read [Commands](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/COMMANDS.md), "
+            f"[APC](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/APC.md) and "
+            f"[Antispam](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/ANTISPAM.md).\n\n"
+        )
     prerelease = level < (0, 6, 1) or "-" in version
     downloads = (
         "- Firmware packages: see the release assets.\n\n"

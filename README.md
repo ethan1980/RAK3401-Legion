@@ -9,9 +9,9 @@
 </p>
 
 Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.6.1**, based on Meshtastic **2.8.2 develop**
-at [`c39728e`](https://github.com/meshtastic/firmware/commit/c39728e3fb9304fc3b1160ebf14801b3b5f0a213).
-The node reports **`2.8.2.Legion0.6.1`**.
+Current release: **Legion 0.6.5**, based on Meshtastic **v2.8.2.d5f1619**
+at [`d5f1619`](https://github.com/meshtastic/firmware/commit/d5f16191ca28b01b5024f590f04a67f25d66f1b1).
+The node reports **`2.8.2.Legion0.6.5`**.
 
 Legion focuses on this kit's radio operation, energy resilience and private
 remote tools. Current consumption and battery-life gains have not been measured.
@@ -23,7 +23,8 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [Remote node tools](COMMANDS.md#command-reference) | Provides private telemetry, remote traceroute, text messages, scheduled restarts, direct RF peer lists, ignore-list management and secondary-channel editing. | Command operation confirmed on hardware. |
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
-| [APC — Adaptive Power Control](APC.md) | Adapts optional relay activity to battery conditions; RF output stays nominal. | OBSERVE, SHADOW and ON tested; CONSERVE and RESERVE observed. |
+| [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
+| [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on hardware; new `/guard` parser tested in software. |
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Energy sleep and automatic return observed. |
 | [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
@@ -58,17 +59,20 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 /boot !abcdef01
 /components !abcdef01
 /apc status !abcdef01
+/guard status !abcdef01
+/spamlist !abcdef01
 ```
 
 - [Commands](COMMANDS.md): channel setup, command syntax and report fields.
 - [Automatic features](AUTOMATIC-FEATURES.md): what CC310, bulk SPI, flash persistence and REG1 DC/DC do, and how to check their status.
 - [Rescue backup](RECOVERY.md): backup, freshness and restoration behavior.
 - [Energy recovery](ENERGY-RECOVERY.md): voltage measurements, protection thresholds, sleep and automatic wake.
-- [APC](APC.md): Adaptive Power Control modes and battery policy.
+- [APC](APC.md): Adaptive Power Control modes, battery policy and RF diagnostics.
+- [Antispam](ANTISPAM.md): spam detection, control commands and quarantine rules.
 
 **APC starts OFF after every boot.** Its settings and counters remain in RAM.
-The current S1 implementation conserves eligible position/telemetry relays;
-RF-power adaptation is not implemented.
+Legion 0.6.5 combines S1 relay admission with S2 RF selection.
+Antispam starts OBSERVE; `/guard on !nodeid` enables blocking. DAILY includes its mode and quarantine count.
 
 ## Build from source
 

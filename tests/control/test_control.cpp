@@ -80,7 +80,8 @@ void reset()
     testRouter = {};
     admin = {};
     xModem = {};
-    Time::now = rebootAtMsec = shutdownAtMsec = radioGeneration = 0;
+    Time::now = rebootAtMsec = shutdownAtMsec = 0;
+    ++radioGeneration;
     allocationFails = recoveryBlocked = false;
     supplyReady = flashSafe = true;
     bootReports = 0;
@@ -93,6 +94,9 @@ void reset()
     MeshBeaconModule::changes = 0;
     channel(2, "LegionRF");
     channel(0, "SFNarrow");
+    legionTrafficSetGuard(legion::GuardMode::Off);
+    legionTrafficSetGuard(legion::GuardMode::Observe);
+    legionTrafficRfResetFault();
 }
 meshtastic_MeshPacket packet(const std::string &text, uint32_t id = 1, uint32_t from = 0x12345678)
 {
@@ -845,20 +849,20 @@ void test_apc_authorization_modes_and_status_snapshots()
     apcCommand(module, "/apc shadow !abcdef01", 4);
     assert(legionApcControlSnapshot().state == legion::ApcState::Conserve && last().find("unchanged") != std::string::npos);
     apcCommand(module, "/apc status !abcdef01", 5);
-    assert(last().find("1/6") != std::string::npos && last().find("SHADOW CONSERVE") != std::string::npos);
+    assert(last().find("1/7") != std::string::npos && last().find("SHADOW CONSERVE") != std::string::npos);
     const auto first = last();
     apcSamples(module, 10, 3900);
-    for (unsigned page = 2; page <= 6; ++page) {
+    for (unsigned page = 2; page <= 7; ++page) {
         apcCommand(module, "/apc status !abcdef01 " + std::to_string(page), page + 10);
-        assert(last().find(std::to_string(page) + "/6") != std::string::npos && last().size() <= 199);
-        const auto headerLength = first.find("1/6");
+        assert(last().find(std::to_string(page) + "/7") != std::string::npos && last().size() <= 199);
+        const auto headerLength = first.find("1/7");
         assert(last().substr(0, headerLength) == first.substr(0, headerLength));
     }
     apcCommand(module, "/apc status !abcdef01 2", 30, 0x12345679);
     assert(last().find("missing/expired") != std::string::npos);
     apcCommand(module, "/apc status !abcdef01 0", 31);
     assert(last().find("Usage: /apc") != std::string::npos);
-    apcCommand(module, "/apc status !abcdef01 7", 32);
+    apcCommand(module, "/apc status !abcdef01 8", 32);
     assert(last().find("Usage: /apc") != std::string::npos);
     Time::now += 900001;
     apcCommand(module, "/apc status !abcdef01 2", 33);
@@ -1025,7 +1029,7 @@ void test_apc_expired_capture_cannot_revive_after_clock_wrap()
     apcSamples(module, 60);
     apcCommand(module, "/apc status !abcdef01", 2);
     const auto captured = Time::now;
-    assert(last().find("1/6") != std::string::npos);
+    assert(last().find("1/7") != std::string::npos);
     apcSamples(module, 920);
     // The main loop has expired the capture before the 32-bit clock aliases it again.
     Time::now = captured + 10000;
@@ -1170,7 +1174,7 @@ void test_components_are_targeted_read_only_and_preserve_apc_capture()
     assert(!componentsReports && meshService.sent.empty());
     apcCommand(module, "/apc on !abcdef01", 20);
     apcCommand(module, "/apc status !abcdef01", 21);
-    const auto snapshot = last().substr(0, last().find("1/6"));
+    const auto snapshot = last().substr(0, last().find("1/7"));
     flashSafe = false;
     next();
     deliver(module, "/components !abcdef01", 22);
@@ -1213,7 +1217,7 @@ void test_daily_private_off_status_retry_and_no_backlog()
     Time::now = uint32_t(S::DAY_MS);
     meshService.result = 1;
     module.runOnce();
-    assert(meshService.sent.size() == 1 && last() == "!abcdef01 DAILY\nAPC:OFF\nBACKUP:UP TO DATE");
+    assert(meshService.sent.size() == 1 && last() == "!abcdef01 DAILY\nAPC:OFF\nSPAM:OBSERVE simQ:0\nBACKUP:UP TO DATE");
     assert(meshService.sent[0].packet.channel == 2 && !meshService.sent[0].packet.want_ack &&
            meshService.sent[0].packet.priority == meshtastic_MeshPacket_Priority_BACKGROUND);
     meshService.result = 0;
@@ -1253,8 +1257,8 @@ void test_daily_manual_priority_capture_and_busy_window()
     module.handleReceived(packet("/apc status !abcdef01", 80));
     Time::now += 2000;
     module.runOnce();
-    assert(meshService.sent.size() == 1 && last().find("1/6") != std::string::npos && !backupStatusReads);
-    const auto prefix = last().substr(0, last().find("1/6"));
+    assert(meshService.sent.size() == 1 && last().find("1/7") != std::string::npos && !backupStatusReads);
+    const auto prefix = last().substr(0, last().find("1/7"));
     module.runOnce();
     assert(meshService.sent.size() == 2 && backupStatusReads == 1 && last().find("DAILY") != std::string::npos);
     next();
@@ -1273,6 +1277,137 @@ void test_daily_manual_priority_capture_and_busy_window()
     Time::now = uint32_t(2 * S::DAY_MS);
     busy.runOnce();
     assert(meshService.sent.size() == 1);
+}
+
+meshtastic_MeshPacket primarySpam(uint32_t id, uint32_t from=0x12345678)
+{
+    auto p=packet("same payload",id,from);
+    p.channel=0;
+    p.transport_mechanism=meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+    return p;
+}
+void test_guard_control_scope_status_clear_and_daily()
+{
+    reset(); TestModule m;
+    assert(legionTrafficGuardStatus().mode==legion::GuardMode::Observe);
+    apcCommand(m,"/guard on !abcdef02",1);
+    assert(meshService.sent.empty());
+    auto wrong=packet("/guard on !abcdef01",2);wrong.channel=0;
+    m.handleReceived(wrong);Time::now+=10000;m.runOnce();
+    assert(legionTrafficGuardStatus().mode==legion::GuardMode::Observe && meshService.sent.empty());
+    apcCommand(m,"/guard on !abcdef01",3);
+    assert(last().find("SPAM:ON Q:0")!=std::string::npos);
+    for(uint32_t id=100;id<106;++id) {
+        auto p=primarySpam(id);
+        assert(legionTrafficAllowReceived(p,RX_SRC_RADIO)==(id<105));
+    }
+    const auto before=legionTrafficGuardStatus();
+    apcCommand(m,"/guard status !abcdef01",4);
+    assert(last().find("SPAM:ON Q:1")!=std::string::npos);
+    const auto after=legionTrafficGuardStatus();
+    assert(before.fresh==after.fresh && before.dropped==after.dropped);
+    apcCommand(m,"/guard on !abcdef01",5); // Idempotent ON keeps the quarantine.
+    assert(legionTrafficGuardStatus().active==1);
+    apcCommand(m,"/spamlist !abcdef01",6);
+    assert(last().find("unsigned repeat")!=std::string::npos && last().size()<=199);
+    auto *n=database.getOrCreateMeshNode(0x12345678);n->bitfield|=16;
+    config.lora.ignore_incoming_count=1;config.lora.ignore_incoming[0]=n->num;
+    const auto saves=database.saveCalls;
+    apcCommand(m,"/guard clear !abcdef01 !12345678",7);
+    assert(last().find("manual ignore:ON (unchanged)")!=std::string::npos);
+    assert(nodeInfoLiteIsIgnored(database.getMeshNode(0x12345678)) && config.lora.ignore_incoming_count==1);
+    assert(legionTrafficGuardStatus().active==0 && database.saveCalls==saves);
+    apcCommand(m,"/guard observe !abcdef01",8);
+    for(uint32_t id=200;id<206;++id) assert(legionTrafficAllowReceived(primarySpam(id),RX_SRC_RADIO));
+    Time::now=uint32_t(legion::DailySchedule::DAY_MS);
+    // The prior simulated quarantine has expired; create fresh evidence for the daily report.
+    for(uint32_t id=300;id<306;++id) assert(legionTrafficAllowReceived(primarySpam(id),RX_SRC_RADIO));
+    m.runOnce();
+    assert(last().find("DAILY\nAPC:OFF\nSPAM:OBSERVE simQ:1")!=std::string::npos);
+    apcCommand(m,"/guard on !abcdef01",9);
+    for(uint32_t id=400;id<406;++id) legionTrafficAllowReceived(primarySpam(id),RX_SRC_RADIO);
+    Time::monotonic=2*legion::DailySchedule::DAY_MS;
+    m.runOnce();
+    assert(last().find("SPAM:ON Q:1")!=std::string::npos);
+    apcCommand(m,"/guard off !abcdef01",10);
+    assert(legionTrafficGuardStatus().mode==legion::GuardMode::Off && !legionTrafficGuardStatus().active);
+    for(auto bad:{"/guard !abcdef01", "/guard clear !abcdef01", "/guard clear !abcdef01 !abcdef01", "/guard on !abcdef01 extra", "/spamlist !abcdef01 0"}) {
+        const auto r=legion::parseControl((const uint8_t*)bad,std::strlen(bad),ownNode);
+        assert(!r.valid);
+    }
+}
+void test_guard_router_bridge_queue_identity_and_context()
+{
+    reset();
+    legionTrafficSetGuard(legion::GuardMode::On);
+    auto queued=primarySpam(100);
+    assert(legionTrafficAllowReceived(queued,RX_SRC_RADIO));
+    legionTrafficTagOutgoing(&queued);
+    queued.which_payload_variant=meshtastic_MeshPacket_encrypted_tag; // Metadata must survive encryption.
+    for(uint32_t id=101;id<106;++id) legionTrafficAllowReceived(primarySpam(id),RX_SRC_RADIO);
+    assert(!legionTrafficAllowQueued(&queued));
+    assert(!legionTrafficAllowRelay(primarySpam(100))); // Duplicate fast path reuses the verdict.
+    auto local=primarySpam(1);local.from=ownNode;
+    assert(legionTrafficAllowReceived(local,RX_SRC_RADIO));
+    auto secondary=primarySpam(1);secondary.channel=1;
+    assert(legionTrafficAllowReceived(secondary,RX_SRC_RADIO));
+    auto unicast=primarySpam(1);unicast.to=0x98765432;
+    assert(legionTrafficAllowReceived(unicast,RX_SRC_RADIO));
+    assert(legionTrafficAllowReceived(primarySpam(900),RX_SRC_USER));
+    auto signedPacket=primarySpam(901);signedPacket.xeddsa_signed=true;
+    auto *n=database.getOrCreateMeshNode(signedPacket.from);n->public_key.size=32;n->public_key.bytes[0]=55;
+    assert(legionTrafficAllowReceived(signedPacket,RX_SRC_RADIO));
+    assert(legionTrafficAllowRelay(signedPacket));
+    legionTrafficForget(&queued);
+    assert(legionTrafficAllowQueued(&queued));
+    queued=primarySpam(200,0x98765432);
+    {LegionTrafficPacketLease lease(&queued);}
+    assert(legionTrafficAllowQueued(&queued));
+    ++radioGeneration;
+    assert(legionTrafficGuardStatus().mode==legion::GuardMode::Off && !legionTrafficGuardStatus().active);
+    legionTrafficSetGuard(legion::GuardMode::On);
+    ++channels.entries[0].settings.psk.bytes[0];
+    assert(legionTrafficGuardStatus().mode==legion::GuardMode::Off);
+    legionTrafficSetGuard(legion::GuardMode::On);
+    config.device.role=1;
+    assert(legionTrafficGuardStatus().mode==legion::GuardMode::Off);
+}
+void test_rf_bridge_protected_nodeinfo_retry_fault_and_plan_change()
+{
+    reset(); TestModule m;
+    apcCommand(m,"/apc on !abcdef01",1);
+    apcSamples(m,1800,3700);
+    assert(legionApcControlSnapshot().state==legion::ApcState::Conserve);
+    auto p=primarySpam(500);p.decoded.portnum=meshtastic_PortNum_POSITION_APP;
+    legionTrafficTagOutgoing(&p);
+    assert(legionTrafficTxPower(&p,27)==24 && legionTrafficTxPlanCurrent(&p,27));
+    // OFF between CAD and TX must force a fresh nominal-power scan.
+    legionApcDisarm();assert(!legionTrafficTxPlanCurrent(&p,27));
+    assert(legionTrafficTxPower(&p,27)==27);
+    legionTrafficForget(&p);
+    apcCommand(m,"/apc on !abcdef01",2);apcSamples(m,1800,3700);
+    p=primarySpam(501);p.decoded.portnum=meshtastic_PortNum_NODEINFO_APP;
+    legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==27);
+    legionTrafficTxStarted(&p);legionTrafficTxEnded(&p,false);legionTrafficForget(&p);
+    ++p.id;legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==27);
+    legionTrafficTxStarted(&p);legionTrafficTxEnded(&p,true);legionTrafficForget(&p);
+    ++p.id;legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==24);
+    legionTrafficTxStarted(&p);legionTrafficTxEnded(&p,true);legionTrafficForget(&p);
+    legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==27); // Locally sent packet repeated.
+    legionTrafficForget(&p);
+    ++p.id;p.decoded.payload.bytes[0]^=1;
+    legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==27);legionTrafficForget(&p);
+    p=primarySpam(510);p.channel=2;
+    legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==27);legionTrafficForget(&p);
+    p=primarySpam(511);p.from=ownNode;
+    legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==27);legionTrafficForget(&p);
+    p=primarySpam(512);p.which_payload_variant=meshtastic_MeshPacket_encrypted_tag;p.to=0x98765432;
+    legionTrafficTagOutgoing(&p);assert(legionTrafficTxPower(&p,27)==24);
+    legionTrafficPowerProgrammed(12,false);legionTrafficPowerProgrammed(15,true);
+    legionTrafficPowerFallback(&p,27);
+    assert(legionTrafficTxPlanCurrent(&p,27) && legionTrafficTxPower(&p,27)==27);
+    assert(legionTrafficRfStatus().fault);legionTrafficForget(&p);
+    apcCommand(m,"/apc off !abcdef01",3);assert(!legionTrafficRfStatus().fault);
 }
 
 int main()
@@ -1311,4 +1446,7 @@ int main()
     RUN(test_daily_schedule_boot_anchor_window_and_wrap);
     RUN(test_daily_private_off_status_retry_and_no_backlog);
     RUN(test_daily_manual_priority_capture_and_busy_window);
+    RUN(test_guard_control_scope_status_clear_and_daily);
+    RUN(test_guard_router_bridge_queue_identity_and_context);
+    RUN(test_rf_bridge_protected_nodeinfo_retry_fault_and_plan_change);
 }

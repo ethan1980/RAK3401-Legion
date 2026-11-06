@@ -1,0 +1,1563 @@
+diff --git a/src/mesh/MeshPacketQueue.cpp b/src/mesh/MeshPacketQueue.cpp
+index 58e9cf0..d570b50 100644
+--- a/src/mesh/MeshPacketQueue.cpp
++++ b/src/mesh/MeshPacketQueue.cpp
+@@ -1,4 +1,7 @@
+ #include "MeshPacketQueue.h"
++#if RAK3401_LEGION_TRAFFIC
++#include "modules/LegionTraffic.h"
++#endif
+ #include "NodeDB.h"
+ #include "Throttle.h"
+ #include "UptimeClock.h"
+@@ -147,7 +150,8 @@ bool MeshPacketQueue::find(const NodeNum from, const PacketId id)
+ }
+ 
+ /**
+- * Attempt to find a lower-priority packet in the queue and replace it with the provided one.
++ * Attempt to find a lower-priority packet in the queue and replace it with the
++ * provided one.
+  * @return True if the replacement succeeded, false otherwise
+  */
+ bool MeshPacketQueue::replaceLowerPriorityPacket(meshtastic_MeshPacket *p)
+@@ -163,6 +167,9 @@ bool MeshPacketQueue::replaceLowerPriorityPacket(meshtastic_MeshPacket *p)
+         LOG_WARN("Dropping packet 0x%08x to make room in the TX queue for higher-priority packet 0x%08x", backPacket->id, p->id);
+         // Remove the back packet
+         queue.pop_back();
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(backPacket);
++#endif
+         packetPool.release(backPacket);
+         // Insert the new packet in the correct order
+         enqueue(p);
+@@ -179,6 +186,9 @@ bool MeshPacketQueue::replaceLowerPriorityPacket(meshtastic_MeshPacket *p)
+             LOG_WARN("Dropping non-late packet 0x%08x to make room in the TX queue for higher-priority packet 0x%08x",
+                      refPacket->id, p->id);
+             queue.erase(it);
++#if RAK3401_LEGION_TRAFFIC
++            legionTrafficForget(refPacket);
++#endif
+             packetPool.release(refPacket);
+             // Insert the new packet in the correct order
+             enqueue(p);
+@@ -207,6 +217,9 @@ bool MeshPacketQueue::replaceLowerPriorityPacket(meshtastic_MeshPacket *p)
+                          backPacket->id, dt, p->id);
+             }
+             queue.pop_back();
++#if RAK3401_LEGION_TRAFFIC
++            legionTrafficForget(backPacket);
++#endif
+             packetPool.release(backPacket);
+             // Insert the new packet in the correct order
+             enqueue(p);
+diff --git a/src/mesh/NextHopRouter.cpp b/src/mesh/NextHopRouter.cpp
+index 1201685..a572750 100644
+--- a/src/mesh/NextHopRouter.cpp
++++ b/src/mesh/NextHopRouter.cpp
+@@ -1,4 +1,7 @@
+ #include "NextHopRouter.h"
++#if RAK3401_LEGION_TRAFFIC
++#include "modules/LegionTraffic.h"
++#endif
+ #include "Default.h"
+ #include "MeshTypes.h"
+ #include "Throttle.h"
+@@ -245,6 +248,10 @@ void NextHopRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtast
+ /* Check if we should be rebroadcasting this packet if so, do so. */
+ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
+ {
++#if RAK3401_LEGION_TRAFFIC
++    if (!legionTrafficAllowRelay(*p))
++        return false;
++#endif
+ #if USERPREFS_BLOCK_POSITION_ON_EVENT_CHANNEL
+     // Never relay coordinate-bearing packets on the event ("everyone") channel.
+     // Closes the reliable-retransmit-dupe path that runs before handleReceived().
+diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
+index c3ce60f..af13a4b 100644
+--- a/src/mesh/RadioInterface.cpp
++++ b/src/mesh/RadioInterface.cpp
+@@ -1514,8 +1514,13 @@ uint32_t RadioInterface::computeSlotTimeMsec()
+  */
+ void RadioInterface::limitPower(int8_t loraMaxPower)
+ {
+-    power = config.lora.tx_power; // applyModemConfig() writes the resolved value back here
+-    uint8_t maxPower = 255;       // No limit
++    power = resolveTxPower(config.lora.tx_power, loraMaxPower);
++}
++
++int8_t RadioInterface::resolveTxPower(int8_t requested, int8_t loraMaxPower) const
++{
++    int8_t power = requested;
++    uint8_t maxPower = 255; // No limit
+ 
+     if (myRegion->powerLimit)
+         maxPower = myRegion->powerLimit;
+@@ -1561,6 +1566,7 @@ void RadioInterface::limitPower(int8_t loraMaxPower)
+         power = loraMaxPower;
+ 
+     LOG_INFO("Final Tx power: %d dBm", power);
++    return power;
+ }
+ 
+ void RadioInterface::deliverToReceiver(meshtastic_MeshPacket *p)
+diff --git a/src/mesh/RadioInterface.h b/src/mesh/RadioInterface.h
+index 0b42bcd..a203915 100644
+--- a/src/mesh/RadioInterface.h
++++ b/src/mesh/RadioInterface.h
+@@ -329,6 +329,7 @@ class RadioInterface
+      * This function should be called by subclasses after setting their desired power.  It might lower it
+      */
+     void limitPower(int8_t MAX_POWER);
++    int8_t resolveTxPower(int8_t requested, int8_t loraMaxPower) const;
+ 
+     /**
+      * Save the frequency we selected for later reuse.
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index d4ea94b..1f3fb64 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -1,4 +1,8 @@
+ #include "RadioLibInterface.h"
++#if RAK3401_LEGION_TRAFFIC
++#include "modules/LegionTraffic.h"
++static_assert(legion::TRAFFIC_TAG_CAPACITY >= MAX_TX_QUEUE + 2, "Legion metadata must cover queued and in-flight packets");
++#endif
+ #include "MeshTypes.h"
+ #include "NodeDB.h"
+ #include "PowerMon.h"
+@@ -280,12 +284,18 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+     if (config.lora.region != meshtastic_Config_LoRaConfig_RegionCode_UNSET) {
+         if (disabled || !config.lora.tx_enabled) {
+             LOG_WARN("send - !config.lora.tx_enabled");
++#if RAK3401_LEGION_TRAFFIC
++            legionTrafficForget(p);
++#endif
+             packetPool.release(p);
+             return ERRNO_DISABLED;
+         }
+ 
+     } else {
+         LOG_WARN("send - lora tx disabled: Region unset");
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(p);
++#endif
+         packetPool.release(p);
+         return ERRNO_DISABLED;
+     }
+@@ -294,6 +304,9 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+ 
+     if (disabled || !config.lora.tx_enabled) {
+         LOG_WARN("send - !config.lora.tx_enabled");
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(p);
++#endif
+         packetPool.release(p);
+         return ERRNO_DISABLED;
+     }
+@@ -317,7 +330,11 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+         txDrop++;
+     }
+ 
+-    if (res != ERRNO_OK) { // we weren't able to queue it, so we must drop it to prevent leaks
++    if (res != ERRNO_OK) { // we weren't able to queue it, so we must drop it to
++                           // prevent leaks
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(p);
++#endif
+         packetPool.release(p);
+         return res;
+     }
+@@ -328,6 +345,9 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+ 
+     return res;
+ #else
++#if RAK3401_LEGION_TRAFFIC
++    legionTrafficForget(p);
++#endif
+     packetPool.release(p);
+     return ERRNO_DISABLED;
+ #endif
+@@ -371,6 +391,9 @@ bool RadioLibInterface::cancelSending(NodeNum from, PacketId id)
+     auto p = txQueue.remove(from, id);
+     if (p) {
+         RadioTxHooks::packetReleased(this, p);
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(p);
++#endif
+         packetPool.release(p); // free the packet we just removed
+     }
+ 
+@@ -635,13 +658,20 @@ void RadioLibInterface::onNotify(uint32_t notification)
+                 if (txp->tx_after && !Throttle::deadlinePassedAt(now, txp->tx_after)) {
+                     // There's still some delay pending on this packet, so resume waiting for it to elapse
+                     notifyLater(txp->tx_after - now, TRANSMIT_DELAY_COMPLETED, txTimerOverwrite);
+-                } else if (const RadioTxHook::PreTxAction action = RadioTxHooks::beforeTransmit(this, txp);
++                } else if (const RadioTxHook::PreTxAction action =
++#if RAK3401_LEGION_TRAFFIC
++                               !legionTrafficAllowQueued(txp) ? RadioTxHook::PRETX_DROP :
++#endif
++                                                              RadioTxHooks::beforeTransmit(this, txp);
+                            action == RadioTxHook::PRETX_DROP) {
+                     // A module refuses this packet on the radio config we are holding: drop it rather
+                     // than transmit it, and move on to the next queued packet.
+                     meshtastic_MeshPacket *bad = txQueue.dequeue();
+                     LOG_DEBUG("Drop Tx packet 0x%08x, refused before transmit", bad->id);
+                     RadioTxHooks::packetReleased(this, bad);
++#if RAK3401_LEGION_TRAFFIC
++                    legionTrafficForget(bad);
++#endif
+                     packetPool.release(bad);
+                     setTransmitDelay();
+                 } else if (action == RadioTxHook::PRETX_DEFER) {
+@@ -661,7 +691,15 @@ void RadioLibInterface::onNotify(uint32_t notification)
+                         // config, so skipping this only ever left the node deaf in standby.
+                         rearmReceive();
+                         setTransmitDelay();
+-                    } else {
++                    }
++#if RAK3401_LEGION_TRAFFIC
++                    else if (!legionTrafficAllowQueued(txp) || !legionTrafficTxPlanCurrent(txp, config.lora.tx_power)) {
++                        rearmReceive();
++                        setTransmitDelay(); // A mode or quarantine changed while CAD was
++                                            // running; scan again.
++                    }
++#endif
++                    else {
+                         LOG_DEBUG("CAD free");
+                         if (peek)
+                             LOG_DEBUG("Preamble hold released, CAD clear %ums after the sighting",
+@@ -710,9 +748,9 @@ void RadioLibInterface::setTransmitDelay()
+             (uint32_t)min(max(p->tx_after + add_delay, now + add_delay), now + 2 * getTxDelayMsecWeightedWorst(p->rx_snr)));
+         scheduleTransmitDelayCompleted(p->tx_after - now);
+     } else if (p->rx_snr == 0 && p->rx_rssi == 0) {
+-        /* We assume if rx_snr = 0 and rx_rssi = 0, the packet was generated locally.
+-         *   This assumption is valid because of the offset generated by the radio to account for the noise
+-         *   floor.
++        /* We assume if rx_snr = 0 and rx_rssi = 0, the packet was generated
++         * locally. This assumption is valid because of the offset generated by the
++         * radio to account for the noise floor.
+          */
+         startTransmitTimer(true);
+     } else {
+@@ -765,6 +803,9 @@ void RadioLibInterface::clampToLateRebroadcastWindow(NodeNum from, PacketId id)
+         if (txQueue.enqueue(p, &dropped)) {
+             LOG_TRACE("Move queued packet to late rebroadcast window %ums from now", (uint32_t)(p->tx_after - millis()));
+         } else {
++#if RAK3401_LEGION_TRAFFIC
++            legionTrafficForget(p);
++#endif
+             packetPool.release(p);
+         }
+         if (dropped) {
+@@ -774,7 +815,8 @@ void RadioLibInterface::clampToLateRebroadcastWindow(NodeNum from, PacketId id)
+ }
+ 
+ /**
+- * If there is a packet pending TX in the queue with a worse hop limit, remove it pending replacement with a better version
++ * If there is a packet pending TX in the queue with a worse hop limit, remove
++ * it pending replacement with a better version
+  * @return Whether a pending packet was removed
+  */
+ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_t hop_limit_lt)
+@@ -783,6 +825,9 @@ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_
+     if (p) {
+         LOG_DEBUG_RADIO("Drop pending-TX packet 0x%08x, hop limit %d", p->id, p->hop_limit);
+         RadioTxHooks::packetReleased(this, p);
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(p);
++#endif
+         packetPool.release(p);
+         return true;
+     }
+@@ -794,7 +839,11 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+ #if RAK3401_LEGION_APC
+     legionApcTxEnded(true);
+ #endif
+-    // Null if we forced the device into standby, which already completed the send.
++#if RAK3401_LEGION_TRAFFIC
++    legionTrafficTxEnded(sendingPacket, true);
++#endif
++    // Null if we forced the device into standby, which already completed the
++    // send.
+     meshtastic_MeshPacket *sent = detachSentPacket();
+     powerMon->clearState(meshtastic_PowerMon_State_Lora_TXOn); // But our transmitter is definitely off now
+     return sent;
+@@ -804,6 +853,9 @@ void RadioLibInterface::completeSending()
+ {
+ #if RAK3401_LEGION_APC
+     legionApcTxEnded(false);
++#endif
++#if RAK3401_LEGION_TRAFFIC
++    legionTrafficTxEnded(sendingPacket, false);
+ #endif
+     finishSentPacket(detachSentPacket());
+ }
+@@ -837,6 +889,9 @@ void RadioLibInterface::finishSentPacket(meshtastic_MeshPacket *p)
+     printPacket("Completed sending", p);
+ 
+     // We are done sending that packet, release it
++#if RAK3401_LEGION_TRAFFIC
++    legionTrafficForget(p);
++#endif
+     packetPool.release(p);
+ }
+ 
+@@ -1520,6 +1575,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+         LOG_WARN("Drop Tx packet: LoRa Tx disabled");
+         // Never reaches completeSending(), so any per-packet radio state has to be released here.
+         RadioTxHooks::packetReleased(this, txp);
++#if RAK3401_LEGION_TRAFFIC
++        legionTrafficForget(txp);
++#endif
+         packetPool.release(txp);
+         // We got here through isChannelActive(), which left the chip in standby for a transmit that is
+         // no longer happening. Without this the node stays deaf until something else re-arms it.
+@@ -1553,6 +1611,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+             lastTxStart = Time::getMillis();
+ #if RAK3401_LEGION_APC
+             legionApcTxStarted(txp->from, txp->id, isFromUs(txp), getPacketTime(txp), lastTxStart);
++#endif
++#if RAK3401_LEGION_TRAFFIC
++            legionTrafficTxStarted(txp);
+ #endif
+             printPacket("Started Tx", txp);
+ #ifdef LED_LORA
+diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
+index baa7aaa..bccd19c 100644
+--- a/src/mesh/Router.cpp
++++ b/src/mesh/Router.cpp
+@@ -1,4 +1,7 @@
+ #include "Router.h"
++#if RAK3401_LEGION_TRAFFIC
++#include "modules/LegionTraffic.h"
++#endif
+ #include "AdminKeys.h"
+ #include "Channels.h"
+ #include "CryptoEngine.h"
+@@ -580,6 +583,10 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
+         }
+     }
+ 
++#if RAK3401_LEGION_TRAFFIC
++    LegionTrafficPacketLease trafficLease(p);
++#endif
++
+     // If the packet is not yet encrypted, do so now
+     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
+         ChannelIndex chIndex = p->channel; // keep as a local because we are about to change it
+@@ -620,7 +627,12 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
+     }
+ 
+     assert(iface); // This should have been detected already in sendLocal (or we just received a packet from outside)
+-    return iface->send(p);
++    const auto result = iface->send(p);
++#if RAK3401_LEGION_TRAFFIC
++    if (result == ERRNO_OK)
++        trafficLease.transferred();
++#endif
++    return result;
+ }
+ 
+ /** Attempt to cancel a previously sent packet.  Returns true if a packet was found we could cancel */
+@@ -1613,6 +1625,11 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
+         printPacket("packet decoding failed or skipped (no PSK?)", p);
+     }
+ 
++#if RAK3401_LEGION_TRAFFIC
++    if (!skipHandle && decodedState == DecodeState::DECODE_SUCCESS && !legionTrafficAllowReceived(*p, src))
++        skipHandle = true;
++#endif
++
+     // call modules here
+     // If this could be a spoofed packet, don't let the modules see it.
+     if (!skipHandle) {
+diff --git a/src/mesh/SX126xInterface.cpp b/src/mesh/SX126xInterface.cpp
+index 77fccb2..82fecd5 100644
+--- a/src/mesh/SX126xInterface.cpp
++++ b/src/mesh/SX126xInterface.cpp
+@@ -1,4 +1,7 @@
+ #if RADIOLIB_EXCLUDE_SX126X != 1
++#if RAK3401_LEGION_TRAFFIC
++#include "modules/LegionTraffic.h"
++#endif
+ #include "SX126xInterface.h"
+ #include "configuration.h"
+ #include "error.h"
+@@ -265,6 +268,9 @@ template <typename T> bool SX126xInterface<T>::reinitChip()
+ 
+ template <typename T> int16_t SX126xInterface<T>::programModemParams()
+ {
++#if RAK3401_LEGION_TRAFFIC
++    legionPowerValid = false;
++#endif
+     // configure publicly accessible settings
+     int16_t err = lora.setSpreadingFactor(sf);
+     if (err != RADIOLIB_ERR_NONE) {
+@@ -683,6 +689,40 @@ template <typename T> bool SX126xInterface<T>::isChannelActive()
+     setTransmitEnable(false);
+     int16_t result = trySetStandby();
+     if (result == RADIOLIB_ERR_NONE) {
++#if RAK3401_LEGION_TRAFFIC
++        const int8_t nominal = config.lora.tx_power;
++        const int8_t requested = legionTrafficTxPower(scanForTx, nominal);
++        if (!legionPowerValid || legionAppliedTarget != requested) {
++            const int8_t chip = requested == nominal ? power : resolveTxPower(requested, SX126X_MAX_POWER);
++#ifdef SX126X_NO_POWER_OPTIMIZATION_TABLE
++            int16_t setting = lora.setOutputPower(chip, false);
++#else
++            int16_t setting = lora.setOutputPower(chip);
++#endif
++            legionTrafficPowerProgrammed(chip, setting == RADIOLIB_ERR_NONE);
++            legionPowerValid = setting == RADIOLIB_ERR_NONE;
++            legionAppliedTarget = requested;
++            legionChipPower = chip;
++            if (!legionPowerValid) {
++#ifdef SX126X_NO_POWER_OPTIMIZATION_TABLE
++                setting = lora.setOutputPower(power, false);
++#else
++                setting = lora.setOutputPower(power);
++#endif
++                legionTrafficPowerProgrammed(power, setting == RADIOLIB_ERR_NONE);
++                legionTrafficPowerFallback(scanForTx, nominal);
++                legionPowerValid = setting == RADIOLIB_ERR_NONE;
++                legionAppliedTarget = nominal;
++                legionChipPower = power;
++                if (!legionPowerValid) {
++                    startReceive();
++                    return true;
++                }
++            }
++        } else {
++            legionTrafficPowerProgrammed(legionChipPower, true);
++        }
++#endif
+ #ifdef ARCH_PORTDUINO
+         prestageTx();
+ #endif
+diff --git a/src/mesh/SX126xInterface.h b/src/mesh/SX126xInterface.h
+index a9dd20d..0bcf9f8 100644
+--- a/src/mesh/SX126xInterface.h
++++ b/src/mesh/SX126xInterface.h
+@@ -9,11 +9,16 @@
+ // task runs on.
+ 
+ /**
+- * \brief Adapter for SX126x radio family. Implements common logic for child classes.
++ * \brief Adapter for SX126x radio family. Implements common logic for child
++ * classes.
+  * \tparam T RadioLib module type for SX126x: SX1262, SX1268.
+  */
+ template <class T> class SX126xInterface : public RadioLibInterface
+ {
++#if RAK3401_LEGION_TRAFFIC
++    bool legionPowerValid = false;
++    int8_t legionAppliedTarget = 0, legionChipPower = 0;
++#endif
+   public:
+     SX126xInterface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
+                     RADIOLIB_PIN_TYPE busy);
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index 9d5a66e..d30fca5 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -357,6 +357,10 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+                                          "and no pending restart/transfer");
+             return;
+         }
++#if RAK3401_LEGION_TRAFFIC
++        if (mode == legion::ApcMode::Off)
++            legionTrafficRfResetFault();
++#endif
+         const bool changed = legionApcSetMode(mode, static_cast<uint32_t>(random(1, 0x7fffffff)), radioGeneration);
+         apcBound = mode != legion::ApcMode::Off;
+         apcControl = command.control;
+@@ -366,19 +370,22 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+         char output[150];
+         std::snprintf(output, sizeof(output), "APC %s%s; %s; RAM only, boot OFF", legion::apcModeName(mode),
+                       changed ? " selected" : " unchanged",
+-                      mode == legion::ApcMode::On ? "optional relay budget armed after warmup, TX nominal" : "normal TX/relays");
++                      mode == legion::ApcMode::On ? "S1+S2 armed after warmup" : "normal TX/relays");
+         reply(command.control.index, output);
+         apcReport.valid = false;
+         return;
+     }
+     const auto page = request.page;
+-    if (page < 1 || page > 6) {
+-        reply(command.control.index, "APC pages: 1-6; request page 1 first");
++    if (page < 1 || page > 7) {
++        reply(command.control.index, "APC pages: 1-7; request page 1 first");
+         return;
+     }
+     if (page == 1) {
+         apcReport.stats = legionApcSnapshot();
+         apcReport.controlStats = legionApcControlSnapshot();
++#if RAK3401_LEGION_TRAFFIC
++        apcReport.rfStats = legionTrafficRfStatus();
++#endif
+         apcReport.control = command.control;
+         apcReport.from = command.from;
+         apcReport.createdAt = now;
+@@ -405,7 +412,7 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+             std::snprintf(filtered, sizeof(filtered), "%u", c.filtered);
+         n = std::snprintf(body, sizeof(body),
+                           "%s %s %s\nVBAT:%u/%smV\nnext:%s %lu/%lus\neligible:%lu would:%lu "
+-                          "skip:%lu\nTX:nominal",
++                          "skip:%lu\nRF:see page 7",
+                           legion::apcModeName(c.mode), legion::apcStateName(c.state), legion::apcHoldName(c.hold), s.battery,
+                           filtered, legion::apcStateName(c.pending), (unsigned long)c.dwellSec, (unsigned long)c.requiredSec,
+                           (unsigned long)c.eligible, (unsigned long)c.wouldSkip, (unsigned long)c.skipped);
+@@ -444,24 +451,37 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+                           (unsigned long)s.unfinished, (unsigned long)s.gaps, (unsigned long)s.configChanges);
+     } else if (page == 5)
+         n = std::snprintf(body, sizeof(body), "%s", apcReport.radio);
+-    else {
++    else if (page == 6) {
+         const auto &c = apcReport.controlStats;
+         char wouldMs[21], skippedMs[21];
+         formatUint64(c.wouldSkipMs, wouldMs);
+         formatUint64(c.skippedMs, skippedMs);
+         n = std::snprintf(body, sizeof(body),
+-                          "budget C/R:%lu/%lums/min\nburst:%lums; RF:nominal\nprotected:%lu "
++                          "budget C/R:%lu/%lums/min\nburst:%lums; RF:S2\nprotected:%lu "
+                           "changes:%lu\nest_would/skip_ms:%s/%s",
+                           (unsigned long)legion::APC_CONSERVE_BUDGET_MS, (unsigned long)legion::APC_RESERVE_BUDGET_MS,
+                           (unsigned long)legion::APC_BURST_MS, (unsigned long)c.protectedRelays, (unsigned long)c.changes,
+                           wouldMs, skippedMs);
+     }
++    if (page == 7) {
++#if RAK3401_LEGION_TRAFFIC
++        const auto &r = apcReport.rfStats;
++        n = std::snprintf(body, sizeof(body),
++                          "S2 P0/last/chip:%d/%d/%ddBm valid:%u fault:%u\nTX low/nom:%lu/%lu "
++                          "shadow:%lu\nrepeat:%lu err:%lu meta_full:%lu",
++                          r.nominalDbm, r.targetDbm, r.chipDbm, unsigned(r.valid), unsigned(r.fault), (unsigned long)r.reduced,
++                          (unsigned long)r.nominal, (unsigned long)r.wouldReduce, (unsigned long)r.repeated,
++                          (unsigned long)r.errors, (unsigned long)r.metadataFull);
++#else
++        n = std::snprintf(body, sizeof(body), "S2 unavailable");
++#endif
++    }
+     char output[legion::CONTROL_TEXT_MAX + 1];
+     if (n < 0 || size_t(n) >= sizeof(body)) {
+         reply(command.control.index, "APC report exceeds message limit");
+         return;
+     }
+-    n = std::snprintf(output, sizeof(output), "!%08lx A2 s%08lx r%04x %u/6\n%s", (unsigned long)nodeDB->getNodeNum(),
++    n = std::snprintf(output, sizeof(output), "!%08lx A2 s%08lx r%04x %u/7\n%s", (unsigned long)nodeDB->getNodeNum(),
+                       (unsigned long)s.session, apcReport.capture, page, body);
+     if (n < 0 || size_t(n) >= sizeof(output)) {
+         reply(command.control.index, "APC report exceeds message limit");
+@@ -471,6 +491,82 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+ }
+ #endif
+ 
++#if RAK3401_LEGION_TRAFFIC
++void LegionControlModule::guard(const Pending &command, uint32_t now)
++{
++    const auto &r = command.request;
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    if (r.command == legion::ControlCommand::Guard) {
++        if (r.guardAction >= 2 && r.guardAction <= 4) {
++            if (r.guardAction != 3 && (rebootAtMsec || shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
++#if !MESHTASTIC_EXCLUDE_ADMIN
++                                       || (adminModule && adminModule->isEditingSettings())
++#endif
++                                           )) {
++                reply(command.control.index, "SPAM requires stable configuration and "
++                                             "no pending restart/transfer");
++                return;
++            }
++            legionTrafficSetGuard(r.guardAction == 4   ? legion::GuardMode::On
++                                  : r.guardAction == 2 ? legion::GuardMode::Observe
++                                                       : legion::GuardMode::Off);
++            spamReport.valid = false;
++        } else if (r.guardAction == 5) {
++            legionTrafficClearSpam(r.target);
++            spamReport.valid = false;
++            bool ignored = nodeInfoLiteIsIgnored(nodeDB->getMeshNode(r.target));
++            for (size_t i = 0; i < config.lora.ignore_incoming_count; ++i)
++                ignored |= config.lora.ignore_incoming[i] == r.target;
++            std::snprintf(output, sizeof(output), "SPAM cleared !%08lx; manual ignore:%s (unchanged)", (unsigned long)r.target,
++                          ignored ? "ON" : "OFF");
++            reply(command.control.index, output);
++            return;
++        }
++        const auto s = legionTrafficGuardStatus();
++        std::snprintf(output, sizeof(output),
++                      "SPAM:%s %s:%u\nfresh:%lu dup:%lu limited:%lu\ndrop:%lu "
++                      "would:%lu full:%lu\nRAM only; boot OBSERVE",
++                      legion::guardModeName(s.mode), s.mode == legion::GuardMode::Observe ? "simQ" : "Q", unsigned(s.active),
++                      (unsigned long)s.fresh, (unsigned long)s.duplicates, (unsigned long)s.limited, (unsigned long)s.dropped,
++                      (unsigned long)s.wouldDrop, (unsigned long)s.full);
++        reply(command.control.index, output);
++        return;
++    }
++    if (r.page == 1) {
++        spamReport.size = legionTrafficSpamList(spamReport.entries, legion::SPAM_QUARANTINES);
++        spamReport.mode = legionTrafficGuardStatus().mode;
++        spamReport.control = command.control;
++        spamReport.from = command.from;
++        spamReport.createdAt = now;
++        spamReport.generation = radioGeneration;
++        spamReport.valid = true;
++    } else if (!spamReport.valid || spamReport.from != command.from || !sameChannel(spamReport.control, command.control) ||
++               spamReport.generation != radioGeneration || Throttle::hasElapsed(spamReport.createdAt, 15 * 60000)) {
++        reply(command.control.index, "SPAM capture missing/expired; request page 1");
++        return;
++    }
++    const unsigned pages = std::max(1u, (unsigned(spamReport.size) + 2) / 3);
++    if (!r.page || r.page > pages) {
++        reply(command.control.index, "SPAM page out of range; request page 1");
++        return;
++    }
++    size_t used = std::snprintf(output, sizeof(output), "!%08lx SPAM %s %u/%u age:%lus\n", (unsigned long)nodeDB->getNodeNum(),
++                                legion::guardModeName(spamReport.mode), r.page, pages,
++                                (unsigned long)(uint32_t(now - spamReport.createdAt) / 1000));
++    if (!spamReport.size)
++        used += std::snprintf(output + used, sizeof(output) - used, "No quarantines");
++    for (unsigned i = (r.page - 1) * 3; i < spamReport.size && i < r.page * 3 && used < sizeof(output); ++i) {
++        const auto &entry = spamReport.entries[i];
++        const uint32_t age = (now - spamReport.createdAt) / 1000;
++        used += std::snprintf(output + used, sizeof(output) - used, "!%08lx %s %s %lus\n", (unsigned long)entry.node,
++                              entry.verified ? "signed" : "unsigned", legion::spamCauseName(entry.cause),
++                              (unsigned long)(entry.remainingSec > age ? entry.remainingSec - age : 0));
++    }
++    if (used < sizeof(output))
++        sendText(command.control.index, output);
++}
++#endif
++
+ void LegionControlModule::execute(const Pending &command, uint32_t now)
+ {
+     const auto &request = command.request;
+@@ -479,6 +575,14 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         const char *usage = "Usage: /msg !nodeid <channel> <message>; text <=199 "
+                             "UTF-8 bytes, channel <=11 bytes";
+         switch (request.command) {
++#if RAK3401_LEGION_TRAFFIC
++        case legion::ControlCommand::Guard:
++            usage = "Usage: /guard status|observe|on|off !legionid; /guard clear !legionid !peerid";
++            break;
++        case legion::ControlCommand::SpamList:
++            usage = "Usage: /spamlist !legionid [positive page]";
++            break;
++#endif
+         case legion::ControlCommand::Reboot:
+             usage = "Usage: /reboot !nodeid";
+             break;
+@@ -491,7 +595,7 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+             break;
+         case legion::ControlCommand::Apc:
+             usage = "Usage: /apc observe|shadow|on|off|status !legionid [status page "
+-                    "1-6]";
++                    "1-7]";
+             break;
+         case legion::ControlCommand::Boot:
+             usage = "Usage: /boot !legionid";
+@@ -522,6 +626,12 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         reply(channel, usage);
+         return;
+     }
++#if RAK3401_LEGION_TRAFFIC
++    if (request.command == legion::ControlCommand::Guard || request.command == legion::ControlCommand::SpamList) {
++        guard(command, now);
++        return;
++    }
++#endif
+ #if RAK3401_LEGION_APC
+     if (request.command == legion::ControlCommand::Apc) {
+         apc(command, now);
+@@ -710,6 +820,9 @@ void LegionControlModule::pollDaily()
+     if (!findControlChannel(control))
+         return;
+     const auto backup = legionBackupStatus();
++#if RAK3401_LEGION_TRAFFIC
++    const auto spam = legionTrafficGuardStatus();
++#endif
+     char apcState[32] = "UNKNOWN";
+ #if RAK3401_LEGION_APC
+     const auto apc = legionApcControlSnapshot();
+@@ -719,8 +832,15 @@ void LegionControlModule::pollDaily()
+         std::snprintf(apcState, sizeof(apcState), "%s %s", legion::apcModeName(apc.mode), legion::apcStateName(apc.state));
+ #endif
+     char output[legion::CONTROL_TEXT_MAX + 1];
++#if RAK3401_LEGION_TRAFFIC
++    const int length = std::snprintf(output, sizeof(output), "!%08lx DAILY\nAPC:%s\nSPAM:%s %s:%u\nBACKUP:%s",
++                                     (unsigned long)nodeDB->getNodeNum(), apcState, legion::guardModeName(spam.mode),
++                                     spam.mode == legion::GuardMode::Observe ? "simQ" : "Q", unsigned(spam.active),
++                                     legionBackupStateName(backup.state));
++#else
+     const int length = std::snprintf(output, sizeof(output), "!%08lx DAILY\nAPC:%s\nBACKUP:%s",
+                                      (unsigned long)nodeDB->getNodeNum(), apcState, legionBackupStateName(backup.state));
++#endif
+     Channel current;
+     if (length > 0 && static_cast<size_t>(length) < sizeof(output) && findControlChannel(current) &&
+         sameChannel(current, control) && sendText(control.index, output))
+@@ -946,6 +1066,12 @@ int32_t LegionControlModule::runOnce()
+ {
+     const uint32_t now = Time::getMillis();
+     pollTrace(now);
++#if RAK3401_LEGION_TRAFFIC
++    (void)legionTrafficGuardStatus(); // Disarm stale channel/role context even
++                                      // during radio silence.
++    if (spamReport.valid && Throttle::hasElapsed(spamReport.createdAt, legion::CONTROL_SNAPSHOT_MS))
++        spamReport.valid = false;
++#endif
+ #if RAK3401_LEGION_APC
+     apcContext();
+     if (apcReport.valid && Throttle::hasElapsed(apcReport.createdAt, legion::CONTROL_SNAPSHOT_MS))
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 8f69dc1..80b249f 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -8,6 +8,9 @@
+ #endif
+ #include "LegionControlPolicy.h"
+ #include "LegionDailyPolicy.h"
++#if RAK3401_LEGION_TRAFFIC
++#include "LegionTraffic.h"
++#endif
+ #if RAK3401_LEGION_APC
+ #include "LegionApc.h"
+ #endif
+@@ -73,6 +76,17 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     void report(const Pending &command, uint32_t now, bool zeroHop);
+     void editChannel(const Pending &command);
+     void pollDaily();
++#if RAK3401_LEGION_TRAFFIC
++    void guard(const Pending &command, uint32_t now);
++    struct SpamReport {
++        legion::SpamEntry entries[legion::SPAM_QUARANTINES]{};
++        Channel control;
++        uint32_t from = 0, createdAt = 0, generation = 0;
++        uint8_t size = 0;
++        legion::GuardMode mode = legion::GuardMode::Observe;
++        bool valid = false;
++    } spamReport;
++#endif
+     legion::DailySchedule daily;
+     void startTrace(const Pending &command, uint32_t now);
+     void pollTrace(uint32_t now);
+@@ -89,6 +103,9 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     struct ApcReport {
+         legion::ApcStats stats;
+         legion::ApcControlStats controlStats;
++#if RAK3401_LEGION_TRAFFIC
++        legion::RfStats rfStats;
++#endif
+         Channel control;
+         uint32_t from = 0, createdAt = 0, uptime = 0, generation = 0;
+         uint16_t capture = 0;
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index 1306fb9..0e37e4b 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -28,7 +28,9 @@ enum class ControlCommand : uint8_t {
+     Apc,
+     Components,
+     CreateChannel,
+-    DeleteChannel
++    DeleteChannel,
++    Guard,
++    SpamList
+ };
+ struct ControlRequest {
+     ControlCommand command = ControlCommand::None;
+@@ -36,6 +38,7 @@ struct ControlRequest {
+     uint32_t target = 0;
+     uint16_t page = 1;
+     uint8_t apcAction = 0;
++    uint8_t guardAction = 0;
+     uint8_t keySize = 0;
+     uint8_t key[32]{};
+     char channel[12]{};
+@@ -273,7 +276,31 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+             result.command = ControlCommand::None;
+             return result;
+         }
+-        result.valid = result.apcAction == 1 ? parser.page(result.page) && result.page <= 6 : parser.end();
++        result.valid = result.apcAction == 1 ? parser.page(result.page) && result.page <= 7 : parser.end();
++        return result;
++    }
++#endif
++#if RAK3401_LEGION_TRAFFIC
++    if (parser.token("/guard")) {
++        result.command = ControlCommand::Guard;
++        if (parser.token("status"))
++            result.guardAction = 1;
++        else if (parser.token("observe"))
++            result.guardAction = 2;
++        else if (parser.token("off"))
++            result.guardAction = 3;
++        else if (parser.token("on"))
++            result.guardAction = 4;
++        else if (parser.token("clear"))
++            result.guardAction = 5;
++        if (!parser.node(result.node) || result.node != ownNode) {
++            result.command = ControlCommand::None;
++            return result;
++        }
++        result.valid =
++            result.guardAction &&
++            (result.guardAction != 5 || (parser.node(result.target) && validPeer(result.target) && result.target != ownNode)) &&
++            parser.end();
+         return result;
+     }
+ #endif
+@@ -303,6 +330,10 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+         result.command = ControlCommand::Unignore;
+     else if (parser.token("/ignorelist"))
+         result.command = ControlCommand::IgnoreList;
++#if RAK3401_LEGION_TRAFFIC
++    else if (parser.token("/spamlist"))
++        result.command = ControlCommand::SpamList;
++#endif
+     else
+         return result;
+     if (!parser.node(result.node) || result.node != ownNode) {
+@@ -311,7 +342,8 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+     }
+     if (result.command == ControlCommand::Message)
+         result.valid = parser.message(result);
+-    else if (result.command == ControlCommand::ZeroHop || result.command == ControlCommand::IgnoreList)
++    else if (result.command == ControlCommand::ZeroHop || result.command == ControlCommand::IgnoreList ||
++             result.command == ControlCommand::SpamList)
+         result.valid = parser.page(result.page);
+     else if (result.command == ControlCommand::Trace || result.command == ControlCommand::Ignore ||
+              result.command == ControlCommand::Unignore)
+diff --git a/src/modules/LegionGuardPolicy.h b/src/modules/LegionGuardPolicy.h
+new file mode 100644
+index 0000000..4c604b3
+--- /dev/null
++++ b/src/modules/LegionGuardPolicy.h
+@@ -0,0 +1,253 @@
++#pragma once
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++namespace legion
++{
++enum class GuardMode : uint8_t { Off, Observe, On };
++enum class SpamCause : uint8_t { Rate, Repeated };
++constexpr uint32_t SPAM_WINDOW_MS = 20000, SPAM_QUARANTINE_MS = 600000;
++constexpr size_t SPAM_ORIGINS = 12, SPAM_SEEN = 12, SPAM_QUARANTINES = 8;
++inline const char *guardModeName(GuardMode mode)
++{
++    return mode == GuardMode::On ? "ON" : mode == GuardMode::Observe ? "OBSERVE" : "OFF";
++}
++inline const char *spamCauseName(SpamCause cause)
++{
++    return cause == SpamCause::Repeated ? "repeat" : "rate";
++}
++
++struct SpamIdentity {
++    uint32_t node = 0;
++    uint8_t key[32]{};
++    bool verified = false;
++    bool operator==(const SpamIdentity &other) const
++    {
++        return node == other.node && verified == other.verified && (!verified || !std::memcmp(key, other.key, sizeof(key)));
++    }
++};
++struct SpamEntry {
++    uint32_t node = 0, remainingSec = 0;
++    bool verified = false;
++    SpamCause cause = SpamCause::Rate;
++};
++struct GuardStats {
++    GuardMode mode = GuardMode::Observe;
++    uint32_t fresh = 0, duplicates = 0, limited = 0, quarantined = 0, dropped = 0, wouldDrop = 0, full = 0;
++    uint8_t active = 0;
++};
++
++class GuardPolicy
++{
++  public:
++    bool setMode(GuardMode mode)
++    {
++        if (stats.mode == mode)
++            return false;
++        resetEvidence();
++        stats.mode = mode;
++        return true;
++    }
++    void contextChanged()
++    {
++        resetEvidence();
++        stats.mode = GuardMode::Off;
++    }
++    bool receive(uint32_t now, const SpamIdentity &identity, uint32_t id, uint32_t hash)
++    {
++        if (stats.mode == GuardMode::Off || !id)
++            return true;
++        expire(now);
++        if (quarantine(identity))
++            return decision(false);
++        Origin *origin = findOrigin(identity);
++        if (!origin) {
++            for (auto &candidate : origins) {
++                if (!candidate.used || (uint32_t(now - candidate.lastSeen) > 60000 && !quarantine(candidate.identity))) {
++                    candidate = {};
++                    candidate.used = true;
++                    candidate.identity = identity;
++                    candidate.refillAt = now;
++                    origin = &candidate;
++                    break;
++                }
++            }
++        }
++        if (!origin) {
++            ++stats.full;
++            return true;
++        }
++        for (const auto &event : origin->events) {
++            if (event.used && event.id == id && uint32_t(now - event.at) <= SPAM_WINDOW_MS) {
++                ++stats.duplicates;
++                return stats.mode != GuardMode::On || event.allowed;
++            }
++        }
++        ++stats.fresh;
++        origin->lastSeen = now;
++        Event &slot = origin->events[origin->next];
++        if (slot.used && uint32_t(now - slot.at) <= SPAM_WINDOW_MS) {
++            ++stats.full;
++            return true; // Lost duplicate evidence must not create an individual
++                         // sanction.
++        }
++        const uint32_t elapsed = now - origin->refillAt;
++        origin->credit = static_cast<uint16_t>(std::min(uint32_t(40000), uint32_t(origin->credit) + std::min<uint32_t>(elapsed, 40000)));
++        origin->refillAt = now;
++        const bool withinRate = origin->credit >= 5000;
++        if (withinRate)
++            origin->credit -= 5000;
++        else {
++            ++stats.limited;
++            origin->excess[origin->nextExcess] = now;
++            origin->excessUsed[origin->nextExcess] = true;
++            origin->nextExcess = (origin->nextExcess + 1) % 4;
++        }
++        uint8_t repeats = 1, excesses = 0;
++        for (const auto &event : origin->events)
++            repeats += event.used && event.hash == hash && uint32_t(now - event.at) <= SPAM_WINDOW_MS;
++        for (size_t i = 0; i < 4; ++i)
++            excesses += origin->excessUsed[i] && uint32_t(now - origin->excess[i]) <= SPAM_WINDOW_MS;
++        bool allowed = withinRate;
++        if (repeats >= 6 || excesses >= 4) {
++            allowed = false;
++            for (auto &q : quarantines) {
++                if (!q.used) {
++                    q = {};
++                    q.used = true;
++                    q.identity = identity;
++                    q.startedAt = now;
++                    q.cause = repeats >= 6 ? SpamCause::Repeated : SpamCause::Rate;
++                    ++stats.quarantined;
++                    break;
++                }
++            }
++            if (!quarantine(identity))
++                ++stats.full;
++        }
++        slot = {now, id, hash, true, allowed};
++        origin->next = (origin->next + 1) % SPAM_SEEN;
++        return decision(allowed);
++    }
++    bool allowPending(uint32_t now, const SpamIdentity &identity, uint32_t id)
++    {
++        if (stats.mode != GuardMode::On)
++            return true;
++        expire(now);
++        if (quarantine(identity))
++            return false;
++        const auto *origin = findOrigin(identity);
++        if (origin)
++            for (const auto &event : origin->events)
++                if (event.used && event.id == id && uint32_t(now - event.at) <= SPAM_WINDOW_MS)
++                    return event.allowed;
++        return true;
++    }
++    void clear(uint32_t node, uint32_t now)
++    {
++        for (auto &q : quarantines)
++            if (q.used && q.identity.node == node)
++                q = {};
++        for (auto &origin : origins)
++            if (origin.used && origin.identity.node == node) {
++                const auto identity = origin.identity;
++                origin = {};
++                origin.used = true;
++                origin.identity = identity;
++                origin.credit = 40000;
++                origin.refillAt = origin.lastSeen = now;
++            }
++    }
++    GuardStats snapshot(uint32_t now)
++    {
++        expire(now);
++        auto result = stats;
++        for (const auto &q : quarantines)
++            result.active += q.used;
++        return result;
++    }
++    size_t list(uint32_t now, SpamEntry *out, size_t capacity)
++    {
++        expire(now);
++        size_t size = 0;
++        for (const auto &q : quarantines)
++            if (q.used && size < capacity)
++                out[size++] = {q.identity.node, (SPAM_QUARANTINE_MS - uint32_t(now - q.startedAt) + 999) / 1000,
++                               q.identity.verified, q.cause};
++        return size;
++    }
++
++  private:
++    struct Event {
++        uint32_t at = 0, id = 0, hash = 0;
++        bool used = false, allowed = true;
++    };
++    struct Origin {
++        SpamIdentity identity;
++        Event events[SPAM_SEEN]{};
++        uint32_t refillAt = 0, lastSeen = 0, excess[4]{};
++        uint16_t credit = 40000;
++        uint8_t next = 0, nextExcess = 0;
++        bool used = false, excessUsed[4]{};
++    };
++    struct Quarantine {
++        SpamIdentity identity;
++        uint32_t startedAt = 0;
++        SpamCause cause = SpamCause::Rate;
++        bool used = false;
++    };
++    Origin origins[SPAM_ORIGINS]{};
++    Quarantine quarantines[SPAM_QUARANTINES]{};
++    GuardStats stats;
++    void resetEvidence()
++    {
++        for (auto &origin : origins)
++            origin = {};
++        for (auto &q : quarantines)
++            q = {};
++    }
++    Origin *findOrigin(const SpamIdentity &identity)
++    {
++        for (auto &origin : origins)
++            if (origin.used && origin.identity == identity)
++                return &origin;
++        return nullptr;
++    }
++    const Quarantine *quarantine(const SpamIdentity &identity) const
++    {
++        for (const auto &q : quarantines)
++            if (q.used && q.identity == identity)
++                return &q;
++        return nullptr;
++    }
++    void expire(uint32_t now)
++    {
++        for (auto &q : quarantines) {
++            if (!q.used || uint32_t(now - q.startedAt) < SPAM_QUARANTINE_MS)
++                continue;
++            if (auto *origin = findOrigin(q.identity)) {
++                const auto identity = origin->identity;
++                *origin = {};
++                origin->used = true;
++                origin->identity = identity;
++                origin->credit = 10000;
++                origin->refillAt = origin->lastSeen = now;
++            }
++            q = {};
++        }
++    }
++    bool decision(bool allowed)
++    {
++        if (!allowed) {
++            ++stats.wouldDrop;
++            if (stats.mode == GuardMode::On)
++                ++stats.dropped;
++        }
++        return stats.mode != GuardMode::On || allowed;
++    }
++};
++static_assert(sizeof(GuardPolicy) <= 4096, "Guard RAM budget exceeded");
++} // namespace legion
+diff --git a/src/modules/LegionRfPolicy.h b/src/modules/LegionRfPolicy.h
+new file mode 100644
+index 0000000..691c656
+--- /dev/null
++++ b/src/modules/LegionRfPolicy.h
+@@ -0,0 +1,114 @@
++#pragma once
++
++#include "LegionApcController.h"
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++
++namespace legion
++{
++enum class RelayKind : uint8_t { Protected, Routine, NodeInfo, Text, Opaque };
++struct RfStats {
++    uint32_t reduced = 0, wouldReduce = 0, nominal = 0, repeated = 0, errors = 0, metadataFull = 0;
++    int8_t nominalDbm = 0, targetDbm = 0, chipDbm = 0;
++    bool valid = false, fault = false;
++};
++class RfPolicy
++{
++  public:
++    int8_t target(const ApcControlStats &apc, RelayKind kind, uint32_t from, uint32_t id, uint64_t hash, int8_t nominal,
++                  uint32_t now)
++    {
++        if (apc.mode == ApcMode::Off)
++            stats.fault = false;
++        if (stats.fault || apc.hold != ApcHold::None || apc.state == ApcState::Normal ||
++            (apc.mode != ApcMode::On && apc.mode != ApcMode::Shadow) || kind == RelayKind::Protected || nominal <= 21)
++            return nominal;
++        if (wasTransmitted(from, id, now))
++            return nominal;
++        if (kind == RelayKind::NodeInfo && !knownNodeInfo(from, hash, now))
++            return nominal;
++        const int delta = apc.state == ApcState::Reserve && (kind == RelayKind::Routine || kind == RelayKind::NodeInfo) ? 6 : 3;
++        return static_cast<int8_t>(std::max(21, int(nominal) - delta));
++    }
++    void started(const ApcControlStats &apc, uint32_t from, uint32_t id, int8_t nominal, int8_t proposed, int8_t applied,
++                 uint32_t now)
++    {
++        if (wasTransmitted(from, id, now))
++            ++stats.repeated;
++        sent[nextSent] = {from, id, now, true};
++        nextSent = (nextSent + 1) % 24;
++        stats.nominalDbm = nominal;
++        stats.targetDbm = applied;
++        if (apc.mode == ApcMode::Shadow && proposed < nominal)
++            ++stats.wouldReduce;
++        if (applied < nominal)
++            ++stats.reduced;
++        else
++            ++stats.nominal;
++    }
++    void nodeInfoDone(uint32_t from, uint64_t hash, uint32_t now)
++    {
++        for (auto &entry : nodes) {
++            if (entry.used && entry.from == from) {
++                entry = {hash, from, now, true};
++                return;
++            }
++        }
++        for (auto &entry : nodes) {
++            if (!entry.used || uint32_t(now - entry.at) > 3600000) {
++                entry = {hash, from, now, true};
++                return;
++            }
++        }
++    }
++    void programmed(int8_t chip, bool success)
++    {
++        stats.valid = success;
++        if (success)
++            stats.chipDbm = chip;
++        else {
++            ++stats.errors;
++            stats.fault = true;
++        }
++    }
++    void resetFault() { stats.fault = false; }
++    void metadataFull() { ++stats.metadataFull; }
++    void contextChanged()
++    {
++        for (auto &s : sent)
++            s = {};
++        for (auto &n : nodes)
++            n = {};
++        stats.valid = false;
++    }
++    RfStats snapshot() const { return stats; }
++
++  private:
++    struct Sent {
++        uint32_t from = 0, id = 0, at = 0;
++        bool used = false;
++    } sent[24]{};
++    struct Node {
++        uint64_t hash = 0;
++        uint32_t from = 0, at = 0;
++        bool used = false;
++    } nodes[16]{};
++    uint8_t nextSent = 0;
++    RfStats stats;
++    bool wasTransmitted(uint32_t from, uint32_t id, uint32_t now) const
++    {
++        for (const auto &entry : sent)
++            if (entry.used && entry.from == from && entry.id == id && uint32_t(now - entry.at) <= 120000)
++                return true;
++        return false;
++    }
++    bool knownNodeInfo(uint32_t from, uint64_t hash, uint32_t now) const
++    {
++        for (const auto &entry : nodes)
++            if (entry.used && entry.from == from && entry.hash == hash && uint32_t(now - entry.at) <= 3600000)
++                return true;
++        return false;
++    }
++};
++} // namespace legion
+diff --git a/src/modules/LegionTraffic.cpp b/src/modules/LegionTraffic.cpp
+new file mode 100644
+index 0000000..a1e3b7d
+--- /dev/null
++++ b/src/modules/LegionTraffic.cpp
+@@ -0,0 +1,300 @@
++#include "LegionTraffic.h"
++
++#if RAK3401_LEGION_TRAFFIC
++#if !RAK3401_LEGION_APC || !RAK3401_LEGION_CONTROL
++#error "Legion traffic policies require APC and private control"
++#endif
++#include "Channels.h"
++#include "LegionApc.h"
++#include "NodeDB.h"
++#include "UptimeClock.h"
++#include "concurrency/Lock.h"
++#include "concurrency/LockGuard.h"
++#include "main.h"
++
++namespace
++{
++concurrency::Lock trafficLock;
++legion::GuardPolicy guardPolicy;
++legion::RfPolicy rfPolicy;
++struct Context {
++    uint32_t generation = 0;
++    uint8_t primary = 0, role = 0, keySize = 0;
++    uint8_t key[32]{};
++    char name[12]{};
++    bool aead = false;
++} context;
++bool haveContext = false;
++struct Tag {
++    const meshtastic_MeshPacket *packet = nullptr;
++    legion::SpamIdentity identity;
++    uint64_t nodeInfoHash = 0;
++    uint32_t id = 0;
++    legion::RelayKind kind = legion::RelayKind::Protected;
++    int8_t nominal = 0, proposed = 0, applied = 0;
++    bool primaryText = false, started = false;
++} tags[legion::TRAFFIC_TAG_CAPACITY];
++const meshtastic_MeshPacket *preparedPacket = nullptr;
++int8_t preparedPower = 0;
++static_assert(sizeof(tags) + sizeof(guardPolicy) + sizeof(rfPolicy) <= 7168, "Legion traffic RAM budget exceeded");
++
++void syncContext()
++{
++    Context next{};
++    next.generation = radioGeneration;
++    next.primary = channels.getPrimaryIndex();
++    next.role = config.device.role;
++    if (next.primary < channels.getNumChannels()) {
++        const auto &ch = channels.getByIndex(next.primary);
++        next.keySize = std::min(size_t(32), size_t(ch.settings.psk.size));
++        std::memcpy(next.key, ch.settings.psk.bytes, next.keySize);
++        std::memcpy(next.name, ch.settings.name, sizeof(next.name));
++        next.aead = channels.isAEADEnabled(next.primary);
++    }
++    bool changed = false;
++    {
++        concurrency::LockGuard lock(&trafficLock);
++        if (!haveContext || context.generation != next.generation || context.primary != next.primary ||
++            context.role != next.role || context.keySize != next.keySize || context.aead != next.aead ||
++            std::memcmp(context.key, next.key, sizeof(next.key)) || std::memcmp(context.name, next.name, sizeof(next.name))) {
++            changed = haveContext;
++            context = next;
++            haveContext = true;
++            if (changed) {
++                guardPolicy.contextChanged();
++                rfPolicy.contextChanged();
++                for (auto &tag : tags)
++                    tag = {};
++            }
++        }
++    }
++    if (changed)
++        legionApcDisarm();
++}
++
++bool textPort(const meshtastic_MeshPacket &p)
++{
++    return p.which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
++           (p.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
++            p.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP);
++}
++bool primaryText(const meshtastic_MeshPacket &p)
++{
++    return p.from && !isFromUs(&p) && isBroadcast(p.to) && p.channel == channels.getPrimaryIndex() && textPort(p);
++}
++bool identityOf(const meshtastic_MeshPacket &p, legion::SpamIdentity &identity)
++{
++    identity = {};
++    identity.node = getFrom(&p);
++    identity.verified = p.xeddsa_signed;
++    if (!identity.verified)
++        return true;
++    meshtastic_NodeInfoLite_public_key_t key = {0, {0}};
++    if (!nodeDB->copyPublicKeyAuthoritative(p.from, key) || key.size != 32)
++        return false;
++    std::memcpy(identity.key, key.bytes, sizeof(identity.key));
++    return true;
++}
++uint64_t contentHash(const meshtastic_MeshPacket &p)
++{
++    uint64_t hash = 14695981039346656037ULL;
++    hash = (hash ^ static_cast<uint32_t>(p.decoded.portnum)) * 1099511628211ULL;
++    hash = (hash ^ p.decoded.payload.size) * 1099511628211ULL;
++    for (size_t i = 0; i < p.decoded.payload.size && i < sizeof(p.decoded.payload.bytes); ++i)
++        hash = (hash ^ p.decoded.payload.bytes[i]) * 1099511628211ULL;
++    return hash;
++}
++bool controlChannel(uint8_t index)
++{
++    return index < channels.getNumChannels() &&
++           !std::strncmp(channels.getByIndex(index).settings.name, "LegionRF", sizeof(context.name));
++}
++legion::RelayKind classify(const meshtastic_MeshPacket &p)
++{
++    if (isFromUs(&p) || isToUs(&p) || owner.is_licensed || config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT ||
++        p.transport_mechanism != meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA || p.via_mqtt)
++        return legion::RelayKind::Protected;
++    if (p.which_payload_variant == meshtastic_MeshPacket_encrypted_tag)
++        return p.channel == 0 && !isBroadcast(p.to) ? legion::RelayKind::Opaque : legion::RelayKind::Protected;
++    if (p.which_payload_variant != meshtastic_MeshPacket_decoded_tag || controlChannel(p.channel))
++        return legion::RelayKind::Protected;
++    if (textPort(p))
++        return legion::RelayKind::Text;
++    if (p.decoded.want_response || p.decoded.request_id || p.decoded.reply_id || p.want_ack ||
++        p.priority > meshtastic_MeshPacket_Priority_DEFAULT)
++        return legion::RelayKind::Protected;
++    if (isBroadcast(p.to) && p.decoded.portnum == meshtastic_PortNum_NODEINFO_APP)
++        return legion::RelayKind::NodeInfo;
++    if (isBroadcast(p.to) &&
++        (p.decoded.portnum == meshtastic_PortNum_POSITION_APP || p.decoded.portnum == meshtastic_PortNum_TELEMETRY_APP))
++        return legion::RelayKind::Routine;
++    return legion::RelayKind::Protected;
++}
++Tag *findTag(const meshtastic_MeshPacket *packet)
++{
++    if (!packet)
++        return nullptr;
++    for (auto &tag : tags)
++        if (tag.packet == packet)
++            return &tag;
++    return nullptr;
++}
++} // namespace
++
++bool legionTrafficAllowReceived(const meshtastic_MeshPacket &p, RxSource source)
++{
++    syncContext();
++    if (source != RX_SRC_RADIO || !primaryText(p))
++        return true;
++    legion::SpamIdentity identity;
++    if (!identityOf(p, identity))
++        return true;
++    const uint64_t hash = contentHash(p);
++    concurrency::LockGuard lock(&trafficLock);
++    return guardPolicy.receive(Time::getMillis(), identity, p.id, static_cast<uint32_t>(hash ^ (hash >> 32)));
++}
++bool legionTrafficAllowRelay(const meshtastic_MeshPacket &p)
++{
++    syncContext();
++    if (!primaryText(p))
++        return true;
++    legion::SpamIdentity identity;
++    if (!identityOf(p, identity))
++        return true;
++    concurrency::LockGuard lock(&trafficLock);
++    return guardPolicy.allowPending(Time::getMillis(), identity, p.id);
++}
++bool legionTrafficAllowQueued(const meshtastic_MeshPacket *p)
++{
++    syncContext();
++    concurrency::LockGuard lock(&trafficLock);
++    const Tag *tag = findTag(p);
++    return !tag || !tag->primaryText || guardPolicy.allowPending(Time::getMillis(), tag->identity, tag->id);
++}
++void legionTrafficTagOutgoing(const meshtastic_MeshPacket *p)
++{
++    syncContext();
++    Tag value{};
++    value.packet = p;
++    value.identity.node = getFrom(p);
++    value.id = p->id;
++    value.kind = classify(*p);
++    value.primaryText = primaryText(*p) && identityOf(*p, value.identity);
++    if (value.kind == legion::RelayKind::NodeInfo)
++        value.nodeInfoHash = contentHash(*p);
++    concurrency::LockGuard lock(&trafficLock);
++    Tag *slot = findTag(p);
++    if (slot)
++        *slot = {};
++    if (value.kind == legion::RelayKind::Protected && !value.primaryText)
++        return;
++    for (auto &candidate : tags) {
++        if (!candidate.packet) {
++            candidate = value;
++            return;
++        }
++    }
++    rfPolicy.metadataFull();
++}
++void legionTrafficForget(const meshtastic_MeshPacket *p)
++{
++    if (!p)
++        return;
++    concurrency::LockGuard lock(&trafficLock);
++    if (auto *tag = findTag(p))
++        *tag = {};
++}
++int8_t legionTrafficTxPower(const meshtastic_MeshPacket *p, int8_t nominal)
++{
++    syncContext();
++    const auto apc = legionApcControlSnapshot();
++    concurrency::LockGuard lock(&trafficLock);
++    Tag *tag = findTag(p);
++    preparedPacket = p;
++    preparedPower = nominal;
++    if (!tag)
++        return nominal;
++    tag->nominal = nominal;
++    tag->proposed = rfPolicy.target(apc, tag->kind, tag->identity.node, tag->id, tag->nodeInfoHash, nominal, Time::getMillis());
++    tag->applied = apc.mode == legion::ApcMode::On ? tag->proposed : nominal;
++    preparedPower = tag->applied;
++    return tag->applied;
++}
++bool legionTrafficTxPlanCurrent(const meshtastic_MeshPacket *p, int8_t nominal)
++{
++    syncContext();
++    const auto apc = legionApcControlSnapshot();
++    concurrency::LockGuard lock(&trafficLock);
++    const Tag *tag = findTag(p);
++    const int8_t desired = tag && apc.mode == legion::ApcMode::On ? rfPolicy.target(apc, tag->kind, tag->identity.node, tag->id,
++                                                                                    tag->nodeInfoHash, nominal, Time::getMillis())
++                                                                  : nominal;
++    return preparedPacket == p && preparedPower == desired;
++}
++void legionTrafficRfResetFault()
++{
++    concurrency::LockGuard lock(&trafficLock);
++    rfPolicy.resetFault();
++}
++void legionTrafficPowerProgrammed(int8_t chip, bool success)
++{
++    concurrency::LockGuard lock(&trafficLock);
++    rfPolicy.programmed(chip, success);
++}
++void legionTrafficPowerFallback(const meshtastic_MeshPacket *p, int8_t nominal)
++{
++    concurrency::LockGuard lock(&trafficLock);
++    if (auto *tag = findTag(p))
++        tag->applied = nominal;
++    if (preparedPacket == p)
++        preparedPower = nominal;
++}
++void legionTrafficTxStarted(const meshtastic_MeshPacket *p)
++{
++    const auto apc = legionApcControlSnapshot();
++    concurrency::LockGuard lock(&trafficLock);
++    if (auto *tag = findTag(p)) {
++        tag->started = true;
++        rfPolicy.started(apc, tag->identity.node, tag->id, tag->nominal, tag->proposed, tag->applied, Time::getMillis());
++    } else {
++        const int8_t nominal = config.lora.tx_power;
++        rfPolicy.started(apc, getFrom(p), p->id, nominal, nominal, nominal, Time::getMillis());
++    }
++}
++void legionTrafficTxEnded(const meshtastic_MeshPacket *p, bool done)
++{
++    concurrency::LockGuard lock(&trafficLock);
++    const Tag *tag = findTag(p);
++    if (tag && tag->started && done && tag->kind == legion::RelayKind::NodeInfo)
++        rfPolicy.nodeInfoDone(tag->identity.node, tag->nodeInfoHash, Time::getMillis());
++}
++void legionTrafficSetGuard(legion::GuardMode mode)
++{
++    syncContext();
++    concurrency::LockGuard lock(&trafficLock);
++    guardPolicy.setMode(mode);
++}
++void legionTrafficClearSpam(uint32_t node)
++{
++    syncContext();
++    concurrency::LockGuard lock(&trafficLock);
++    guardPolicy.clear(node, Time::getMillis());
++}
++legion::GuardStats legionTrafficGuardStatus()
++{
++    syncContext();
++    concurrency::LockGuard lock(&trafficLock);
++    return guardPolicy.snapshot(Time::getMillis());
++}
++legion::RfStats legionTrafficRfStatus()
++{
++    concurrency::LockGuard lock(&trafficLock);
++    return rfPolicy.snapshot();
++}
++size_t legionTrafficSpamList(legion::SpamEntry *entries, size_t capacity)
++{
++    syncContext();
++    concurrency::LockGuard lock(&trafficLock);
++    return guardPolicy.list(Time::getMillis(), entries, capacity);
++}
++#endif
+diff --git a/src/modules/LegionTraffic.h b/src/modules/LegionTraffic.h
+new file mode 100644
+index 0000000..ee7649b
+--- /dev/null
++++ b/src/modules/LegionTraffic.h
+@@ -0,0 +1,44 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_TRAFFIC
++#include "LegionGuardPolicy.h"
++#include "LegionRfPolicy.h"
++#include "MeshTypes.h"
++
++namespace legion { constexpr size_t TRAFFIC_TAG_CAPACITY = 24; }
++
++bool legionTrafficAllowReceived(const meshtastic_MeshPacket &packet, RxSource source);
++bool legionTrafficAllowRelay(const meshtastic_MeshPacket &packet);
++bool legionTrafficAllowQueued(const meshtastic_MeshPacket *packet);
++void legionTrafficTagOutgoing(const meshtastic_MeshPacket *packet);
++void legionTrafficForget(const meshtastic_MeshPacket *packet);
++int8_t legionTrafficTxPower(const meshtastic_MeshPacket *packet, int8_t nominal);
++bool legionTrafficTxPlanCurrent(const meshtastic_MeshPacket *packet, int8_t nominal);
++void legionTrafficRfResetFault();
++void legionTrafficPowerProgrammed(int8_t chip, bool success);
++void legionTrafficPowerFallback(const meshtastic_MeshPacket *packet, int8_t nominal);
++void legionTrafficTxStarted(const meshtastic_MeshPacket *packet);
++void legionTrafficTxEnded(const meshtastic_MeshPacket *packet, bool done);
++void legionTrafficSetGuard(legion::GuardMode mode);
++void legionTrafficClearSpam(uint32_t node);
++legion::GuardStats legionTrafficGuardStatus();
++legion::RfStats legionTrafficRfStatus();
++size_t legionTrafficSpamList(legion::SpamEntry *entries, size_t capacity);
++
++class LegionTrafficPacketLease
++{
++  public:
++    explicit LegionTrafficPacketLease(const meshtastic_MeshPacket *packet) : packet(packet) { legionTrafficTagOutgoing(packet); }
++    ~LegionTrafficPacketLease()
++    {
++        if (packet)
++            legionTrafficForget(packet);
++    }
++    void transferred() { packet = nullptr; }
++
++  private:
++    const meshtastic_MeshPacket *packet;
++};
++#endif

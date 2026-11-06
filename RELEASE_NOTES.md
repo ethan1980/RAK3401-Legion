@@ -1,3 +1,22 @@
+# Legion 0.6.5 — stable release
+
+Pinned upstream: `v2.8.2.d5f1619`, full commit
+`d5f16191ca28b01b5024f590f04a67f25d66f1b1`. Advertised version:
+`2.8.2.Legion0.6.5`. The previous 4c89b69 candidate is discarded.
+
+Includes APC S1+S2 and primary-channel broadcast-text antispam. APC starts OFF;
+antispam starts OBSERVE. Use `/guard status !nodeid` to query it, `/guard on !nodeid`
+to enforce blocking and `/spamlist !nodeid [page]` to inspect quarantines. The
+existing 24-hour DAILY report now includes antispam mode and active or simulated
+quarantine count. Scramble is reserved for 0.7.0.
+
+The 0.6.5 OTA candidate was installed and its new control commands checked
+on RAK3401 hardware. The final action-first `/guard` parser was subsequently
+validated in software. S2 RF output, range and energy savings remain unmeasured.
+Read [Commands](COMMANDS.md), [APC](APC.md), [Antispam](ANTISPAM.md).
+
+---
+
 # Legion 0.6.1
 
 **Stable release for the RAK3401 1W with RAK13302.** Previous downloads remain available.

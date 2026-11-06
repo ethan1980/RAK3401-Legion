@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.5 — 2026-11-06
+
+- Pin the approved Meshtastic v2.8.2.d5f1619 base; discard 4c89b69.
+- Combine APC S1 and S2 per-packet RF selection; preserve nominal protected traffic,
+  first/changed NodeInfo and retries; expose RF diagnostics on APC report page 7.
+- Add RAM-only primary broadcast-text antispam with OBSERVE at boot, manual ON,
+  `/guard` status/modes/clear, and paginated `/spamlist` on private LegionRF.
+- Check receive dispatch, duplicate relays and already encrypted queued packets.
+- Include antispam mode and enforced or simulated quarantines in the 24-hour DAILY summary.
+- Keep the existing application-only DFU/UF2 and rescue reserve contract.
+- Defer scramble to 0.7.0. OTA installation and new commands tested on hardware;
+  S2 RF output and energy savings have not been instrumentally measured.
+- Standardize `/guard` as `/guard action !nodeid`, aligned with `/apc`, tested in software.
+
 ## 0.6.1 — 2026-10-28
 
 - Publish the stable `2.8.2.Legion0.6.1` release on Meshtastic `c39728e`.

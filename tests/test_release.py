@@ -631,6 +631,36 @@ class ReleaseValidationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     release.prepare_release(self.directory, self.commit)
 
+    def traffic_manifest(self):
+        self.stable_manifest()
+        self.manifest.update(
+            legion_version="0.6.5", advertised_firmware_version="2.8.2.Legion0.6.5",
+            commit="d5f16191ca28b01b5024f590f04a67f25d66f1b1",
+            apc_candidate_stage="S2", apc_adaptive_rf_power=True, apc_rf_minimum_dbm=21,
+            antispam=True, antispam_modes=["off", "observe", "on"], antispam_boot_mode="observe",
+            antispam_quarantine_seconds=600, antispam_persistent_settings=False,
+            antispam_hardware_tested=True, daily_status_antispam=True, scramble=False,
+        )
+        self.manifest["control_commands"] += ["guard", "spamlist"]
+
+    def test_v065_requires_approved_base_antispam_daily_and_hardware_validation(self):
+        self.traffic_manifest()
+        self.write_manifest()
+        result = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(result["tag"], "legion-v0.6.5-aaaaaaa")
+        for term in ("/guard", "/spamlist", "S2", "0.7.0", "d5f1619"):
+            self.assertIn(term, result["notes"])
+        for field,value in (
+            ("commit", "4c89b69" + "0"*33), ("apc_adaptive_rf_power",False), ("apc_candidate_stage","S1"),
+            ("apc_rf_minimum_dbm",18), ("antispam",False), ("antispam_boot_mode","on"),
+            ("antispam_persistent_settings",True), ("daily_status_antispam",False), ("scramble",True),
+            ("ota_hardware_tested",False), ("antispam_hardware_tested",False), ("hardware_tested",False),
+            ("apc_hardware_tested",False),
+        ):
+            with self.subTest(field=field):
+                self.traffic_manifest();self.manifest[field]=value;self.write_manifest()
+                with self.assertRaises(ValueError): release.prepare_release(self.directory,self.commit)
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

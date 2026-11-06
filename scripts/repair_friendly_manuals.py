@@ -7,7 +7,7 @@ import re
 import fitz
 
 ROOT=Path(__file__).resolve().parents[1]
-EXPR=re.compile(rb"\((?:\\.|[^\\)])*\)\s*Tj")
+EXPR=re.compile(rb"\((?:\\.|[^\\)])*\)")
 
 def replace_text(t, lang, i):
     # Only PDF text operands: drawing paths, illustrations and coordinates are untouched.

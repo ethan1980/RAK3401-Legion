@@ -90,6 +90,7 @@ def repair(lang):
     doc=fitz.open(path)
     if len(doc)!=29: raise RuntimeError(f"Unexpected manual page count for {path}: {len(doc)}")
     print("CURRENT PAGE 27:",repr(doc[26].get_text()[:1700]),flush=True)
+    print("RAW P27 INITIAL",[(x,len(doc.xref_stream(x)),doc.xref_stream(x).count(b"c39728e"),doc.xref_stream(x).count(b"0.6.1")) for x in doc[26].get_contents()],flush=True)
     cover=doc[0].get_text()
     if "Legion 0.6.5  /  Manual 1.2" in cover:
         print(path.name,"already updated")
@@ -120,6 +121,7 @@ def repair(lang):
         sub="Relay power settings, S2 operation and estimated savings counters."
     p.insert_text((54,645),head,fontname="LegionGuideBold",fontsize=9.3,color=(.88,.05,.13),overlay=True)
     p.insert_text((54,667),sub,fontname="LegionGuideSans",fontsize=9.1,color=(.16,.15,.17),overlay=True)
+    print("RAW P27 UPDATED",[(x,len(doc.xref_stream(x)),doc.xref_stream(x).count(b"c39728e"),doc.xref_stream(x).count(b"d5f1619"),doc.xref_stream(x).count(b"0.6.1")) for x in doc[26].get_contents()],flush=True)
     print("AFTER PAGE 27:",repr(doc[26].get_text()[:1400]),flush=True)
     content="\n".join(p.get_text() for p in doc)
     for required in ("0.6.5","06 NOV 2026","2.8.2.Legion0.6.5","d5f1619"):

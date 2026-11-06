@@ -89,6 +89,7 @@ def repair(lang):
     path=ROOT/"docs"/f"Legion-{'Spanish' if lang=='es' else 'English'}-friendly-user-manual.pdf"
     doc=fitz.open(path)
     if len(doc)!=29: raise RuntimeError(f"Unexpected manual page count for {path}: {len(doc)}")
+    print("CURRENT PAGE 27:",repr(doc[26].get_text()[:1700]),flush=True)
     cover=doc[0].get_text()
     if "Legion 0.6.5  /  Manual 1.2" in cover:
         print(path.name,"already updated")

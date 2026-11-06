@@ -240,8 +240,8 @@ jobs:
           for manual in docs/Legion-Spanish-friendly-user-manual.pdf docs/Legion-English-friendly-user-manual.pdf; do
             sha=$(gh api "repos/$GH_REPO/contents/$manual" --jq '.sha')
             base64 -w0 "$manual" > manual-base64.txt
-            jq -n --arg message '[docs-only] Extend Legion 0.6.5 friendly manuals' \\
-              --rawfile content manual-base64.txt --arg sha "$sha" \\
+            jq -n --arg message '[docs-only] Extend Legion 0.6.5 friendly manuals' \
+              --rawfile content manual-base64.txt --arg sha "$sha" \
               '{message:$message, content:$content, sha:$sha, branch:"main"}' > payload.json
             gh api -X PUT "repos/$GH_REPO/contents/$manual" --input payload.json > /dev/null
           done

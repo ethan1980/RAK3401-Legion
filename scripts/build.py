@@ -52,7 +52,7 @@ def package(firmware, target, output):
     if advertised_version.encode("ascii") + b"\0" not in elf.read_bytes():
         raise RuntimeError("Compiled firmware does not contain its advertised version")
     if target == "legion":
-        for command in (b"/components", b"/createch", b"/deletech"):
+        for command in (b"/components", b"/createch", b"/deletech", b"/guard", b"/spamlist"):
             if command + b"\0" not in elf.read_bytes():
                 raise RuntimeError(
                     f"Compiled firmware is missing command {command.decode()}"
@@ -115,6 +115,7 @@ def package(firmware, target, output):
             "RELEASE_NOTES.md",
             "CHANGELOG.md",
             "APC.md",
+            "ANTISPAM.md",
             "docs",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
@@ -144,6 +145,8 @@ def package(firmware, target, output):
                 "components",
                 "createch",
                 "deletech",
+                "guard",
+                "spamlist",
             ]
             if target == "legion"
             else []
@@ -177,12 +180,23 @@ def package(firmware, target, output):
         "boot_diagnostics": target == "legion",
         "boot_diagnostics_flash_writes": False,
         "boot_diagnostics_hardware_tested": False,
-        "apc_candidate_stage": "S1" if target == "legion" else None,
+        "apc_candidate_stage": "S2" if target == "legion" else None,
         "apc_battery_conservation": target == "legion",
         "apc_modes": ["off", "observe", "shadow", "on"] if target == "legion" else [],
         "apc_boot_mode": "off" if target == "legion" else None,
         "apc_persistent_settings": False,
-        "apc_adaptive_rf_power": False,
+        "apc_adaptive_rf_power": target == "legion",
+        "apc_rf_minimum_dbm": 21 if target == "legion" else None,
+        "apc_rf_delta_conserve_db": 3 if target == "legion" else None,
+        "apc_rf_delta_reserve_routine_db": 6 if target == "legion" else None,
+        "antispam": target == "legion",
+        "antispam_modes": ["off", "observe", "on"] if target == "legion" else [],
+        "antispam_boot_mode": "observe" if target == "legion" else None,
+        "antispam_quarantine_seconds": 600 if target == "legion" else None,
+        "antispam_persistent_settings": False,
+        "antispam_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("antispam_tested")),
+        "daily_status_antispam": target == "legion",
+        "scramble": False,
         "apc_hardware_tested": bool(
             target == "legion"
             and config.get("hardware_observation", {}).get("apc_modes_tested")

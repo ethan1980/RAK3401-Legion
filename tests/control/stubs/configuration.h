@@ -10,6 +10,7 @@
 #define RAK3401_LEGION_CONTROL 1
 #define RAK3401_LEGION_BOOT 1
 #define RAK3401_LEGION_APC 1
+#define RAK3401_LEGION_TRAFFIC 1
 #define RAK3401_LEGION_COMPONENTS 1
 #define MESHTASTIC_EXCLUDE_BEACON 0
 #define MESHTASTIC_EXCLUDE_ADMIN 0
@@ -24,6 +25,11 @@
 #define RAK13302 1
 constexpr uint32_t NODENUM_BROADCAST = UINT32_MAX;
 constexpr int meshtastic_MeshPacket_decoded_tag = 1;
+constexpr int meshtastic_MeshPacket_encrypted_tag = 2;
+constexpr int meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP = 7;
+constexpr int meshtastic_PortNum_NODEINFO_APP = 4;
+constexpr int RX_SRC_RADIO = 0;
+using RxSource = int;
 constexpr int meshtastic_PortNum_TEXT_MESSAGE_APP = 1;
 constexpr int meshtastic_PortNum_TRACEROUTE_APP = 70;
 constexpr int meshtastic_PortNum_ROUTING_APP = 5;
@@ -84,7 +90,7 @@ struct meshtastic_MeshPacket {
     uint8_t hop_limit = 3;
     int which_payload_variant = meshtastic_MeshPacket_decoded_tag;
     int priority = 0;
-    bool want_ack = false;
+    bool want_ack = false, xeddsa_signed = false;
     int transport_mechanism = 0;
     bool has_rx_rssi = false, via_mqtt = false;
     float rx_snr = 0;
@@ -142,3 +148,6 @@ inline long random(long low, long)
 {
     return low;
 }
+
+inline bool isFromUs(const meshtastic_MeshPacket *p) { return getFrom(p) == ownNode; }
+inline bool isToUs(const meshtastic_MeshPacket *p) { return p->to == ownNode; }

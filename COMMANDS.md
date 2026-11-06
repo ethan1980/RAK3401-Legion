@@ -1,8 +1,8 @@
 # Legion commands
 
-[Overview](README.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
+[Overview](README.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md) · [Antispam](ANTISPAM.md)
 
-These commands are available in **Legion 0.6.1**. The requesting node and
+These commands are available in **Legion 0.6.5**. The requesting node and
 phone app can use standard Meshtastic. See the
 [feature summary](README.md#what-legion-adds).
 
@@ -42,7 +42,14 @@ ID of the Legion that should act. Ignore/unignore take a second full ID for
 | `/backup replace !abcdef01` | Explicitly refreshes the rescue point. |
 | `/backup delete !abcdef01` | Deletes the rescue point and disables its recovery. |
 | `/apc observe\|shadow\|on\|off !abcdef01` | Selects an [Adaptive Power Control mode](APC.md). |
-| `/apc status !abcdef01 [page]` | Reports APC status, pages 1–6. |
+| `/guard status !abcdef01` | Reports antispam mode, quarantines and counters. |
+| `/guard observe\|on\|off !abcdef01` | Selects the RAM-only antispam mode. |
+| `/guard clear !abcdef01 !12345678` | Clears temporary antispam evidence; manual ignores remain. |
+| `/spamlist !abcdef01 [page]` | Lists temporary quarantines; see [Antispam](ANTISPAM.md). |
+| `/apc status !abcdef01 [page]` | Reports APC status, pages 1–7. |
+
+The new `/guard` and `/spamlist` commands were exercised on hardware in the
+0.6.5 candidate. The final action-first `/guard` parser was checked in software.
 
 Square brackets denote optional arguments; do not type them. `/ignorelist` requires
 the executor ID before its optional page. Backup details are in [RECOVERY.md](RECOVERY.md).
@@ -60,14 +67,15 @@ Replies identify the executing Legion and are copied to its connected app.
 A `queued` response means local queue acceptance, not delivery to another node.
 Channel/key changes or insufficient power can cancel a pending operation.
 
-Every **24 hours from boot**, Legion also queues a brief APC/backup summary on
+Every **24 hours from boot**, Legion also queues a brief APC/antispam/backup summary on
 the private LegionRF channel, even when APC is OFF. The first is due at 24 hours,
 then 48, 72 and so on; rebooting restarts the count. The summary uses background
 priority, requests no ACK and does not replace a backup or reset APC captures.
 If busy or unable to queue it, the node has a 15-minute window with at most one
 attempt per minute. Once queued, it does not retry that summary; missed windows
 do not accumulate. Backup labels are `UP TO DATE`, `NOT PRESENT`, `OUTDATED`,
-`INVALID` and `UNKNOWN`. Detailed telemetry remains on demand.
+`INVALID` and `UNKNOWN`. Detailed telemetry remains on demand. The summary includes `SPAM:ON Q:n`,
+`SPAM:OFF Q:0`, or `SPAM:OBSERVE simQ:n`; OBSERVE never enforces its simulated quarantines.
 
 ## Messages, restarts and ignored nodes
 
@@ -147,7 +155,7 @@ RX:450 BAD:7 TX:32 REL:24 DROP:2
 Values accumulate in RAM and reset on reboot. Battery voltage uses the physical
 RAK19007 divider independently of the app's ADC multiplier. Noise sampling uses
 the current frequency without retuning. This detailed report is on demand;
-the brief daily APC/backup reminder and normal Meshtastic telemetry settings
+the brief daily APC/antispam/backup reminder and normal Meshtastic telemetry settings
 remain separate.
 
 ## Boot fields

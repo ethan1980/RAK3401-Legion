@@ -7,6 +7,7 @@
 #define MAX_NUM_NODES 120
 using NodeNum = uint32_t;
 constexpr uint32_t NODEINFO_BITFIELD_IS_IGNORED_MASK = 16;
+struct meshtastic_NodeInfoLite_public_key_t { size_t size = 0; uint8_t bytes[32]{}; };
 struct meshtastic_NodeInfoLite {
     uint32_t num = 0, bitfield = 0;
     char short_name[5]{};
@@ -15,6 +16,7 @@ struct meshtastic_NodeInfoLite {
     uint8_t channel = 0;
     uint16_t slot = 1;
     float snr = 0;
+    meshtastic_NodeInfoLite_public_key_t public_key;
 };
 inline bool nodeInfoLiteIsIgnored(const meshtastic_NodeInfoLite *node)
 {
@@ -46,6 +48,13 @@ extern Config config;
 class NodeDB
 {
   public:
+    bool copyPublicKeyAuthoritative(uint32_t id, meshtastic_NodeInfoLite_public_key_t &out)
+    {
+        auto n = getMeshNode(id);
+        if (!n || n->public_key.size != 32) return false;
+        out = n->public_key;
+        return true;
+    }
     uint32_t getNodeNum() const { return ownNode; }
     std::vector<meshtastic_NodeInfoLite> nodes;
     std::vector<meshtastic_NodeInfoLite> savedNodes;

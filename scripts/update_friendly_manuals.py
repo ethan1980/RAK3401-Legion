@@ -181,7 +181,7 @@ def antispam_page(doc, source, lang):
     shell(page,d,2)
     hero(page,source)
     text(page,43,74,423,154,d["title_spam"],size=24,bold=True)
-    text(page,43,191,542,239,d["intro_spam"],size=10.2,color=GREY)
+    text(page,43,185,418,240,d["intro_spam"],size=9.4,color=GREY)
     section(page,246,d["head_commands"])
     command_rows(page,272,d["spam_rows"],rh=41,cmdw=270)
     section(page,528,d["head_rules"])

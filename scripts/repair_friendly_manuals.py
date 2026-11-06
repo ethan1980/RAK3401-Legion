@@ -120,6 +120,7 @@ def repair(lang):
         sub="Relay power settings, S2 operation and estimated savings counters."
     p.insert_text((54,645),head,fontname="LegionGuideBold",fontsize=9.3,color=(.88,.05,.13),overlay=True)
     p.insert_text((54,667),sub,fontname="LegionGuideSans",fontsize=9.1,color=(.16,.15,.17),overlay=True)
+    print("AFTER PAGE 27:",repr(doc[26].get_text()[:1400]),flush=True)
     content="\n".join(p.get_text() for p in doc)
     for required in ("0.6.5","06 NOV 2026","2.8.2.Legion0.6.5","d5f1619"):
         if required not in content: raise RuntimeError(f"{path}: missing required {required}")

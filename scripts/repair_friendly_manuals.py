@@ -75,10 +75,14 @@ def replace_text(t, lang, i):
               (b"APC:OFF",b"APC:OFF  SPAM:OBSERVE simQ:0")],
           25:[(b"then request 2-6.",b"then request 2-7."),
               (b"DAILY summarizes APC/backup",b"DAILY summarizes APC/spam/backup")],
-          26:[(b"Syntax and behaviour checked against 0.6.1 documentation and source.",
+          26:[(b"Syntax and behaviour checked against 0.6.5 documentation and source.",
                b"Syntax verified against 0.6.5 tests and source; final Guard awaits HW check.")],
         }
-    for a,b in changes.get(i,[]): t=t.replace(a,b)
+    for a,b in changes.get(i,[]):
+        for n in range(1,14):
+            o=bytes([n]); marker=b"\\"+format(n,"03o").encode()
+            a=a.replace(o,marker); b=b.replace(o,marker)
+        t=t.replace(a,b)
     return t
 
 def repair(lang):

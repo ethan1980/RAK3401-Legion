@@ -35,10 +35,6 @@ jobs:
           cache: pip
       - name: Install build tools
         run: python -m pip install -r requirements.txt
-      - name: Preserve illustrations and add bilingual 0.6.5 guide pages
-        run: |
-          python -m pip install 'PyMuPDF==1.26.7'
-          python scripts/update_friendly_manuals.py
       - name: Check recovery integration test prerequisites
         shell: bash
         run: |

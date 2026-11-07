@@ -25,8 +25,8 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
 | [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on hardware; new `/guard` parser tested in software. |
-| [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | — |
-| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. | — |
+| [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | Command operation confirmed on hardware. |
+| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. | Command operation confirmed on hardware. |
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Energy sleep and automatic return observed. |
 | [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |

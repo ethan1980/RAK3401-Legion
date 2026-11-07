@@ -661,6 +661,30 @@ class ReleaseValidationTests(unittest.TestCase):
                 self.traffic_manifest();self.manifest[field]=value;self.write_manifest()
                 with self.assertRaises(ValueError): release.prepare_release(self.directory,self.commit)
 
+    def test_v066_requires_name_ignores_and_one_hour_scramble(self):
+        self.traffic_manifest()
+        self.manifest.update(
+            legion_version="0.6.6", advertised_firmware_version="2.8.2.Legion0.6.6",
+            hardware_tested=False, ota_hardware_tested=False,
+            apc_hardware_tested=False, antispam_hardware_tested=False,
+            name_ignore=True, scramble=True, scramble_duration_seconds=3600,
+        )
+        self.manifest["control_commands"] += ["unignorename", "scramble"]
+        self.write_manifest()
+        result = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(result["tag"], "legion-v0.6.6-aaaaaaa")
+        self.assertFalse(result["prerelease"])
+        for term in ("/ignore name", "/unignorename", "/scramble", "60 minutes", "English manual"):
+            self.assertIn(term, result["notes"])
+        for field, value in (("name_ignore", False), ("scramble", False), ("scramble_duration_seconds", 60)):
+            with self.subTest(field=field):
+                original = self.manifest[field]
+                self.manifest[field] = value
+                self.write_manifest()
+                with self.assertRaises(ValueError):
+                    release.prepare_release(self.directory, self.commit)
+                self.manifest[field] = original
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

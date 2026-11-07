@@ -1,0 +1,819 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 1d44bbd..da2a6af 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -53,6 +53,9 @@
+ #include "memGet.h"
+ #endif
+ #include "sleep.h"
++#if RAK3401_LEGION_CONTROL
++#include "mesh/LegionNameIgnore.h"
++#endif
+ #include "target_specific.h"
+ #include <memory>
+ #include <utility>
+@@ -1111,6 +1114,9 @@ void setup()
+ #endif
+ 
+     // Now that the mesh service is created, create any modules
++#if RAK3401_LEGION_CONTROL
++    legionLoadNameIgnores();
++#endif
+     setupModules();
+ 
+ #if !MESHTASTIC_EXCLUDE_WAYPOINT
+diff --git a/src/mesh/LegionNameIgnore.cpp b/src/mesh/LegionNameIgnore.cpp
+new file mode 100644
+index 0000000..159a664
+--- /dev/null
++++ b/src/mesh/LegionNameIgnore.cpp
+@@ -0,0 +1,232 @@
++#include "LegionNameIgnore.h"
++#include "configuration.h"
++
++#if RAK3401_LEGION_CONTROL
++#include "LegionIgnore.h"
++#include "NodeDB.h"
++#include "SafeFile.h"
++#include "Throttle.h"
++#include "UptimeClock.h"
++#include "concurrency/LockGuard.h"
++#include "power/PowerHAL.h"
++#include <algorithm>
++#include <cstdio>
++#include <cstring>
++#include <pb_decode.h>
++#ifdef MESHTASTIC_ENCRYPTED_STORAGE
++#include "security/EncryptedStorage.h"
++#endif
++
++namespace {
++constexpr char PATH[] = "/prefs/legion-ignore-names.bin";
++constexpr size_t MAX_RULES = 8;
++constexpr size_t MAX_ALIASES = 24;
++constexpr uint32_t ALIAS_IDLE_MS = 60 * 60 * 1000;
++constexpr unsigned RULES_PER_PAGE = 2;
++static_assert(sizeof(meshtastic_User::long_name) == legion::IGNORE_NAME_BYTES);
++
++struct Rules {
++  char version[4] = {'L', 'N', 'I', 1};
++  char names[MAX_RULES][legion::IGNORE_NAME_BYTES]{};
++};
++struct RuleStats {
++  NodeNum last = 0;
++  uint32_t drops = 0;
++};
++struct Alias {
++  NodeNum node = 0;
++  uint32_t expires = 0;
++  size_t rule = 0;
++  bool verified = false;
++};
++
++concurrency::Lock nameIgnoreLock;
++concurrency::Lock nameStoreLock;
++Rules rules;
++RuleStats stats[MAX_RULES];
++Alias aliases[MAX_ALIASES];
++size_t nextAlias = 0;
++
++size_t findRule(const char *name) {
++  for (size_t i = 0; i < MAX_RULES; ++i)
++    if (std::strcmp(rules.names[i], name) == 0)
++      return i;
++  return MAX_RULES;
++}
++
++Alias *findAlias(NodeNum node, uint32_t now) {
++  for (auto &entry : aliases) {
++    if (entry.node && Throttle::deadlinePassedAt(now, entry.expires))
++      entry = {};
++    if (entry.node == node)
++      return &entry;
++  }
++  return nullptr;
++}
++
++void remember(NodeNum node, size_t rule, bool verified, uint32_t now,
++              Alias *entry) {
++  if (!entry) {
++    for (auto &candidate : aliases) {
++      if (!candidate.node) {
++        entry = &candidate;
++        break;
++      }
++    }
++  }
++  if (!entry) {
++    entry = &aliases[nextAlias];
++    nextAlias = (nextAlias + 1) % MAX_ALIASES;
++  }
++  *entry = {node, now + ALIAS_IDLE_MS, rule, verified};
++}
++
++bool countDrop(size_t rule, NodeNum node) {
++  stats[rule].last = node;
++  ++stats[rule].drops;
++  return true;
++}
++
++bool externalOrigin(const meshtastic_MeshPacket &packet) {
++  return packet.from >= 4 && !isBroadcast(packet.from) && !isFromUs(&packet);
++}
++} // namespace
++
++void legionLoadNameIgnores() {
++  Rules saved;
++  {
++    concurrency::LockGuard io(spiLock);
++    auto file = FSCom.open(PATH, FILE_O_READ);
++    if (!file)
++      return;
++    const bool valid =
++        file.read(reinterpret_cast<uint8_t *>(&saved), sizeof(saved)) ==
++            sizeof(saved) &&
++        file.read() < 0 &&
++        std::memcmp(saved.version, rules.version, sizeof(saved.version)) == 0;
++    file.close();
++    if (!valid)
++      return;
++  }
++  for (const auto &name : saved.names)
++    if (!std::memchr(name, '\0', sizeof(name)))
++      return;
++  concurrency::LockGuard guard(&nameIgnoreLock);
++  rules = saved;
++}
++
++LegionIgnoreResult legionSetNameIgnored(const char *name, bool ignored) {
++  const auto length = strnlen(name, legion::IGNORE_NAME_BYTES);
++  if (!length || length >= legion::IGNORE_NAME_BYTES)
++    return LegionIgnoreResult::Invalid;
++  concurrency::LockGuard store(&nameStoreLock);
++  Rules candidate;
++  size_t slot;
++  {
++    concurrency::LockGuard guard(&nameIgnoreLock);
++    slot = findRule(name);
++    if ((slot != MAX_RULES) == ignored)
++      return LegionIgnoreResult::Unchanged;
++    if (ignored)
++      slot = findRule("");
++    candidate = rules;
++  }
++  if (slot == MAX_RULES)
++    return LegionIgnoreResult::Capacity;
++#ifdef MESHTASTIC_ENCRYPTED_STORAGE
++  if (EncryptedStorage::isLockdownActive() && !EncryptedStorage::isUnlocked())
++    return LegionIgnoreResult::Unavailable;
++#endif
++  if (!powerHAL_isPowerLevelSafe())
++    return LegionIgnoreResult::Unavailable;
++  std::memset(candidate.names[slot], 0, sizeof(candidate.names[slot]));
++  if (ignored)
++    std::memcpy(candidate.names[slot], name, length);
++  SafeFile file(PATH, true);
++  if (file.write(reinterpret_cast<const uint8_t *>(&candidate),
++                 sizeof(candidate)) != sizeof(candidate) ||
++      !file.close())
++    return LegionIgnoreResult::Unavailable;
++  concurrency::LockGuard guard(&nameIgnoreLock);
++  rules = candidate;
++  stats[slot] = {};
++  for (auto &entry : aliases)
++    if (entry.node && entry.rule == slot)
++      entry = {};
++  return LegionIgnoreResult::Saved;
++}
++
++void legionFormatNameIgnores(unsigned page, char *output, size_t size) {
++  concurrency::LockGuard guard(&nameIgnoreLock);
++  unsigned count = 0;
++  for (const auto &name : rules.names)
++    count += name[0] != '\0';
++  const unsigned pages =
++      count ? (count + RULES_PER_PAGE - 1) / RULES_PER_PAGE : 1;
++  if (page < 1 || page > pages) {
++    std::snprintf(output, size, "Name ignore list has %u page(s)", pages);
++    return;
++  }
++  int used = std::snprintf(output, size, "Name ignores %u/%u%s", page, pages,
++                           count ? "" : "\nNone");
++  unsigned index = 0;
++  for (size_t i = 0;
++       i < MAX_RULES && used >= 0 && static_cast<size_t>(used) < size; ++i) {
++    if (rules.names[i][0] && index++ / RULES_PER_PAGE + 1 == page)
++      used += std::snprintf(output + used, size - used, "\n%s !%08lx drops:%lu",
++                            rules.names[i], (unsigned long)stats[i].last,
++                            (unsigned long)stats[i].drops);
++  }
++}
++
++bool legionNameIgnoreDropsReceived(const meshtastic_MeshPacket &packet) {
++  if (!externalOrigin(packet))
++    return false;
++  concurrency::LockGuard guard(&nameIgnoreLock);
++  const auto now = Time::getMillis();
++  auto *entry = findAlias(packet.from, now);
++  const bool nodeInfo =
++      packet.decoded.portnum == meshtastic_PortNum_NODEINFO_APP;
++  if (!entry &&
++      (!nodeInfo || std::none_of(rules.names, rules.names + MAX_RULES,
++                                 [](const auto &name) { return name[0]; })))
++    return false;
++  const bool knownSigner = packet.xeddsa_signed || (entry && entry->verified) ||
++                           nodeDB->isKnownXeddsaSigner(packet.from);
++  if (nodeInfo) {
++    // A trusted identity can replace an older observation made without a
++    // signature.
++    meshtastic_User user{};
++    if (pb_decode_from_bytes(packet.decoded.payload.bytes,
++                             packet.decoded.payload.size, &meshtastic_User_msg,
++                             &user) &&
++        user.is_licensed == owner.is_licensed && user.long_name[0]) {
++      const auto rule = findRule(user.long_name);
++      if (packet.xeddsa_signed || !knownSigner) {
++        if (rule != MAX_RULES)
++          remember(packet.from, rule, packet.xeddsa_signed, now, entry);
++        else if (entry)
++          *entry = {};
++        return rule != MAX_RULES && countDrop(rule, packet.from);
++      }
++      if (rule != MAX_RULES)
++        return countDrop(rule, packet.from);
++    }
++  }
++  if (!entry || (!entry->verified && knownSigner))
++    return false;
++  entry->expires = now + ALIAS_IDLE_MS;
++  return countDrop(entry->rule, packet.from);
++}
++
++bool legionNameIgnoreDropsOrigin(const meshtastic_MeshPacket &packet) {
++  if (!externalOrigin(packet))
++    return false;
++  concurrency::LockGuard guard(&nameIgnoreLock);
++  const auto *entry = findAlias(packet.from, Time::getMillis());
++  return entry &&
++         (entry->verified || (!packet.xeddsa_signed &&
++                              !nodeDB->isKnownXeddsaSigner(packet.from))) &&
++         countDrop(entry->rule, packet.from);
++}
++#endif
+diff --git a/src/mesh/LegionNameIgnore.h b/src/mesh/LegionNameIgnore.h
+new file mode 100644
+index 0000000..27a9941
+--- /dev/null
++++ b/src/mesh/LegionNameIgnore.h
+@@ -0,0 +1,17 @@
++#pragma once
++
++#include <cstddef>
++
++namespace legion
++{
++constexpr size_t IGNORE_NAME_BYTES = 40;
++}
++
++struct _meshtastic_MeshPacket;
++enum class LegionIgnoreResult;
++
++void legionLoadNameIgnores();
++LegionIgnoreResult legionSetNameIgnored(const char *name, bool ignored);
++void legionFormatNameIgnores(unsigned page, char *output, size_t size);
++bool legionNameIgnoreDropsReceived(const _meshtastic_MeshPacket &packet);
++bool legionNameIgnoreDropsOrigin(const _meshtastic_MeshPacket &packet);
+diff --git a/src/mesh/MeshService.cpp b/src/mesh/MeshService.cpp
+index 0430a7c..6bad69c 100644
+--- a/src/mesh/MeshService.cpp
++++ b/src/mesh/MeshService.cpp
+@@ -68,6 +68,10 @@ Allocator<meshtastic_QueueStatus> &queueStatusPool = staticQueueStatusPool;
+ 
+ #include "PositionPrecision.h"
+ #include "Router.h"
++#if RAK3401_LEGION_CONTROL
++#include "modules/LegionControlModule.h"
++#include "modules/LegionScramble.h"
++#endif
+ 
+ MeshService::MeshService()
+ #ifdef ARCH_PORTDUINO
+@@ -385,6 +389,12 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs,
+ 
+ ErrorCode MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPhone)
+ {
++#if RAK3401_LEGION_CONTROL
++    if (legionScrambleDeadline() || (src == RX_SRC_USER && legionControlTryScramble(*p))) {
++        releaseToPool(p);
++        return ERRNO_DISABLED;
++    }
++#endif
+     uint32_t mesh_packet_id = p->id;
+     nodeDB->updateFrom(*p); // update our local DB for this packet (because phone might have sent position packets etc...)
+ 
+diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
+index bccd19c..5989be2 100644
+--- a/src/mesh/Router.cpp
++++ b/src/mesh/Router.cpp
+@@ -18,6 +18,9 @@
+ #include "meshUtils.h"
+ #include "modules/RoutingModule.h"
+ #if RAK3401_LEGION_CONTROL
++#include "LegionNameIgnore.h"
++#include "modules/LegionControlModule.h"
++#include "modules/LegionScramble.h"
+ #include "modules/LegionSecretText.h"
+ #endif
+ #include <ErriezCRC32.h>
+@@ -481,6 +484,12 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
+  */
+ ErrorCode Router::send(meshtastic_MeshPacket *p)
+ {
++#if RAK3401_LEGION_CONTROL
++    if (legionScrambleDeadline()) {
++        packetPool.release(p);
++        return ERRNO_DISABLED;
++    }
++#endif
+     if (isToUs(p)) {
+         LOG_ERROR("BUG! send() with packet for local node");
+         packetPool.release(p);
+@@ -772,8 +781,21 @@ bool checkXeddsaReceivePolicy(meshtastic_MeshPacket *p)
+ }
+ #endif
+ 
++#if RAK3401_LEGION_CONTROL
++static bool legionDropsAuthenticated(const meshtastic_MeshPacket &packet)
++{
++    return !isFromUs(&packet) && (legionNameIgnoreDropsReceived(packet) || legionControlTryScramble(packet));
++}
++#endif
++
+ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
+ {
++#if RAK3401_LEGION_CONTROL
++    if (legionScrambleDeadline()) {
++        clearRoutingAuthCache();
++        return RoutingAuthVerdict::REJECT;
++    }
++#endif
+     // Only our own ack verification sets this. Cleared before the cache compare and both copies below,
+     // so neither the auth cache nor the MQTT/UDP uplink snapshot can carry an inbound value onward.
+     // It must stay ahead of routingAuthCacheMatches(): that compare is a memcmp over the whole packet,
+@@ -801,6 +823,10 @@ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
+             LOG_WARN("Already-decoded packet rejected by signature policy");
+             return RoutingAuthVerdict::REJECT;
+         }
++#endif
++#if RAK3401_LEGION_CONTROL
++        if (legionDropsAuthenticated(authCandidate))
++            return RoutingAuthVerdict::REJECT;
+ #endif
+         p->xeddsa_signed = authCandidate.xeddsa_signed;
+         wire = *p;
+@@ -830,6 +856,10 @@ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
+     // Only an explicit unknown-channel result remains eligible for opaque relay.
+     if (state == DecodeState::DECODE_OPAQUE)
+         return RoutingAuthVerdict::OPAQUE_RELAY_ONLY;
++#if RAK3401_LEGION_CONTROL
++    if (legionDropsAuthenticated(authCandidate))
++        return RoutingAuthVerdict::REJECT;
++#endif
+     storeRoutingAuthCache(wire, authCandidate);
+     return RoutingAuthVerdict::ACCEPT;
+ }
+@@ -1754,6 +1784,12 @@ void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)
+         return;
+     }
+     if (authVerdict == RoutingAuthVerdict::OPAQUE_RELAY_ONLY) {
++#if RAK3401_LEGION_CONTROL
++        if (legionNameIgnoreDropsOrigin(*p)) {
++            packetPool.release(p);
++            return;
++        }
++#endif
+         // A packet we originated but cannot decrypt (a PKI DM we sent, overheard being rebroadcast)
+         // is opaque to us and would otherwise skip shouldFilterReceived entirely, so the implicit
+         // ACK that marks a DM "Delivered to mesh" never fires. The ACK is header-only (from/id), so
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index f84759f..f1ed1be 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -2,11 +2,13 @@
+ 
+ #if RAK3401_LEGION_CONTROL
+ #include "Channels.h"
++#include "LegionScramble.h"
+ #include "MeshService.h"
+ #include "NodeDB.h"
+ #include "UptimeClock.h"
+ #include "concurrency/LockGuard.h"
+ #include "main.h"
++#include "mesh/LegionNameIgnore.h"
+ #include "mesh/LegionRecovery.h"
+ #include "mesh/Router.h"
+ #include "power/RAK3401LegionPower.h"
+@@ -132,6 +134,25 @@ bool LegionControlModule::findTraceDestination(uint32_t target, Channel &result)
+     return readChannel(node ? node->channel : channels.getPrimaryIndex(), result);
+ }
+ 
++bool LegionControlModule::tryScramble(const meshtastic_MeshPacket &packet) const
++{
++    if (packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
++        packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP || !isBroadcast(packet.to) ||
++        packet.decoded.payload.size > sizeof(packet.decoded.payload.bytes) ||
++        !legion::isScrambleCommand(packet.decoded.payload.bytes, packet.decoded.payload.size, nodeDB->getNodeNum()))
++        return false;
++    Channel control;
++    if (!findControlChannel(control) || control.index != packet.channel)
++        return false;
++    legionArmScramble();
++    return true;
++}
++
++bool legionControlTryScramble(const meshtastic_MeshPacket &packet)
++{
++    return legionControlModule && legionControlModule->tryScramble(packet);
++}
++
+ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &packet)
+ {
+     if (packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
+@@ -620,6 +641,15 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         case legion::ControlCommand::IgnoreList:
+             usage = "Usage: /ignorelist !legionid [positive page]";
+             break;
++        case legion::ControlCommand::IgnoreName:
++            usage = "Usage: /ignore name !legionid \"long name\"";
++            break;
++        case legion::ControlCommand::UnignoreName:
++            usage = "Usage: /unignorename !legionid \"long name\"";
++            break;
++        case legion::ControlCommand::IgnoreNameList:
++            usage = "Usage: /ignorelist names !legionid [positive page]";
++            break;
+         default:
+             break;
+         }
+@@ -658,6 +688,12 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         report(command, now, request.command == legion::ControlCommand::ZeroHop);
+         return;
+     }
++    if (request.command == legion::ControlCommand::IgnoreNameList) {
++        char text[176];
++        legionFormatNameIgnores(request.page, text, sizeof(text));
++        reply(channel, text);
++        return;
++    }
+     if (request.command == legion::ControlCommand::Trace) {
+         startTrace(command, now);
+         return;
+@@ -697,8 +733,12 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         } else
+             reply(channel, "Message queue rejected; no delivery confirmation");
+     } else {
+-        const bool ignored = request.command == legion::ControlCommand::Ignore;
+-        const auto result = nodeDB->legionSetIgnored(request.target, ignored);
++        const bool byName =
++            request.command == legion::ControlCommand::IgnoreName || request.command == legion::ControlCommand::UnignoreName;
++        const bool ignored =
++            request.command == legion::ControlCommand::Ignore || request.command == legion::ControlCommand::IgnoreName;
++        const auto result =
++            byName ? legionSetNameIgnored(request.text, ignored) : nodeDB->legionSetIgnored(request.target, ignored);
+         const char *status;
+         switch (result) {
+         case LegionIgnoreResult::Saved:
+@@ -711,19 +751,23 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+             status = ignored ? "Ignored in RAM; persistence pending for" : "Unignored in RAM; persistence pending for";
+             break;
+         case LegionIgnoreResult::Capacity:
+-            status = "Protected-node capacity reached; cannot ignore";
++            status = byName ? "Name ignore list full" : "Protected-node capacity reached; cannot ignore";
+             break;
+         case LegionIgnoreResult::Invalid:
+-            status = "Invalid, reserved or self Node ID";
++            status = byName ? "Invalid long name" : "Invalid, reserved or self Node ID";
+             break;
+         default:
+             status = "Storage or power unavailable; no change to";
+             break;
+         }
+         char text[128];
+-        std::snprintf(text, sizeof(text), "%s !%08lx", status, (unsigned long)request.target);
++        if (byName)
++            std::snprintf(text, sizeof(text), "%s \"%.*s\"", status, int(legion::IGNORE_NAME_BYTES - 1), request.text);
++        else
++            std::snprintf(text, sizeof(text), "%s !%08lx", status, (unsigned long)request.target);
+         reply(channel, text);
+-        ignoreReport.valid = false;
++        if (!byName)
++            ignoreReport.valid = false;
+     }
+ }
+ 
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 80b249f..90f1fb0 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -24,6 +24,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+ {
+   public:
+     LegionControlModule();
++    bool tryScramble(const meshtastic_MeshPacket &packet) const;
+     void observeLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+     void observeTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+     void observeTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
+@@ -126,6 +127,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+ };
+ 
+ extern LegionControlModule *legionControlModule;
++bool legionControlTryScramble(const meshtastic_MeshPacket &packet);
+ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+ void legionControlObserveTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+ void legionControlObserveTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index 5d32bab..4c81d9e 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "LegionTelemetryPolicy.h"
++#include "mesh/LegionNameIgnore.h"
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdio>
+@@ -23,6 +24,9 @@ enum class ControlCommand : uint8_t {
+     Ignore,
+     Unignore,
+     IgnoreList,
++    IgnoreName,
++    UnignoreName,
++    IgnoreNameList,
+     Trace,
+     Boot,
+     Apc,
+@@ -195,7 +199,7 @@ class ControlParser
+         }
+         return value && end();
+     }
+-    bool channelName(char (&name)[12])
++    bool name(char *name, size_t capacity)
+     {
+         spaces();
+         if (!size)
+@@ -207,7 +211,7 @@ class ControlParser
+         }
+         size_t length = 0;
+         while (size && (quoted ? *data != '"' : !commandSpace(*data))) {
+-            if (length + 1 >= sizeof(name))
++            if (length + 1 >= capacity)
+                 return false;
+             name[length++] = *data++;
+             --size;
+@@ -218,6 +222,7 @@ class ControlParser
+             ++data;
+             --size;
+         }
++        name[length] = '\0';
+         return (!size || commandSpace(*data)) && validUtf8(reinterpret_cast<const uint8_t *>(name), length);
+     }
+     bool key(ControlRequest &request)
+@@ -234,7 +239,7 @@ class ControlParser
+     }
+     bool message(ControlRequest &request)
+     {
+-        if (!channelName(request.channel) || !size || !commandSpace(*data))
++        if (!name(request.channel, sizeof(request.channel)) || !size || !commandSpace(*data))
+             return false;
+         spaces();
+         if (!size || size > CONTROL_TEXT_MAX || !validUtf8(data, size))
+@@ -253,6 +258,15 @@ class ControlParser
+     size_t size;
+ };
+ 
++inline bool isScrambleCommand(const uint8_t *data, size_t size, uint32_t ownNode)
++{
++    if (!data || !validPeer(ownNode) || size > CONTROL_TEXT_MAX)
++        return false;
++    ControlParser parser(data, size);
++    uint32_t node;
++    return parser.token("/scramble") && parser.node(node) && node == ownNode && parser.end();
++}
++
+ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ownNode)
+ {
+     ControlRequest result;
+@@ -325,11 +339,13 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+     else if (parser.token("/deletech"))
+         result.command = ControlCommand::DeleteChannel;
+     else if (parser.token("/ignore"))
+-        result.command = ControlCommand::Ignore;
++        result.command = parser.token("name") ? ControlCommand::IgnoreName : ControlCommand::Ignore;
+     else if (parser.token("/unignore"))
+-        result.command = ControlCommand::Unignore;
++        result.command = parser.token("name") ? ControlCommand::UnignoreName : ControlCommand::Unignore;
++    else if (parser.token("/unignorename"))
++        result.command = ControlCommand::UnignoreName;
+     else if (parser.token("/ignorelist"))
+-        result.command = ControlCommand::IgnoreList;
++        result.command = parser.token("names") ? ControlCommand::IgnoreNameList : ControlCommand::IgnoreList;
+ #if RAK3401_LEGION_TRAFFIC
+     else if (parser.token("/spamlist"))
+         result.command = ControlCommand::SpamList;
+@@ -343,13 +359,15 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+     if (result.command == ControlCommand::Message)
+         result.valid = parser.message(result);
+     else if (result.command == ControlCommand::ZeroHop || result.command == ControlCommand::IgnoreList ||
+-             result.command == ControlCommand::SpamList)
++             result.command == ControlCommand::SpamList || result.command == ControlCommand::IgnoreNameList)
+         result.valid = parser.page(result.page);
++    else if (result.command == ControlCommand::IgnoreName || result.command == ControlCommand::UnignoreName)
++        result.valid = parser.name(result.text, IGNORE_NAME_BYTES) && parser.end();
+     else if (result.command == ControlCommand::Trace || result.command == ControlCommand::Ignore ||
+              result.command == ControlCommand::Unignore)
+         result.valid = parser.node(result.target) && validPeer(result.target) && result.target != ownNode && parser.end();
+     else if (result.command == ControlCommand::CreateChannel || result.command == ControlCommand::DeleteChannel)
+-        result.valid = parser.channelName(result.channel) && validChannelName(result.channel) &&
++        result.valid = parser.name(result.channel, sizeof(result.channel)) && validChannelName(result.channel) &&
+                        (result.command == ControlCommand::CreateChannel ? parser.key(result) : parser.end());
+     else
+         result.valid = parser.end();
+diff --git a/src/modules/LegionScramble.cpp b/src/modules/LegionScramble.cpp
+new file mode 100644
+index 0000000..8fdfefa
+--- /dev/null
++++ b/src/modules/LegionScramble.cpp
+@@ -0,0 +1,21 @@
++#include "LegionScramble.h"
++#include "configuration.h"
++
++#if RAK3401_LEGION_CONTROL
++#include "UptimeClock.h"
++#include "concurrency/OSThread.h"
++#include <atomic>
++
++namespace {
++std::atomic<uint32_t> deadline{0};
++}
++
++void legionArmScramble() {
++  uint32_t inactive = 0;
++  if (deadline.compare_exchange_strong(
++          inactive, Time::timerEndsAtMillis(legion::SCRAMBLE_MS)))
++    concurrency::mainDelay.interrupt();
++}
++
++uint32_t legionScrambleDeadline() { return deadline.load(); }
++#endif
+diff --git a/src/modules/LegionScramble.h b/src/modules/LegionScramble.h
+new file mode 100644
+index 0000000..0377cb5
+--- /dev/null
++++ b/src/modules/LegionScramble.h
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include <cstdint>
++
++namespace legion
++{
++constexpr uint32_t SCRAMBLE_MS = 60 * 60 * 1000;
++}
++
++void legionArmScramble();
++uint32_t legionScrambleDeadline();
+diff --git a/src/modules/LegionTraffic.cpp b/src/modules/LegionTraffic.cpp
+index a1e3b7d..1ad3a13 100644
+--- a/src/modules/LegionTraffic.cpp
++++ b/src/modules/LegionTraffic.cpp
+@@ -6,11 +6,13 @@
+ #endif
+ #include "Channels.h"
+ #include "LegionApc.h"
++#include "LegionScramble.h"
+ #include "NodeDB.h"
+ #include "UptimeClock.h"
+ #include "concurrency/Lock.h"
+ #include "concurrency/LockGuard.h"
+ #include "main.h"
++#include "mesh/LegionNameIgnore.h"
+ 
+ namespace
+ {
+@@ -166,6 +168,8 @@ bool legionTrafficAllowRelay(const meshtastic_MeshPacket &p)
+ }
+ bool legionTrafficAllowQueued(const meshtastic_MeshPacket *p)
+ {
++    if (legionScrambleDeadline() || (p && legionNameIgnoreDropsOrigin(*p)))
++        return false;
+     syncContext();
+     concurrency::LockGuard lock(&trafficLock);
+     const Tag *tag = findTag(p);
+diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
+index cdc928e..7b1d4df 100644
+--- a/src/platform/nrf52/main-nrf52.cpp
++++ b/src/platform/nrf52/main-nrf52.cpp
+@@ -40,6 +40,14 @@
+ #if RAK3401_LEGION_POWER
+ #include "power/RAK3401LegionPower.h"
+ #endif
++#if RAK3401_LEGION_CONTROL
++#include "mesh/Router.h"
++#include "modules/LegionScramble.h"
++#ifdef USE_TINYUSB
++#include <Adafruit_TinyUSB.h>
++#endif
++[[noreturn]] static void enterScramble(uint32_t deadline);
++#endif
+ 
+ #ifdef BQ25703A_ADDR
+ #include "BQ25713.h"
+@@ -406,6 +414,10 @@ void nrf52Loop()
+     }
+     nrfx_wdt_channel_feed(&nrfx_wdt, nrfx_wdt_channel_id_nrf52_main);
+ 
++#if RAK3401_LEGION_CONTROL
++    if (const auto deadline = legionScrambleDeadline())
++        enterScramble(deadline);
++#endif
+     checkSDEvents();
+     reportLittleFSCorruptionOnce();
+ #if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
+@@ -508,6 +520,35 @@ void nrf52FlashQuiesce()
+     flash_nrf5x_flush();
+ }
+ 
++#if RAK3401_LEGION_CONTROL
++[[noreturn]] static void enterScramble(uint32_t deadline)
++{
++    if (auto *radio = router->getRadioIface())
++        radio->disable();
++    setBluetoothEnable(false);
++#ifdef USE_TINYUSB
++    TinyUSBDevice.detach();
++#else
++    if (Serial)
++        Serial.end();
++#endif
++#ifdef PIN_SERIAL1_RX
++    if (Serial1)
++        Serial1.end();
++#endif
++    nrf52FlashQuiesce();
++#if HAS_WIRE
++    Wire.end();
++#endif
++    SPI.end();
++#if SPI_INTERFACES_COUNT > 1
++    SPI1.end();
++#endif
++    legionPrepareSystemOff(false);
++    legionWaitForTimedRestart(deadline);
++}
++#endif
++
+ void cpuDeepSleep(uint32_t msecToWake)
+ {
+     // FIXME, configure RTC or button press to wake us
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+index 6220640..b753cdf 100644
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -17,6 +17,7 @@
+ #if RAK3401_LEGION_TELEMETRY
+ #include "modules/LegionTelemetryModule.h"
+ #endif
++#include <algorithm>
+ #include <atomic>
+ #include <hal/nrf_lpcomp.h>
+ #include <nrf_sdm.h>
+@@ -234,6 +235,18 @@ void legionPrepareSystemOff(bool enableBatteryWake)
+         waitForRecovery();
+ }
+ 
++[[noreturn]] void legionWaitForTimedRestart(uint32_t deadline)
++{
++    sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
++    auto now = Time::getMillis();
++    while (!Throttle::deadlinePassedAt(now, deadline)) {
++        feedSleepWatchdog();
++        delay(std::min(RECOVERY_CHECK_MS, deadline - now));
++        now = Time::getMillis();
++    }
++    NVIC_SystemReset();
++}
++
+ void legionPowerPoll()
+ {
+     static bool sampled = false;
+diff --git a/src/power/RAK3401LegionPower.h b/src/power/RAK3401LegionPower.h
+index 1c64904..f6a2728 100644
+--- a/src/power/RAK3401LegionPower.h
++++ b/src/power/RAK3401LegionPower.h
+@@ -15,4 +15,5 @@ bool legionBatterySafeForFlash();
+ bool legionPowerAllowTx();
+ bool legionPowerTxReady();
+ void legionPrepareSystemOff(bool enableBatteryWake);
++[[noreturn]] void legionWaitForTimedRestart(uint32_t deadline);
+ #endif

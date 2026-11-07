@@ -9,9 +9,9 @@
 </p>
 
 Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.6.5**, based on Meshtastic **v2.8.2.d5f1619**
+Current release: **Legion 0.6.6**, based on Meshtastic **v2.8.2.d5f1619**
 at [`d5f1619`](https://github.com/meshtastic/firmware/commit/d5f16191ca28b01b5024f590f04a67f25d66f1b1).
-The node reports **`2.8.2.Legion0.6.5`**.
+The node reports **`2.8.2.Legion0.6.6`**.
 
 Legion focuses on this kit's radio operation, energy resilience and private
 remote tools. Current consumption and battery-life gains have not been measured.
@@ -25,6 +25,8 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
 | [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on hardware; new `/guard` parser tested in software. |
+| [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | — |
+| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. | — |
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Energy sleep and automatic return observed. |
 | [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
@@ -71,8 +73,12 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 - [Antispam](ANTISPAM.md): spam detection, control commands and quarantine rules.
 
 **APC starts OFF after every boot.** Its settings and counters remain in RAM.
-Legion 0.6.5 combines S1 relay admission with S2 RF selection.
-Antispam starts OBSERVE; `/guard on !nodeid` enables blocking. DAILY includes its mode and quarantine count.
+APC combines S1 relay admission with S2 RF selection.
+Antispam starts OBSERVE and `/guard on !nodeid` enables blocking. DAILY includes its mode and quarantine count.
+
+Use `/ignore name !abcdef01 "Long name"` to save a name rule on a selected Legion.
+`/scramble !abcdef01` silences the selected node immediately when it receives the
+command on LegionRF. It sends no reply and restarts automatically after 60 minutes.
 
 ## Build from source
 

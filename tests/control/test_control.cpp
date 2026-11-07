@@ -8,6 +8,7 @@
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "RadioLibInterface.h"
+#include "SafeFile.h"
 #include "UptimeClock.h"
 #include "mesh/Router.h"
 #include "mesh/LegionRecovery.h"
@@ -16,6 +17,7 @@
 #include "platform/nrf52/LegionComponents.h"
 #include "modules/AdminModule.h"
 #include "modules/LegionControlModule.h"
+#include "modules/LegionScramble.h"
 #include "xmodem.h"
 #include <cassert>
 #include <iostream>
@@ -1410,6 +1412,89 @@ void test_rf_bridge_protected_nodeinfo_retry_fault_and_plan_change()
     apcCommand(m,"/apc off !abcdef01",3);assert(!legionTrafficRfStatus().fault);
 }
 
+void test_persistent_name_ignore_and_rotating_ids()
+{
+    reset();
+    TestModule module;
+    char list[176];
+    deliver(module, "/ignore name !12345678 \"Example node\"");
+    assert(meshService.sent.empty());
+    deliver(module, "/ignore name !abcdef01 \"Example node\"", 2);
+    assert(last().find("Ignored") != std::string::npos && !nameRuleFile.empty());
+    const auto saved = nameRuleFile;
+
+    auto announce = [](const std::string &name, uint32_t node) {
+        std::string payload{static_cast<char>(0x12), static_cast<char>(name.size())};
+        auto p = packet(payload + name, 3, node);
+        p.decoded.portnum = meshtastic_PortNum_NODEINFO_APP;
+        return p;
+    };
+    auto first = announce("Example node", 0x12345678);
+    auto second = announce("Example node", 0x87654321);
+    assert(!legionNameIgnoreDropsReceived(announce("example node", 0x12345678)));
+    assert(legionNameIgnoreDropsReceived(first));
+    assert(legionNameIgnoreDropsReceived(second));
+    auto queued = packet("text", 4, second.from);
+    assert(legionNameIgnoreDropsReceived(queued) && !legionTrafficAllowQueued(&queued));
+    next();
+    deliver(module, "/ignorelist names !abcdef01", 4);
+    assert(last().find("Example node !87654321") != std::string::npos);
+
+    database.knownSigner = second.from;
+    assert(!legionNameIgnoreDropsReceived(queued));
+    assert(legionNameIgnoreDropsReceived(second));
+    assert(!legionNameIgnoreDropsReceived(queued));
+    second.xeddsa_signed = true;
+    assert(legionNameIgnoreDropsReceived(second) && !legionTrafficAllowQueued(&queued));
+    database.knownSigner = 0; // The early filter may have seen the signature before NodeDB did.
+    assert(legionNameIgnoreDropsReceived(announce("Forged rename", second.from)));
+    assert(!legionTrafficAllowQueued(&queued));
+
+    nameRuleSaveFails = true;
+    next();
+    deliver(module, "/unignorename !abcdef01 \"Example node\"", 5);
+    assert(last().find("no change") != std::string::npos && nameRuleFile == saved);
+    nameRuleSaveFails = false;
+    next();
+    deliver(module, "/unignore name !abcdef01 \"Example node\"", 6);
+    assert(last().find("Unignored") != std::string::npos && legionTrafficAllowQueued(&queued));
+
+    nameRuleFile = saved;
+    legionLoadNameIgnores();
+    legionFormatNameIgnores(1, list, sizeof(list));
+    assert(std::strstr(list, "Example node"));
+    assert(legionTrafficAllowQueued(&queued) && legionNameIgnoreDropsReceived(second));
+    Time::now += 60 * 60 * 1000;
+    assert(legionTrafficAllowQueued(&queued));
+    assert(legionSetNameIgnored("Example node", false) == LegionIgnoreResult::Saved);
+}
+
+void test_scramble_is_immediate_targeted_and_does_not_extend()
+{
+    reset();
+    TestModule module;
+    auto p = packet("/scramble !abcdef01");
+    p.channel = 0;
+    assert(!legionControlTryScramble(p));
+    assert(!legionControlTryScramble(packet("/scramble !12345678")));
+    assert(!legionControlTryScramble(packet("/scramble !abcdef01 10")));
+    p.channel = 2;
+    p.to = ownNode;
+    assert(!legionControlTryScramble(p));
+    p.to = NODENUM_BROADCAST;
+    assert(!legionScrambleDeadline());
+    const auto wakeups = concurrency::mainDelay.interruptions;
+
+    Time::now = UINT32_MAX - 1000;
+    const auto expected = Time::now + 3600000u;
+    assert(legionControlTryScramble(p));
+    assert(legionScrambleDeadline() == expected);
+    assert(meshService.sent.empty() && !legionTrafficAllowQueued(&p));
+    Time::now += 500;
+    assert(legionControlTryScramble(p) && legionScrambleDeadline() == expected);
+    assert(concurrency::mainDelay.interruptions == wakeups + 1);
+}
+
 int main()
 {
 #define RUN(test)                                                                                                                \
@@ -1449,4 +1534,6 @@ int main()
     RUN(test_guard_control_scope_status_clear_and_daily);
     RUN(test_guard_router_bridge_queue_identity_and_context);
     RUN(test_rf_bridge_protected_nodeinfo_retry_fault_and_plan_change);
+    RUN(test_persistent_name_ignore_and_rotating_ids);
+    RUN(test_scramble_is_immediate_targeted_and_does_not_extend);
 }

@@ -84,7 +84,7 @@ struct Decoded {
     uint32_t reply_id = 0;
     Payload payload;
 };
-struct meshtastic_MeshPacket {
+struct _meshtastic_MeshPacket {
     uint32_t from = 0, to = NODENUM_BROADCAST, id = 0;
     uint8_t channel = 0;
     uint8_t hop_limit = 3;
@@ -95,6 +95,11 @@ struct meshtastic_MeshPacket {
     bool has_rx_rssi = false, via_mqtt = false;
     float rx_snr = 0;
     Decoded decoded;
+};
+using meshtastic_MeshPacket = _meshtastic_MeshPacket;
+struct meshtastic_User {
+    char long_name[40]{};
+    bool is_licensed = false;
 };
 struct ChannelSettings {
     char name[12]{};

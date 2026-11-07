@@ -56,6 +56,8 @@ class NodeDB
         return true;
     }
     uint32_t getNodeNum() const { return ownNode; }
+    uint32_t knownSigner = 0;
+    bool isKnownXeddsaSigner(uint32_t node) const { return node == knownSigner; }
     std::vector<meshtastic_NodeInfoLite> nodes;
     std::vector<meshtastic_NodeInfoLite> savedNodes;
     Config savedConfig;

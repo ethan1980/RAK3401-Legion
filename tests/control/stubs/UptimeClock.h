@@ -9,6 +9,11 @@ inline uint32_t getMillis()
 {
     return now;
 }
+inline uint32_t timerEndsAtMillis(uint32_t delayMs)
+{
+    const auto deadline = now + delayMs;
+    return deadline ? deadline : 1;
+}
 inline uint64_t getUptimeSecs()
 {
     return now / 1000;

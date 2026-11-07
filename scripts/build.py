@@ -49,11 +49,15 @@ def package(firmware, target, output):
         firmware_version(config) if target == "legion" else upstream_version
     )
     elf = build / f"firmware-{environment}-{upstream_version}.elf"
-    if advertised_version.encode("ascii") + b"\0" not in elf.read_bytes():
+    firmware_bytes = elf.read_bytes()
+    if advertised_version.encode("ascii") + b"\0" not in firmware_bytes:
         raise RuntimeError("Compiled firmware does not contain its advertised version")
     if target == "legion":
-        for command in (b"/components", b"/createch", b"/deletech", b"/guard", b"/spamlist"):
-            if command + b"\0" not in elf.read_bytes():
+        for command in (
+            b"/components", b"/createch", b"/deletech", b"/guard", b"/spamlist",
+            b"/unignorename", b"/scramble",
+        ):
+            if command + b"\0" not in firmware_bytes:
                 raise RuntimeError(
                     f"Compiled firmware is missing command {command.decode()}"
                 )
@@ -147,6 +151,8 @@ def package(firmware, target, output):
                 "deletech",
                 "guard",
                 "spamlist",
+                "unignorename",
+                "scramble",
             ]
             if target == "legion"
             else []
@@ -196,7 +202,9 @@ def package(firmware, target, output):
         "antispam_persistent_settings": False,
         "antispam_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("antispam_tested")),
         "daily_status_antispam": target == "legion",
-        "scramble": False,
+        "name_ignore": target == "legion",
+        "scramble": target == "legion",
+        "scramble_duration_seconds": 3600 if target == "legion" else None,
         "apc_hardware_tested": bool(
             target == "legion"
             and config.get("hardware_observation", {}).get("apc_modes_tested")

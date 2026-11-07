@@ -142,6 +142,8 @@ def prepare_release(directory, commit):
             commands += ["components", "createch", "deletech"]
         if level >= (0, 6, 5):
             commands += ["guard", "spamlist"]
+        if level >= (0, 6, 6):
+            commands += ["unignorename", "scramble"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -257,11 +259,19 @@ def prepare_release(directory, commit):
             and manifest.get("antispam_quarantine_seconds") == 600
             and manifest.get("antispam_persistent_settings") is False
             and manifest.get("daily_status_antispam") is True
-            and manifest.get("scramble") is False
         ):
-            raise ValueError("Legion 0.6.5 requires the approved base, S2, RAM-only antispam and daily status; scramble is deferred")
+            raise ValueError(f"Legion {version} requires the approved base, S2, RAM-only antispam and daily status")
+    if level == (0, 6, 5):
+        if manifest.get("scramble") is not False:
+            raise ValueError("Legion 0.6.5 defers Scramble")
         if not all(manifest.get(key) is True for key in ("hardware_tested", "ota_hardware_tested", "apc_hardware_tested", "antispam_hardware_tested")):
             raise ValueError("Legion 0.6.5 publication requires candidate hardware/OTA/APC/antispam validation")
+    if level >= (0, 6, 6) and not (
+        manifest.get("name_ignore") is True
+        and manifest.get("scramble") is True
+        and manifest.get("scramble_duration_seconds") == 3600
+    ):
+        raise ValueError(f"Legion {version} requires persistent name ignores and 60-minute Scramble")
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
     if level >= (0, 5, 0):
@@ -414,7 +424,7 @@ def prepare_release(directory, commit):
                 f"]({name})",
                 f"](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/{name})",
             )
-    if level >= (0, 6, 5):
+    if level == (0, 6, 5):
         features = (
             "Rebased on Meshtastic v2.8.2.d5f1619, replacing the withdrawn 4c89b69 candidate. "
             "APC now combines S1 relay budgets and S2 RF selection. Boot mode is OFF; "
@@ -431,6 +441,20 @@ def prepare_release(directory, commit):
             f"Read [Commands](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/COMMANDS.md), "
             f"[APC](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/APC.md) and "
             f"[Antispam](https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/ANTISPAM.md).\n\n"
+        )
+    if level >= (0, 6, 6):
+        source = f"https://github.com/ethan1980/RAK3401-Legion/blob/{commit}"
+        features = (
+            "Emergency release on the same Meshtastic base as Legion 0.6.5.\n\n"
+            "- **Ignore by name.** Use `/ignore name !nodeid \"Long name\"`, "
+            "`/unignorename !nodeid \"Long name\"` and `/ignorelist names !nodeid [page]`. "
+            "Exact long-name rules survive reboot and can catch newly announced NodeIDs.\n"
+            "- **Scramble.** Send `/scramble !nodeid` on LegionRF. The selected node silences "
+            "LoRa, Bluetooth and USB data for 60 minutes, then restarts. "
+            "The command takes effect without a reply or an additional authorization step.\n\n"
+            f"[Commands]({source}/COMMANDS.md) · "
+            f"[Manual en español]({source}/docs/Legion-Spanish-friendly-user-manual.pdf) · "
+            f"[English manual]({source}/docs/Legion-English-friendly-user-manual.pdf)\n\n"
         )
     prerelease = level < (0, 6, 1) or "-" in version
     downloads = (

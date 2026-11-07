@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.6 — 2026-11-07
+
+- Add persistent exact long-name ignores with RAM-only tracking of announced NodeIDs.
+- Add targeted `/scramble` on LegionRF for 60 minutes of radio, Bluetooth and USB data silence with automatic restart.
+- Keep the 0.6.5 Meshtastic base and update both illustrated manuals.
+
 ## 0.6.5 — 2026-11-06
 
 - Pin the approved Meshtastic v2.8.2.d5f1619 base; discard 4c89b69.

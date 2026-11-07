@@ -2,7 +2,7 @@
   "repository": "https://github.com/meshtastic/firmware.git",
   "commit": "d5f16191ca28b01b5024f590f04a67f25d66f1b1",
   "meshtastic_version": "2.8.2",
-  "legion_version": "0.6.5",
+  "legion_version": "0.6.6",
   "release_stage": "stable",
   "patches": [
     "patches/0001-rak3401-bulk-spi.patch",
@@ -23,27 +23,7 @@
     "patches/0016-rak3401-backup-freshness.patch",
     "patches/0017-rak3401-apc-conservation.patch",
     "patches/0018-rak3401-061-controls-and-daily-status.patch",
-    "patches/0019-rak3401-s2-and-antispam.patch"
-  ],
-  "hardware_observation": {
-    "source": "Owner-confirmed 0.6.5 candidate OTA installation and new command checks on RAK3401 1W (2026-11-06)",
-    "commands_tested": true,
-    "components_tested": true,
-    "antispam_tested": true,
-    "antispam_scope": "New guard/spamlist controls exercised; sustained real-world spam blocking not independently validated",
-    "apc_modes_tested": [
-      "on"
-    ],
-    "apc_states_observed": [],
-    "rf_power": "adaptive-relay-unmeasured",
-    "energy_savings_measured": false,
-    "guard_action_first_hardware_tested": false
-  },
-  "ota_hardware_observation": {
-    "completion_confirmed": true,
-    "from_version": "0.6.1",
-    "to_version": "0.6.5-candidate",
-    "method": "BLE OTA (owner report)",
-    "reported_date": "2026-11-06"
-  }
+    "patches/0019-rak3401-s2-and-antispam.patch",
+    "patches/0020-rak3401-name-ignore-and-scramble.patch"
+  ]
 }

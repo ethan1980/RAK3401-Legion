@@ -2,6 +2,11 @@
 #include <cstdint>
 namespace concurrency
 {
+struct InterruptableDelay {
+    unsigned interruptions = 0;
+    void interrupt() { ++interruptions; }
+};
+inline InterruptableDelay mainDelay;
 class OSThread
 {
   public:

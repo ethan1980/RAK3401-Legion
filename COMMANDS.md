@@ -2,7 +2,7 @@
 
 [Overview](README.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md) · [Antispam](ANTISPAM.md)
 
-These commands are available in **Legion 0.6.5**. The requesting node and
+These commands are available in **Legion 0.6.6**. The requesting node and
 phone app can use standard Meshtastic. See the
 [feature summary](README.md#what-legion-adds).
 
@@ -17,8 +17,8 @@ phone app can use standard Meshtastic. See the
 
 Access to this channel authorizes control; there is no extra command password.
 Commands are lowercase. Replace `!abcdef01` with the full eight-digit hexadecimal
-ID of the Legion that should act. Ignore/unignore take a second full ID for
-**the peer to ignore**; only the selected executing Legion changes its list.
+ID of the Legion that should act. The ID-based forms of ignore and unignore take
+a second full ID for **the peer to ignore**. Only the selected Legion changes its list.
 
 ## Command reference
 
@@ -32,6 +32,9 @@ ID of the Legion that should act. Ignore/unignore take a second full ID for
 | `/ignore !abcdef01 !12345678` | The selected Legion ignores the second node. |
 | `/unignore !abcdef01 !12345678` | The selected Legion removes the second node from its effective ignore list. |
 | `/ignorelist !abcdef01 [page]` | The selected Legion reports its own ignore list. |
+| `/ignore name !abcdef01 "Long name"` | Saves an exact long-name rule on the selected Legion. |
+| `/unignorename !abcdef01 "Long name"` | Removes that name rule. |
+| `/ignorelist names !abcdef01 [page]` | Lists the name rules with their last seen IDs and drop counters. |
 | `/trace !abcdef01 !12345678` | The selected Legion traces the second node and returns both paths. |
 | `/boot !abcdef01` | Reports boot evidence and first boot voltages. |
 | `/components !abcdef01` | Reports CC310 counters, radio SPI and REG1 DC/DC. |
@@ -46,10 +49,8 @@ ID of the Legion that should act. Ignore/unignore take a second full ID for
 | `/guard observe\|on\|off !abcdef01` | Selects the RAM-only antispam mode. |
 | `/guard clear !abcdef01 !12345678` | Clears temporary antispam evidence; manual ignores remain. |
 | `/spamlist !abcdef01 [page]` | Lists temporary quarantines; see [Antispam](ANTISPAM.md). |
+| `/scramble !abcdef01` | Silences the selected Legion for 60 minutes, then restarts it. |
 | `/apc status !abcdef01 [page]` | Reports APC status, pages 1–7. |
-
-The new `/guard` and `/spamlist` commands were exercised on hardware in the
-0.6.5 candidate. The final action-first `/guard` parser was checked in software.
 
 Square brackets denote optional arguments; do not type them. `/ignorelist` requires
 the executor ID before its optional page. Backup details are in [RECOVERY.md](RECOVERY.md).
@@ -61,6 +62,7 @@ the executor ID before its optional page. Backup details are in [RECOVERY.md](RE
 | Remote tools and APC | Shared five-second cooldown after processing; allow at least six seconds after a reply. |
 | Telemetry and backup | Shared 60-second cooldown after a response attempt. |
 | Traceroute | One active trace, at least 60 seconds between starts, up to 90 seconds for a result. |
+| Scramble | Starts on receipt. The selected node sends no reply. |
 
 Normal radio scheduling adds delay. Requests during cooldown may receive no reply.
 Replies identify the executing Legion and are copied to its connected app.
@@ -93,6 +95,34 @@ The first ID always selects the executor; the second selects the ignored peer.
 The old group forms are not accepted. Ignoring filters packet
 origins; it does not stop RF transmissions or silence unrelated traffic forwarded
 by that peer. NodeDB ignore flags are outside the rescue snapshot.
+
+### Ignore by name
+
+Use the exact advertised **long name**, including case, regardless of hardware
+model. Quote the name if it contains spaces. A Legion can store eight rules of
+up to 39 UTF-8 bytes each. The confirmation means the rule was saved to flash.
+Use `/unignorename` or its alias `/unignore name` to remove it.
+
+When a decodable NodeInfo announces a matching name, Legion drops the announcement
+before it can answer or relay it. It remembers up to 24 matching NodeIDs in RAM
+and filters subsequent packets from those origins. A learned ID expires after
+one hour of inactivity. After a restart, the saved rules match new announcements
+and learn the IDs again. Traffic from a new ID can arrive before its name is known.
+Name rules are local to the executing Legion and are outside the rescue snapshot.
+
+### Scramble
+
+Send `/scramble !abcdef01` as a broadcast on **LegionRF**. The ID selects the
+Legion to silence. Reception on LegionRF is sufficient. The selected node sends
+no acknowledgement, stops LoRa receive, transmit and relay, turns off Bluetooth
+advertising and disconnects any Bluetooth session, and detaches USB data.
+
+After **60 minutes**, the node restarts automatically and reloads its saved
+configuration. APC starts OFF and antispam starts OBSERVE. A physical reset or
+loss of power ends the timed silence early. Normal low-voltage recovery still
+applies when the node boots.
+
+### Secondary channels
 
 `/createch !abcdef01 "My channel" <psk>` uses the first disabled secondary slot
 (indices 1–7). The name is limited to 11 UTF-8 bytes; quote spaces as for `/msg`.

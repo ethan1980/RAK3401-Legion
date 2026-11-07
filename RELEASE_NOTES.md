@@ -1,3 +1,21 @@
+# Legion 0.6.6 — emergency release
+
+Legion 0.6.6 uses the same Meshtastic v2.8.2.d5f1619 base as 0.6.5 and reports
+`2.8.2.Legion0.6.6`.
+
+- **Ignore by name.** Save an exact long-name rule with
+  `/ignore name !nodeid "Long name"`. Use `/unignorename !nodeid "Long name"`
+  to remove it and `/ignorelist names !nodeid [page]` to review the list.
+  Rules survive restarts and match new NodeIDs as they announce the same name.
+- **Scramble.** Send `/scramble !nodeid` on LegionRF. The selected node silences
+  LoRa, Bluetooth and USB data for 60 minutes, then restarts. It sends no reply
+  and requires no additional authorization.
+
+[Commands](COMMANDS.md) · [Manual en español](docs/Legion-Spanish-friendly-user-manual.pdf) ·
+[English manual](docs/Legion-English-friendly-user-manual.pdf)
+
+---
+
 # Legion 0.6.5 — stable release
 
 Pinned upstream: `v2.8.2.d5f1619`, full commit

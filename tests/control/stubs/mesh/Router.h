@@ -5,6 +5,7 @@
 class Router
 {
   public:
+    Router *getRadioIface() { return this; }
     uint32_t nextId = 0x98765432;
     std::vector<std::pair<uint32_t, uint32_t>> cancelled;
     meshtastic_MeshPacket *allocForSending()

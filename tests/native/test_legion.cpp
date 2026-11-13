@@ -2,12 +2,15 @@
 // Guard early transmission after weak recovery, battery/USB misclassification, reboot loops,
 // skipped changed settings and replacing good settings with a truncated or corrupted write.
 // Hardware I/O is simulated; thresholds and System OFF consumption still need a bench test.
+// CpuThermalPolicy pins sustained heating and a confirmed cooldown so a missed or
+// transient reading cannot suspend a node early or bring a hot radio back online.
 #include "FSCommon.h"
 #include "SPILock.h"
 #include "SafeFile.h"
 #include "mesh/LegionCrc32.h"
 #include "mesh/LegionPersistence.h"
 #include "power/LegionPowerPolicy.h"
+#include "power/LegionThermalPolicy.h"
 #include <cassert>
 #include <iostream>
 #include <utility>
@@ -113,6 +116,51 @@ void test_usb_recovery_still_requires_safe_vdd()
         assert(!policy.observeRecovery(3900, 3300, false));
     assert(!policy.observeRecovery(0, 2900, true));
     assert(!policy.observeRecovery(3900, 3300, false));
+}
+
+void test_cpu_thermal_sustained_heat_and_rollover()
+{
+    constexpr uint32_t interval = 30000;
+    constexpr uint32_t duration = 180000;
+    for (const uint32_t start : {0u, UINT32_MAX - interval + 1}) {
+        legion::CpuThermalPolicy thermal;
+        assert(thermal.sampleDue(start));
+        assert(!thermal.observeHeating(start, true, 70 * 4));
+        for (uint32_t elapsed = interval; elapsed <= duration; elapsed += interval) {
+            const uint32_t now = start + elapsed;
+            assert(!thermal.sampleDue(now - 1));
+            assert(thermal.sampleDue(now));
+            assert(thermal.observeHeating(now, true, 70 * 4) == (elapsed == duration));
+        }
+    }
+}
+
+void test_cpu_thermal_interruptions_restart_confirmation()
+{
+    constexpr uint32_t interval = 30000;
+    for (const bool valid : {false, true}) {
+        legion::CpuThermalPolicy thermal;
+        for (uint32_t now = 0; now < 5 * interval; now += interval)
+            assert(!thermal.observeHeating(now, true, 70 * 4));
+        assert(!thermal.observeHeating(5 * interval, valid, valid ? 70 * 4 - 1 : 70 * 4));
+        assert(!thermal.observeHeating(6 * interval, true, 70 * 4));
+    }
+    legion::CpuThermalPolicy thermal;
+    for (uint32_t now = 0; now < 5 * interval; now += interval)
+        assert(!thermal.observeHeating(now, true, 70 * 4));
+    assert(!thermal.observeHeating(6 * interval, true, 70 * 4));
+}
+
+void test_cpu_thermal_cooldown_requires_consecutive_valid_readings()
+{
+    legion::CpuThermalPolicy thermal;
+    assert(!thermal.observeCooling(true, 70 * 4));
+    assert(!thermal.observeCooling(true, 60 * 4));
+    assert(!thermal.observeCooling(false, 60 * 4));
+    assert(!thermal.observeCooling(true, 60 * 4));
+    assert(!thermal.observeCooling(true, 60 * 4 + 1));
+    assert(!thermal.observeCooling(true, 60 * 4));
+    assert(thermal.observeCooling(true, 59 * 4));
 }
 
 uint32_t crc(const std::vector<uint8_t> &bytes)
@@ -305,12 +353,35 @@ void test_proto_short_write_keeps_complete_file()
     assert(fakeFs.get("/prefs/config") == old);
 }
 
+void test_low_supply_notice_requires_reserve_and_rearms()
+{
+    legion::LowSupplyNotice notice;
+    for (int i = 0; i < 4; ++i) {
+        assert(!notice.observe(3499, 3200, false));
+        assert(!notice.observe(3700, 2999, false));
+        assert(!notice.observe(3600, 3100, true));
+    }
+    assert(!notice.observe(3650, 3200, false));
+    assert(!notice.observe(3700, 3100, false));
+    assert(notice.observe(3500, 3000, false));
+    for (int i = 0; i < 3; ++i)
+        assert(!notice.observe(3550, 3200, false));
+    assert(!notice.observe(3750, 3200, false));
+    assert(!notice.observe(3750, 3199, false));
+    for (int i = 0; i < 3; ++i)
+        assert(!notice.observe(3000, 3200, true));
+    assert(!notice.observe(3650, 3200, false));
+    assert(!notice.observe(3650, 3200, false));
+    assert(notice.observe(3650, 3200, false));
+}
+
 int main()
 {
     const std::pair<const char *, void (*)()> tests[] = {
         {"divider conversion", test_divider_conversion},
         {"boot reserve and USB", test_boot_reserve_and_usb},
         {"TX reserve", test_tx_reserve},
+        {"low supply prewarning", test_low_supply_notice_requires_reserve_and_rearms},
         {"consecutive battery readings", test_consecutive_battery_readings},
         {"exhausted battery", test_exhausted_battery_is_not_absent},
         {"USB cancels battery shutdown", test_usb_cancels_battery_shutdown},
@@ -318,6 +389,9 @@ int main()
         {"USB cancels VDD shutdown", test_usb_cancels_vdd_shutdown},
         {"stable recovery", test_recovery_requires_stable_supply},
         {"safe USB recovery", test_usb_recovery_still_requires_safe_vdd},
+        {"CPU thermal sustained heat and rollover", test_cpu_thermal_sustained_heat_and_rollover},
+        {"CPU thermal interrupted samples", test_cpu_thermal_interruptions_restart_confirmation},
+        {"CPU thermal confirmed cooldown", test_cpu_thermal_cooldown_requires_consecutive_valid_readings},
         {"CRC32 reference vector", test_crc32_standard_vector},
         {"CRC32 XOR collisions", test_crc32_detects_xor_collision},
         {"matching protobuf", test_matching_proto_never_writes},

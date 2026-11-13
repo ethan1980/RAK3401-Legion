@@ -20,13 +20,14 @@ Send channel messages on the private secondary **LegionRF** channel. Replace
 | `/apc shadow !abcdef01` | Models battery states and relay budgets while forwarding normally. |
 | `/apc on !abcdef01` | Applies S1 relay budgets and S2 RF selection after warmup and state persistence. |
 | `/apc off !abcdef01` | Stops APC and restores normal optional-relay admission immediately. |
+| `/arm !abcdef01` / `/disarm !abcdef01` | Switches APC and antispam together with one reply. |
 | `/apc status !abcdef01` | Returns page 1 and freezes a fresh seven-page report. |
 | `/apc status !abcdef01 2` | Returns page 2 of that report; pages 2–7 are available. |
 
 Allow at least six seconds after a reply before another control command.
 **Every boot starts OFF.** Modes and statistics are RAM-only, without automatic
 settings writes. Detailed reports are on demand; Legion separately sends the
-brief daily APC/antispam/backup reminder described in [Commands](COMMANDS.md#timing-and-replies).
+[DAILY](COMMANDS.md#daily) with its current APC mode and state.
 Repeating a mode keeps its current session. OFF
 retains stopped results; the next activation starts a new session. Switching
 between running modes retains session counters but resets decision warmup.

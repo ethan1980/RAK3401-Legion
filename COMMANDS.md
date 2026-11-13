@@ -2,7 +2,7 @@
 
 [Overview](README.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md) · [Antispam](ANTISPAM.md)
 
-These commands are available in **Legion 0.6.6**. The requesting node and
+These commands are available in **Legion 0.7.0**. The requesting node and
 phone app can use standard Meshtastic. See the
 [feature summary](README.md#what-legion-adds).
 
@@ -45,6 +45,8 @@ a second full ID for **the peer to ignore**. Only the selected Legion changes it
 | `/backup replace !abcdef01` | Explicitly refreshes the rescue point. |
 | `/backup delete !abcdef01` | Deletes the rescue point and disables its recovery. |
 | `/apc observe\|shadow\|on\|off !abcdef01` | Selects an [Adaptive Power Control mode](APC.md). |
+| `/arm !abcdef01` | Enables APC S1+S2 and antispam together on the selected node. |
+| `/disarm !abcdef01` | Turns APC and antispam OFF together on the selected node. |
 | `/guard status !abcdef01` | Reports antispam mode, quarantines and counters. |
 | `/guard observe\|on\|off !abcdef01` | Selects the RAM-only antispam mode. |
 | `/guard clear !abcdef01 !12345678` | Clears temporary antispam evidence; manual ignores remain. |
@@ -59,25 +61,76 @@ the executor ID before its optional page. Backup details are in [RECOVERY.md](RE
 
 | Command family | Timing |
 | --- | --- |
-| Remote tools and APC | Shared five-second cooldown after processing; allow at least six seconds after a reply. |
+| Remote tools, APC and antispam | Shared five-second cooldown after processing; allow at least six seconds after a reply. |
 | Telemetry and backup | Shared 60-second cooldown after a response attempt. |
 | Traceroute | One active trace, at least 60 seconds between starts, up to 90 seconds for a result. |
-| Scramble | Starts on receipt. The selected node sends no reply. |
+| Scramble | Blocks normal traffic on receipt. An entry notice has up to 4 seconds to transmit. |
 
 Normal radio scheduling adds delay. Requests during cooldown may receive no reply.
 Replies identify the executing Legion and are copied to its connected app.
 A `queued` response means local queue acceptance, not delivery to another node.
 Channel/key changes or insufficient power can cancel a pending operation.
 
-Every **24 hours from boot**, Legion also queues a brief APC/antispam/backup summary on
-the private LegionRF channel, even when APC is OFF. The first is due at 24 hours,
+## DAILY
+
+Every **24 hours from boot**, Legion queues a status report on the private
+LegionRF channel, even when APC is OFF. The first is due at 24 hours,
 then 48, 72 and so on; rebooting restarts the count. The summary uses background
 priority, requests no ACK and does not replace a backup or reset APC captures.
 If busy or unable to queue it, the node has a 15-minute window with at most one
-attempt per minute. Once queued, it does not retry that summary; missed windows
-do not accumulate. Backup labels are `UP TO DATE`, `NOT PRESENT`, `OUTDATED`,
-`INVALID` and `UNKNOWN`. Detailed telemetry remains on demand. The summary includes `SPAM:ON Q:n`,
-`SPAM:OFF Q:0`, or `SPAM:OBSERVE simQ:n`; OBSERVE never enforces its simulated quarantines.
+attempt per minute. Each part queues once and missed windows expire.
+Backup labels are `UP TO DATE`, `NOT PRESENT`, `OUTDATED`, `INVALID` and `UNKNOWN`.
+Antispam reports `SPAM:ON Q:n`, `SPAM:OFF Q:0` or `SPAM:OBSERVE simQ:n`.
+The OBSERVE count is for simulated quarantines.
+
+```text
+!abcdef01 DAILY
+APC:ON NORMAL
+SPAM:ON Q:0
+BACKUP:UP TO DATE
+BAT:78% (-5pp) 4.01V (-60mV)
+MeshHealth 60/100
+Heard:258 Direct:18 2+ hops:59
+Relayed:120 Sources:54
+DM targets:5 Confirmed:3
+```
+
+- **BAT** shows the estimated charge, measured voltage and the change since
+  the previous 24-hour cut in percentage points and millivolts. `24h:NA`
+  indicates a missing reference. The two samples are kept in RAM.
+- **MeshHealth** compares the node with the median of up to seven prior full
+  cuts on the same LoRa configuration and role. `Heard` contributes 40 points,
+  `Direct` 25 and `Sources` 35. Each contribution is capped at its weight.
+  A zero reference leaves that metric out and scales the remaining weights.
+  A score of 100 means the node met its reference in every scored metric.
+- **Heard** counts distinct LoRa origins. **Direct** counts origins heard
+  with zero relay hops. **2+ hops** counts origins whose shortest known
+  observed path used two or more relays. The report uses the node's committed
+  LoRa slot and excludes MQTT-origin traffic.
+- **Relayed** counts completed LoRa re-transmissions. **Sources** counts
+  distinct origins in those relays. **DM targets** and **Confirmed** count
+  destinations of locally transmitted direct texts and destinations whose
+  explicit ACK arrived during the same cut. Relayed records local TX.
+- **MeshHealth NA** appears while a comparable reference is unavailable.
+  **MeshHealth PARTIAL** marks an incomplete cut or a configuration change.
+  History starts again after reboot. The report uses existing traffic.
+
+Reports over 199 bytes use `DAILY 1/2` for APC, SPAM, BACKUP and BAT, and
+`DAILY 2/2` for MeshHealth. Both parts share the same cut and node ID.
+
+## Arm and disarm
+
+Send `/arm !abcdef01` on LegionRF to enable APC S1+S2 and antispam on one
+Legion. APC requires CLIENT and follows its usual warmup. If activation
+requirements fail, the request leaves both modes as they were.
+
+Send `/disarm !abcdef01` to turn both OFF and clear temporary spam evidence.
+These modes live in RAM. APC starts OFF and antispam starts OBSERVE at boot.
+
+| Command | Confirmation |
+| --- | --- |
+| `/arm !abcdef01` | `!abcdef01: APC ON (S1+S2). SPAM ON.` |
+| `/disarm !abcdef01` | `!abcdef01: APC OFF. SPAM OFF.` |
 
 ## Messages, restarts and ignored nodes
 
@@ -113,14 +166,16 @@ Name rules are local to the executing Legion and are outside the rescue snapshot
 ### Scramble
 
 Send `/scramble !abcdef01` as a broadcast on **LegionRF**. The ID selects the
-Legion to silence. Reception on LegionRF is sufficient. The selected node sends
-no acknowledgement, stops LoRa receive, transmit and relay, turns off Bluetooth
-advertising and disconnects any Bluetooth session, and detaches USB data.
+Legion to silence. On receipt, normal traffic stops. The node can attempt one
+`Entering hibernation for Scramble.` notice on LegionRF. The notice has up to
+4 seconds to transmit under the usual TX checks. The node then turns off LoRa,
+Bluetooth and USB data.
 
-After **60 minutes**, the node restarts automatically and reloads its saved
-configuration. APC starts OFF and antispam starts OBSERVE. A physical reset or
-loss of power ends the timed silence early. Normal low-voltage recovery still
-applies when the node boots.
+After **60 minutes** from acceptance, the node restarts automatically and
+reloads its saved configuration. Once ready, it attempts
+`Hibernation ended. Scramble complete.` on LegionRF. APC starts OFF and
+antispam starts OBSERVE. A physical reset or loss of power ends the timed
+silence early. Normal low-voltage recovery still applies when the node boots.
 
 ### Secondary channels
 
@@ -185,7 +240,7 @@ RX:450 BAD:7 TX:32 REL:24 DROP:2
 Values accumulate in RAM and reset on reboot. Battery voltage uses the physical
 RAK19007 divider independently of the app's ADC multiplier. Noise sampling uses
 the current frequency without retuning. This detailed report is on demand;
-the brief daily APC/antispam/backup reminder and normal Meshtastic telemetry settings
+the [DAILY](#daily) and normal Meshtastic telemetry settings
 remain separate.
 
 ## Boot fields
@@ -193,7 +248,7 @@ remain separate.
 | Field | Meaning |
 | --- | --- |
 | `reset` | Cached hardware reset reason and full mask; absent evidence stays unknown. |
-| `prev` | Recorded previous protective stop, such as low battery or low VDD; not a complete reset history. |
+| `prev` | Recorded previous protective stop, including low battery, low VDD, `cpu-thermal` and `scramble`. |
 | `VBAT / VDD` | First physical voltage samples at boot, in millivolts; not live fault voltages. |
 | `USB` | Node VBUS detection at that boot sample; external solar charging can still show zero. |
 

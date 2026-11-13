@@ -7,6 +7,7 @@
 // SDK, radio, NodeDB storage and scheduler boundaries are simulated; hardware RF delivery is not tested.
 #include "MeshService.h"
 #include "NodeDB.h"
+#include "PowerStatus.h"
 #include "RadioLibInterface.h"
 #include "SafeFile.h"
 #include "UptimeClock.h"
@@ -15,6 +16,7 @@
 #include "modules/MeshBeaconModule.h"
 #include "modules/LegionSecretText.h"
 #include "platform/nrf52/LegionComponents.h"
+#include "platform/nrf52/LegionBoot.h"
 #include "modules/AdminModule.h"
 #include "modules/LegionControlModule.h"
 #include "modules/LegionScramble.h"
@@ -30,6 +32,12 @@ Config config;
 uint32_t ownNode = 0xabcdef01, rebootAtMsec = 0, shutdownAtMsec = 0, radioGeneration = 0;
 bool allocationFails = false, supplyReady = true, flashSafe = true, recoveryBlocked = false;
 unsigned bootReports = 0;
+LegionBootSnapshot bootSnapshot;
+LegionBootSnapshot legionBootSnapshot() { return bootSnapshot; }
+PowerStatus batteryStatus;
+PowerStatus *powerStatus = &batteryStatus;
+uint16_t batteryMv = 4010;
+uint16_t legionPowerBatteryMv() { return batteryMv; }
 bool legionBootFormat(char *output, size_t size, uint32_t node)
 {
     ++bootReports;
@@ -73,6 +81,9 @@ void channel(unsigned index, const char *name)
 }
 void reset()
 {
+    batteryStatus = {};
+    batteryMv = 4010;
+    bootSnapshot = {};
     legionApcDisarm();
     channels = {};
     owner = {};
@@ -1217,9 +1228,15 @@ void test_daily_private_off_status_retry_and_no_backlog()
     module.runOnce();
     assert(meshService.sent.empty());
     Time::now = uint32_t(S::DAY_MS);
+    batteryStatus.percent = 77;
+    batteryMv = 3950;
     meshService.result = 1;
     module.runOnce();
-    assert(meshService.sent.size() == 1 && last() == "!abcdef01 DAILY\nAPC:OFF\nSPAM:OBSERVE simQ:0\nBACKUP:UP TO DATE");
+    assert(meshService.sent.size() == 1 && last().find("!abcdef01 DAILY\nAPC:OFF\nSPAM:OBSERVE simQ:0\nBACKUP:UP TO DATE") == 0);
+    assert(last().find("BAT:77% (-5pp) 3.95V (-60mV)\nMeshHealth NA") != std::string::npos);
+    const auto frozen = last();
+    batteryStatus.percent = 65;
+    batteryMv = 3810;
     assert(meshService.sent[0].packet.channel == 2 && !meshService.sent[0].packet.want_ack &&
            meshService.sent[0].packet.priority == meshtastic_MeshPacket_Priority_BACKGROUND);
     meshService.result = 0;
@@ -1229,6 +1246,7 @@ void test_daily_private_off_status_retry_and_no_backlog()
     ++Time::now;
     module.runOnce();
     assert(meshService.sent.size() == 2);
+    assert(last() == frozen);
     Time::now += 60000;
     module.runOnce();
     assert(meshService.sent.size() == 2);
@@ -1279,6 +1297,179 @@ void test_daily_manual_priority_capture_and_busy_window()
     Time::now = uint32_t(2 * S::DAY_MS);
     busy.runOnce();
     assert(meshService.sent.size() == 1);
+}
+
+void test_arm_and_disarm_use_the_private_control_gate()
+{
+    reset();
+    TestModule module;
+    apcCommand(module, "/arm !abcdef02", 1);
+    auto wrongChannel = packet("/arm !abcdef01", 2);
+    wrongChannel.channel = 0;
+    module.handleReceived(wrongChannel);
+    module.runOnce();
+    assert(meshService.sent.empty());
+
+    config.device.role = 1;
+    apcCommand(module, "/arm !abcdef01", 3);
+    assert(last().find("Arm requires CLIENT") != std::string::npos);
+    config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT;
+    legionTrafficSetGuard(legion::GuardMode::Observe);
+    xModem.busy = true;
+    apcCommand(module, "/arm !abcdef01", 4);
+    assert(last().find("Arm requires CLIENT") != std::string::npos);
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    assert(legionTrafficGuardStatus().mode == legion::GuardMode::Observe);
+
+    xModem.busy = false;
+    for (uint32_t id : {5, 6}) {
+        apcCommand(module, "/arm !abcdef01", id);
+        assert(last() == "!abcdef01: APC ON (S1+S2). SPAM ON.");
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+        assert(legionTrafficGuardStatus().mode == legion::GuardMode::On);
+    }
+    xModem.busy = true;
+    apcCommand(module, "/disarm !abcdef01", 7);
+    assert(last() == "!abcdef01: APC OFF. SPAM OFF.");
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    assert(legionTrafficGuardStatus().mode == legion::GuardMode::Off);
+    assert(!database.saveCalls);
+}
+
+void test_mesh_health_scoring_and_ack_provenance()
+{
+    using S = legion::DailySchedule;
+    reset();
+    TestModule module;
+    auto heard = packet("data", 1, 10);
+    heard.has_rx_rssi = true;
+    heard.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+    for (uint32_t node = 10; node < 14; ++node) {
+        heard.from = node;
+        legionControlObserveMeshRx(heard, 3);
+        if (node < 12) {
+            legionControlObserveMeshRx(heard, 0);
+            legionControlObserveMeshTx(heard, false);
+        }
+    }
+    heard.from = ownNode;
+    legionControlObserveMeshRx(heard, 0);
+    database.transientRadio = true;
+    heard.from = 15;
+    legionControlObserveMeshRx(heard, 0);
+    legionControlObserveMeshTx(heard, false);
+    database.transientRadio = false;
+    heard.from = 14;
+    heard.via_mqtt = true;
+    legionControlObserveMeshRx(heard, 0);
+    legionControlObserveMeshTx(heard, false);
+    auto direct = packet("DM", 99, ownNode);
+    direct.to = 10;
+    legionControlObserveMeshTx(direct, true);
+    direct.to = 11;
+    ++direct.id;
+    legionControlObserveMeshTx(direct, true);
+    heard.from = 10;
+    heard.to = ownNode;
+    legionControlObserveMeshAck(heard, 99);
+    heard.via_mqtt = false;
+    legionControlObserveMeshAck(heard, 100);
+    heard.from = 11;
+    heard.to = 10;
+    legionControlObserveMeshAck(heard, 100);
+    heard.to = ownNode;
+    legionControlObserveMeshAck(heard, 100);
+
+    Time::now = uint32_t(S::DAY_MS);
+    module.runOnce();
+    assert(last().find("MeshHealth NA\nHeard:4 Direct:2 2+ hops:2\nRelayed:2 Sources:2\nDM targets:2 Confirmed:1") !=
+           std::string::npos);
+    heard.from = 10;
+    legionControlObserveMeshRx(heard, 0);
+    legionControlObserveMeshTx(heard, false);
+    heard.from = 12;
+    legionControlObserveMeshRx(heard, 2);
+    Time::now = uint32_t(2 * S::DAY_MS);
+    module.runOnce();
+    assert(last().find("MeshHealth 50/100\nHeard:2 Direct:1 2+ hops:1") != std::string::npos);
+    heard.from = 10;
+    legionControlObserveMeshAck(heard, 99);
+    ++database.radioSlot;
+    Time::now = uint32_t(3 * S::DAY_MS);
+    module.runOnce();
+    assert(last().find("MeshHealth PARTIAL") != std::string::npos);
+    assert(last().find("DM targets:0 Confirmed:0") != std::string::npos);
+}
+
+void test_daily_split_retries_only_the_pending_part()
+{
+    using S = legion::DailySchedule;
+    reset();
+    batteryStatus.percent = 0;
+    batteryMv = 3300;
+    TestModule module;
+    apcCommand(module, "/apc observe !abcdef01", 1);
+    simulatedBackupStatus.state = LegionBackupState::NotPresent;
+    auto heard = packet("data");
+    heard.has_rx_rssi = true;
+    for (uint32_t i = 0; i < 769; ++i) {
+        heard.from = 1000 + i;
+        legionControlObserveMeshRx(heard, i < 500 ? 0 : 2);
+        legionControlObserveMeshTx(heard, false);
+    }
+    heard.from = 1000;
+    for (uint32_t i = 769; i < 12000; ++i)
+        legionControlObserveMeshTx(heard, false);
+    auto direct = packet("DM", 1, ownNode);
+    for (uint32_t i = 0; i < 100; ++i) {
+        direct.to = 1000 + i;
+        legionControlObserveMeshTx(direct, true);
+        module.observeMeshAck(direct.to, direct.id);
+        ++direct.id;
+    }
+    meshService.sent.clear();
+    Time::now = uint32_t(S::DAY_MS);
+    batteryStatus.percent = 100;
+    batteryMv = 4300;
+    module.runOnce();
+    assert(meshService.sent.size() == 1 && last().find("!abcdef01 DAILY 1/2\n") == 0 && last().size() <= 199);
+    assert(last().find("BAT:100% (+100pp) 4.30V (+1000mV)") != std::string::npos);
+    meshService.result = 1;
+    Time::now += uint32_t(S::RETRY_MS);
+    module.runOnce();
+    assert(meshService.sent.size() == 2 && last().find("!abcdef01 DAILY 2/2\nMeshHealth PARTIAL\n") == 0);
+    assert(last().find("Relayed:12000 Sources:768\nDM targets:100 Confirmed:100") != std::string::npos);
+    const auto second = last();
+    meshService.result = 0;
+    Time::now += uint32_t(S::RETRY_MS);
+    module.runOnce();
+    assert(meshService.sent.size() == 3 && last() == second && last().size() <= 199);
+    Time::now += uint32_t(S::RETRY_MS);
+    module.runOnce();
+    assert(meshService.sent.size() == 3);
+}
+
+void test_hibernation_notices_stay_on_legionrf()
+{
+    reset();
+    bootSnapshot.previous = LegionShutdown::CpuThermal;
+    TestModule module;
+    supplyReady = false;
+    module.runOnce();
+    legionControlLowSupplyNotice();
+    assert(meshService.sent.empty());
+    supplyReady = true;
+    channels.entries[2].role = meshtastic_Channel_Role_DISABLED;
+    module.runOnce();
+    assert(meshService.sent.empty());
+    channel(2, "LegionRF");
+    module.runOnce();
+    module.runOnce();
+    assert(meshService.sent.size() == 1 && last() == "!abcdef01: Hibernation ended. CPU cooled down.");
+    legionControlLowSupplyNotice();
+    assert(meshService.sent.size() == 2 && last() == "!abcdef01: Low supply voltage. Hibernation possible.");
+    for (const auto &sent : meshService.sent)
+        assert(sent.packet.channel == 2 && !sent.packet.want_ack);
 }
 
 meshtastic_MeshPacket primarySpam(uint32_t id, uint32_t from=0x12345678)
@@ -1493,6 +1684,13 @@ void test_scramble_is_immediate_targeted_and_does_not_extend()
     Time::now += 500;
     assert(legionControlTryScramble(p) && legionScrambleDeadline() == expected);
     assert(concurrency::mainDelay.interruptions == wakeups + 1);
+    legionStartHibernationNotice(101, false);
+    assert(legionHibernationNoticeWaiting() && legionHibernationAllowsTx(101, true));
+    assert(!legionHibernationAllowsTx(101, false) && !legionHibernationAllowsTx(102, true));
+    legionFinishHibernationNotice(102);
+    assert(legionHibernationNoticeWaiting());
+    legionFinishHibernationNotice(101);
+    assert(!legionHibernationNoticeWaiting() && !legionHibernationAllowsTx(101, true));
 }
 
 int main()
@@ -1531,6 +1729,10 @@ int main()
     RUN(test_daily_schedule_boot_anchor_window_and_wrap);
     RUN(test_daily_private_off_status_retry_and_no_backlog);
     RUN(test_daily_manual_priority_capture_and_busy_window);
+    RUN(test_arm_and_disarm_use_the_private_control_gate);
+    RUN(test_mesh_health_scoring_and_ack_provenance);
+    RUN(test_daily_split_retries_only_the_pending_part);
+    RUN(test_hibernation_notices_stay_on_legionrf);
     RUN(test_guard_control_scope_status_clear_and_daily);
     RUN(test_guard_router_bridge_queue_identity_and_context);
     RUN(test_rf_bridge_protected_nodeinfo_retry_fault_and_plan_change);

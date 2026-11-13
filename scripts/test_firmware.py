@@ -15,6 +15,8 @@ from test_traffic import run_traffic_tests
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = (
     "src/power/LegionPowerPolicy.h",
+    "src/power/LegionThermalPolicy.h",
+    "src/mesh/Throttle.h",
     "src/mesh/LegionCrc32.h",
     "src/mesh/LegionPersistence.h",
     "src/mesh/LegionPersistence.cpp",

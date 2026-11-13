@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 - 2026-11-13
+
+- Extend DAILY with the battery balance and a passive 24-hour MeshHealth score.
+- Add `/arm` and `/disarm` for joint APC and antispam control.
+- Add automatic CPU thermal hibernation and LegionRF hibernation notices.
+- Update the Spanish and English illustrated manuals.
+
 ## 0.6.6 — 2026-11-07
 
 - Add persistent exact long-name ignores with RAM-only tracking of announced NodeIDs.

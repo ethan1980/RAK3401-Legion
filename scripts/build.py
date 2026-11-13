@@ -55,12 +55,15 @@ def package(firmware, target, output):
     if target == "legion":
         for command in (
             b"/components", b"/createch", b"/deletech", b"/guard", b"/spamlist",
-            b"/unignorename", b"/scramble",
+            b"/unignorename", b"/scramble", b"/arm", b"/disarm",
         ):
             if command + b"\0" not in firmware_bytes:
                 raise RuntimeError(
                     f"Compiled firmware is missing command {command.decode()}"
                 )
+        for marker in (b"MeshHealth ", b"24h:NA", b"cpu-thermal", b"Hibernation ended.", b"Low supply voltage."):
+            if marker not in firmware_bytes:
+                raise RuntimeError(f"Compiled firmware is missing {marker.decode()}")
     print(f"Verified firmware identification: {advertised_version}")
     dfu_validation = validate_dfu(elf) if target == "legion" else None
     dcdc_validation = validate_dcdc(elf) if target == "legion" else None
@@ -153,6 +156,8 @@ def package(firmware, target, output):
                 "spamlist",
                 "unignorename",
                 "scramble",
+                "arm",
+                "disarm",
             ]
             if target == "legion"
             else []
@@ -205,6 +210,10 @@ def package(firmware, target, output):
         "name_ignore": target == "legion",
         "scramble": target == "legion",
         "scramble_duration_seconds": 3600 if target == "legion" else None,
+        "daily_battery_balance": target == "legion",
+        "daily_mesh_health": target == "legion",
+        "cpu_thermal_hibernation": target == "legion",
+        "hibernation_notices": target == "legion",
         "apc_hardware_tested": bool(
             target == "legion"
             and config.get("hardware_observation", {}).get("apc_modes_tested")

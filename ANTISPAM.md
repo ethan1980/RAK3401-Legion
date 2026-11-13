@@ -1,4 +1,4 @@
-# Legion antispam (0.6.5)
+# Legion antispam
 
 [Commands](COMMANDS.md) · [APC](APC.md)
 
@@ -16,6 +16,7 @@ channel, replacing `!abcdef01` with the full ID of the executing Legion:
 | `/guard observe !abcdef01` | Model the detector without blocking. |
 | `/guard on !abcdef01` | Enforce detection and quarantine. |
 | `/guard off !abcdef01` | Stop detection and clear temporary evidence. |
+| `/arm !abcdef01` / `/disarm !abcdef01` | Enable or disable antispam together with APC. |
 | `/guard clear !abcdef01 !12345678` | Clear temporary evidence for that peer in both identity domains. Manual ignore remains unchanged. |
 | `/spamlist !abcdef01 [page]` | Snapshot of quarantines, signed/unsigned identity, cause and seconds remaining. Request page 1 first. |
 
@@ -46,7 +47,7 @@ already encrypted queued packets also check quarantine; queued metadata is
 removed on release. No persistent settings, NodeDB ignore flag or backup is
 written by this feature.
 
-DAILY retains the 24-hour-from-boot schedule and reports, for example:
+[DAILY](COMMANDS.md#daily) reports antispam alongside the other 24-hour fields. For example:
 
 ```text
 !abcdef01 DAILY

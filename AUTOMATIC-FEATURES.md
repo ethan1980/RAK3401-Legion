@@ -72,6 +72,21 @@ Legion requests REG1 DC/DC enablement after successful Bluetooth SoftDevice
 initialization and checks the hardware register to confirm activation.
 The component report reads the regulator's current enabled/disabled state.
 
+## CPU thermal hibernation
+
+Legion samples the nRF52840's internal temperature every 30 seconds. At
+70 °C or higher for 3 minutes, it stops the radio and peripherals and waits
+in System ON. A reading below 70 °C, an invalid reading or a missed sample
+resets the three-minute timer. While suspended, two consecutive valid readings at
+60 °C or lower trigger a restart. An overlapping Scramble deadline also
+has to elapse.
+
+When normal TX checks allow it, LegionRF receives one attempt at
+`Entering hibernation due to high CPU temperature.` before sleep and
+`Hibernation ended. CPU cooled down.` once the node is operational again.
+The entry notice has up to 4 seconds to transmit. The restart is recorded
+as `prev:cpu-thermal` in [boot diagnostics](COMMANDS.md#boot-fields).
+
 ## Checking component status
 
 To query a Legion node, send this as a channel message on the private

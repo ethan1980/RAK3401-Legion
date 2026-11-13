@@ -73,6 +73,19 @@ can wake/restart the node, and the boot gate checks supply reserve again before
 normal operation resumes. A deliberate app/CLI shutdown does not arm this
 automatic battery-voltage wake.
 
+### Low supply notices
+
+On battery, three readings 5 seconds apart at VBAT ≤ 3.65 V or VDD ≤ 3.10 V
+can trigger one `Low supply voltage. Hibernation possible.` notice on
+LegionRF. The normal TX reserve must still be available. Three healthy
+samples at VBAT ≥ 3.75 V and VDD ≥ 3.20 V rearm it. USB bypasses the battery
+condition for rearming.
+
+Energy sleep takes priority when the supply crosses the protection threshold.
+After an energy wake and successful boot, the node can report
+`Hibernation ended. Supply voltage recovered.` once on LegionRF. A rapid
+voltage drop may leave only the recovery notice.
+
 ## USB, APC and configuration resilience
 
 Node USB/VBUS bypasses the battery thresholds and clears the periodic

@@ -9,9 +9,9 @@
 </p>
 
 Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.6.6**, based on Meshtastic **v2.8.2.d5f1619**
+Current release: **Legion 0.7.0**, based on Meshtastic **v2.8.2.d5f1619**
 at [`d5f1619`](https://github.com/meshtastic/firmware/commit/d5f16191ca28b01b5024f590f04a67f25d66f1b1).
-The node reports **`2.8.2.Legion0.6.6`**.
+The node reports **`2.8.2.Legion0.7.0`**.
 
 Legion focuses on this kit's radio operation, energy resilience and private
 remote tools. Current consumption and battery-life gains have not been measured.
@@ -26,8 +26,11 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
 | [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on hardware; new `/guard` parser tested in software. |
 | [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | Command operation confirmed on hardware. |
-| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. | Command operation confirmed on hardware. |
-| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. | Energy sleep and automatic return observed. |
+| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together with one confirmation. | Pending hardware testing. |
+| [DAILY](COMMANDS.md#daily) | Includes a 24-hour battery balance and the MeshHealth score and LoRa activity. | Pending hardware testing for the new fields. |
+| [CPU thermal hibernation](AUTOMATIC-FEATURES.md#cpu-thermal-hibernation) | Sleeps at sustained high chip temperature and restarts after cooling. | Pending hardware testing. |
+| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. Reports hibernation entry and exit on LegionRF. | Original command confirmed. New notices pending hardware testing. |
+| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Energy sleep and return observed. New notices pending hardware testing. |
 | [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
 | [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves and verifies temporary writes before replacement. | Identical-save and readback checks verified in software. |
@@ -36,7 +39,7 @@ remote tools. Current consumption and battery-life gains have not been measured.
 “Tested” describes observed operation, not complete validation of every condition.
 The summary reflects observed operation across Legion builds.
 
-CC310, bulk SPI, flash persistence and REG1 DC/DC are
+CC310, bulk SPI, flash persistence, REG1 DC/DC and CPU thermal hibernation are
 [automatic features](AUTOMATIC-FEATURES.md): no activation command or app setting
 is required.
 
@@ -46,9 +49,7 @@ is required.
 [English friendly user manual](docs/Legion-English-friendly-user-manual.pdf) (PDF).
 
 Download the firmware from [Releases](https://github.com/ethan1980/RAK3401-Legion/releases):
-use **UF2 over USB** or the **OTA ZIP with nRF Connect**. OTA installation from
-the previous alpha has been confirmed. Ordinary application
-updates preserve preferences and do not require an erase or factory reset.
+use **UF2 over USB** or the **OTA ZIP with nRF Connect**. Ordinary application updates preserve preferences and do not require an erase or factory reset.
 Previous releases remain available for rollback.
 
 For remote tools, configure one private **SECONDARY** channel named exactly
@@ -74,11 +75,14 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 
 **APC starts OFF after every boot.** Its settings and counters remain in RAM.
 APC combines S1 relay admission with S2 RF selection.
-Antispam starts OBSERVE and `/guard on !nodeid` enables blocking. DAILY includes its mode and quarantine count.
+Antispam starts OBSERVE. Use `/arm !nodeid` to enable both APC and antispam
+and `/disarm !nodeid` to turn both off. The [DAILY](COMMANDS.md#daily) now
+includes the battery balance and MeshHealth alongside APC, antispam and backup.
 
 Use `/ignore name !abcdef01 "Long name"` to save a name rule on a selected Legion.
-`/scramble !abcdef01` silences the selected node immediately when it receives the
-command on LegionRF. It sends no reply and restarts automatically after 60 minutes.
+`/scramble !abcdef01` silences the selected node for 60 minutes. It can send a
+brief entry notice on LegionRF before shutting down the radio and a recovery
+notice when it returns.
 
 ## Build from source
 

@@ -1,0 +1,267 @@
+diff --git a/src/platform/nrf52/LegionBoot.cpp b/src/platform/nrf52/LegionBoot.cpp
+index 144d4c8..f7dde46 100644
+--- a/src/platform/nrf52/LegionBoot.cpp
++++ b/src/platform/nrf52/LegionBoot.cpp
+@@ -24,6 +24,7 @@ LegionShutdown decode(uint8_t value)
+     case LegionShutdown::LowBattery:
+     case LegionShutdown::LowVdd:
+     case LegionShutdown::SystemOff:
++    case LegionShutdown::CpuThermal:
+         return static_cast<LegionShutdown>(value & REASON_MASK);
+     default:
+         return LegionShutdown::Unknown;
+@@ -67,6 +68,8 @@ const char *shutdownName(LegionShutdown reason)
+         return "low-vdd";
+     case LegionShutdown::SystemOff:
+         return "system-off";
++    case LegionShutdown::CpuThermal:
++        return "cpu-thermal";
+     default:
+         return "unknown";
+     }
+@@ -80,11 +83,11 @@ void legionBootCapture()
+     captured = true;
+     snapshot.reset = readResetReason(); // The Arduino core already cleared hardware RESETREAS.
+     const auto previous = decode(NRF_POWER->GPREGRET2);
+-    // A marker records an intentional energy stop, not the cause of a later
+-    // unrelated watchdog/pin reset. A recovery wait can end in a software reset.
++    // A thermal stop must survive an unexpected reset during the cooling wait.
+     constexpr uint32_t expected = POWER_RESETREAS_OFF_Msk | POWER_RESETREAS_LPCOMP_Msk | POWER_RESETREAS_SREQ_Msk;
+-    if ((snapshot.reset & expected) &&
+-        !(snapshot.reset & (POWER_RESETREAS_DOG_Msk | POWER_RESETREAS_LOCKUP_Msk | POWER_RESETREAS_RESETPIN_Msk)))
++    if (previous == LegionShutdown::CpuThermal ||
++        ((snapshot.reset & expected) &&
++         !(snapshot.reset & (POWER_RESETREAS_DOG_Msk | POWER_RESETREAS_LOCKUP_Msk | POWER_RESETREAS_RESETPIN_Msk))))
+         snapshot.previous = previous;
+     if (previous != LegionShutdown::Unknown)
+         replaceReason(0); // Consume only our markers; preserve foreign values and
+diff --git a/src/platform/nrf52/LegionBoot.h b/src/platform/nrf52/LegionBoot.h
+index 71a1a90..7e52360 100644
+--- a/src/platform/nrf52/LegionBoot.h
++++ b/src/platform/nrf52/LegionBoot.h
+@@ -6,7 +6,14 @@
+ #include <cstddef>
+ #include <cstdint>
+ 
+-enum class LegionShutdown : uint8_t { Unknown = 0, BootProtect = 0xa0, LowBattery = 0xb0, LowVdd = 0xc0, SystemOff = 0xd0 };
++enum class LegionShutdown : uint8_t {
++    Unknown = 0,
++    BootProtect = 0xa0,
++    LowBattery = 0xb0,
++    LowVdd = 0xc0,
++    SystemOff = 0xd0,
++    CpuThermal = 0xe0,
++};
+ 
+ struct LegionBootSnapshot {
+     uint32_t reset = 0;
+diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
+index 7b1d4df..68814dd 100644
+--- a/src/platform/nrf52/main-nrf52.cpp
++++ b/src/platform/nrf52/main-nrf52.cpp
+@@ -46,7 +46,7 @@
+ #ifdef USE_TINYUSB
+ #include <Adafruit_TinyUSB.h>
+ #endif
+-[[noreturn]] static void enterScramble(uint32_t deadline);
++static void quiesceLegionInterfaces();
+ #endif
+ 
+ #ifdef BQ25703A_ADDR
+@@ -415,8 +415,15 @@ void nrf52Loop()
+     nrfx_wdt_channel_feed(&nrfx_wdt, nrfx_wdt_channel_id_nrf52_main);
+ 
+ #if RAK3401_LEGION_CONTROL
+-    if (const auto deadline = legionScrambleDeadline())
+-        enterScramble(deadline);
++    const bool cpuOverheated = legionCpuThermalSuspendDue();
++    const auto deadline = legionScrambleDeadline();
++    if (cpuOverheated || deadline) {
++        quiesceLegionInterfaces();
++        if (cpuOverheated)
++            legionWaitForThermalRecovery(deadline);
++        legionPrepareSystemOff(false);
++        legionWaitForTimedRestart(deadline);
++    }
+ #endif
+     checkSDEvents();
+     reportLittleFSCorruptionOnce();
+@@ -521,7 +528,7 @@ void nrf52FlashQuiesce()
+ }
+ 
+ #if RAK3401_LEGION_CONTROL
+-[[noreturn]] static void enterScramble(uint32_t deadline)
++static void quiesceLegionInterfaces()
+ {
+     if (auto *radio = router->getRadioIface())
+         radio->disable();
+@@ -544,8 +551,6 @@ void nrf52FlashQuiesce()
+ #if SPI_INTERFACES_COUNT > 1
+     SPI1.end();
+ #endif
+-    legionPrepareSystemOff(false);
+-    legionWaitForTimedRestart(deadline);
+ }
+ #endif
+ 
+diff --git a/src/power/LegionThermalPolicy.h b/src/power/LegionThermalPolicy.h
+new file mode 100644
+index 0000000..4bdb779
+--- /dev/null
++++ b/src/power/LegionThermalPolicy.h
+@@ -0,0 +1,57 @@
++#pragma once
++
++#include "mesh/Throttle.h"
++#include <cstdint>
++
++namespace legion
++{
++constexpr uint32_t CPU_THERMAL_CHECK_MS = 30000;
++constexpr uint32_t CPU_THERMAL_CONFIRM_MS = 3 * 60 * 1000;
++constexpr int16_t CPU_THERMAL_SUSPEND_QUARTERS = 70 * 4;
++constexpr int16_t CPU_THERMAL_RESUME_QUARTERS = 60 * 4;
++
++inline bool cpuThermalCooled(bool valid, int16_t quarterDegrees)
++{
++    return valid && quarterDegrees <= CPU_THERMAL_RESUME_QUARTERS;
++}
++
++class CpuThermalPolicy
++{
++  public:
++    bool sampleDue(uint32_t now) const { return !sampled || Throttle::deadlinePassedAt(now, nextSample); }
++
++    bool observeHeating(uint32_t now, bool valid, int16_t quarterDegrees)
++    {
++        // A missed reading cannot count towards a sustained high temperature.
++        if (sampled && Throttle::deadlinePassedAt(now, nextSample + CPU_THERMAL_CHECK_MS))
++            hot = false;
++        sampled = true;
++        nextSample = now + CPU_THERMAL_CHECK_MS;
++
++        if (!valid || quarterDegrees < CPU_THERMAL_SUSPEND_QUARTERS) {
++            hot = false;
++            return false;
++        }
++        if (!hot) {
++            hot = true;
++            suspendAt = now + CPU_THERMAL_CONFIRM_MS;
++        }
++        return Throttle::deadlinePassedAt(now, suspendAt);
++    }
++
++    bool observeCooling(bool valid, int16_t quarterDegrees)
++    {
++        const bool cool = cpuThermalCooled(valid, quarterDegrees);
++        const bool confirmed = cool && previousCool;
++        previousCool = cool;
++        return confirmed;
++    }
++
++  private:
++    uint32_t nextSample = 0;
++    uint32_t suspendAt = 0;
++    bool sampled = false;
++    bool hot = false;
++    bool previousCool = false;
++};
++} // namespace legion
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+index b753cdf..aef6c7e 100644
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -17,6 +17,10 @@
+ #if RAK3401_LEGION_TELEMETRY
+ #include "modules/LegionTelemetryModule.h"
+ #endif
++#if RAK3401_LEGION_CONTROL
++#include "LegionThermalPolicy.h"
++#include "platform/nrf52/LegionTelemetryHal.h"
++#endif
+ #include <algorithm>
+ #include <atomic>
+ #include <hal/nrf_lpcomp.h>
+@@ -38,6 +42,9 @@ std::atomic<uint16_t> lastBatteryMv{0};
+ std::atomic<uint16_t> lastVddMv{0};
+ std::atomic<bool> energySleep{false};
+ legion::PowerPolicy policy;
++#if RAK3401_LEGION_CONTROL
++legion::CpuThermalPolicy thermalPolicy;
++#endif
+ 
+ uint16_t readBatteryMv()
+ {
+@@ -193,6 +200,14 @@ void legionPowerBootGate()
+ #endif
+     // Before console/FS setup: no logging, Bluetooth startup or flash writes here.
+     checkBootPower();
++#if RAK3401_LEGION_CONTROL && RAK3401_LEGION_BOOT
++    if (legionBootSnapshot().previous == LegionShutdown::CpuThermal) {
++        int16_t quarterDegrees = 0;
++        const bool valid = legionReadCpuTemperature(quarterDegrees);
++        if (!legion::cpuThermalCooled(valid, quarterDegrees))
++            legionWaitForThermalRecovery();
++    }
++#endif
+     digitalWrite(PIN_3V3_EN, HIGH);
+     checkBootPower();
+ }
+@@ -247,6 +262,44 @@ void legionPrepareSystemOff(bool enableBatteryWake)
+     NVIC_SystemReset();
+ }
+ 
++#if RAK3401_LEGION_CONTROL
++bool legionCpuThermalSuspendDue()
++{
++    const auto now = Time::getMillis();
++    if (!thermalPolicy.sampleDue(now))
++        return false;
++
++    int16_t quarterDegrees = 0;
++    const bool valid = legionReadCpuTemperature(quarterDegrees);
++    if (!thermalPolicy.observeHeating(now, valid, quarterDegrees))
++        return false;
++
++    LOG_WARN("Legion CPU overheat at %d C, suspending", quarterDegrees / 4);
++    return true;
++}
++
++[[noreturn]] void legionWaitForThermalRecovery(uint32_t restartNotBefore)
++{
++#if RAK3401_LEGION_BOOT
++    legionBootRecordShutdown(LegionShutdown::CpuThermal);
++#endif
++    powerOffPeripherals();
++    uint8_t softDeviceEnabled = 0;
++    if (sd_softdevice_is_enabled(&softDeviceEnabled) == NRF_SUCCESS && softDeviceEnabled)
++        sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
++
++    while (true) {
++        feedSleepWatchdog();
++        delay(legion::CPU_THERMAL_CHECK_MS);
++        int16_t quarterDegrees = 0;
++        const bool valid = legionReadCpuTemperature(quarterDegrees);
++        if (thermalPolicy.observeCooling(valid, quarterDegrees) &&
++            (!restartNotBefore || Throttle::deadlinePassed(restartNotBefore)))
++            NVIC_SystemReset();
++    }
++}
++#endif
++
+ void legionPowerPoll()
+ {
+     static bool sampled = false;
+diff --git a/src/power/RAK3401LegionPower.h b/src/power/RAK3401LegionPower.h
+index f6a2728..244943b 100644
+--- a/src/power/RAK3401LegionPower.h
++++ b/src/power/RAK3401LegionPower.h
+@@ -16,4 +16,8 @@ bool legionPowerAllowTx();
+ bool legionPowerTxReady();
+ void legionPrepareSystemOff(bool enableBatteryWake);
+ [[noreturn]] void legionWaitForTimedRestart(uint32_t deadline);
++#if RAK3401_LEGION_CONTROL
++bool legionCpuThermalSuspendDue();
++[[noreturn]] void legionWaitForThermalRecovery(uint32_t restartNotBefore = 0);
++#endif
+ #endif

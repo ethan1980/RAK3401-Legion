@@ -99,7 +99,10 @@ class NodeDB
     }
     void eraseNodeSatellites(uint32_t) { ++erased; }
     void notifyObservers(bool) { ++notifications; }
-    uint16_t committedLoraSlot() const { return 1; }
+    uint16_t radioSlot = 1;
+    bool transientRadio = false;
+    uint16_t committedLoraSlot() const { return radioSlot; }
+    bool isLoraSlotTransient() const { return transientRadio; }
     bool saveToDisk(int segments)
     {
         ++saveCalls;

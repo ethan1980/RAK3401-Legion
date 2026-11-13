@@ -144,6 +144,8 @@ def prepare_release(directory, commit):
             commands += ["guard", "spamlist"]
         if level >= (0, 6, 6):
             commands += ["unignorename", "scramble"]
+        if level >= (0, 7, 0):
+            commands += ["arm", "disarm"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -272,6 +274,11 @@ def prepare_release(directory, commit):
         and manifest.get("scramble_duration_seconds") == 3600
     ):
         raise ValueError(f"Legion {version} requires persistent name ignores and 60-minute Scramble")
+    if level >= (0, 7, 0) and not all(
+        manifest.get(key) is True
+        for key in ("daily_battery_balance", "daily_mesh_health", "cpu_thermal_hibernation", "hibernation_notices")
+    ):
+        raise ValueError(f"Legion {version} requires the expanded DAILY, thermal protection and hibernation notices")
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
     if level >= (0, 5, 0):
@@ -408,10 +415,14 @@ def prepare_release(directory, commit):
             "after erase.uf2, bootloader 0.4.4 and Legion D1 UF2 installation; recovery announcement "
             "reception was not verified. Physical interrupted-write testing remains pending.\n\n"
         )
-    if alpha or level >= (0, 6, 1):
-        features = (
-            Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md"
-        ).read_text() + "\n\n"
+    if alpha or (0, 6, 1) <= level < (0, 6, 5):
+        release_notes = (Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md").read_text()
+        sections = re.split(r"^---[ \t]*$", release_notes, flags=re.MULTILINE)
+        heading = rf"^# Legion {re.escape(version)}(?:\s|$)"
+        features = next(
+            (section.strip() for section in sections if re.match(heading, section.lstrip())),
+            release_notes.strip(),
+        ) + "\n\n"
         for name in (
             "README.md",
             "COMMANDS.md",
@@ -453,6 +464,23 @@ def prepare_release(directory, commit):
             "LoRa, Bluetooth and USB data for 60 minutes, then restarts. "
             "The command takes effect without a reply or an additional authorization step.\n\n"
             f"[Commands]({source}/COMMANDS.md) · "
+            f"[Manual en español]({source}/docs/Legion-Spanish-friendly-user-manual.pdf) · "
+            f"[English manual]({source}/docs/Legion-English-friendly-user-manual.pdf)\n\n"
+        )
+    if level >= (0, 7, 0):
+        source = f"https://github.com/ethan1980/RAK3401-Legion/blob/{commit}"
+        features = (
+            "### Quality-of-life update\n\n"
+            "- **DAILY** adds the 24-hour battery balance and MeshHealth, a 0-100 score relative "
+            "to this node's usual LoRa activity. Reports over 199 bytes use two messages.\n"
+            "- **Arm and disarm** switch APC S1+S2 and antispam together with one confirmation. "
+            "Send `/arm !nodeid` or `/disarm !nodeid` on LegionRF.\n"
+            "- **Thermal hibernation** starts after 3 minutes at 70 °C or above and restarts "
+            "after two consecutive valid samples at 60 °C or below.\n"
+            "- **Hibernation notices** cover low supply, Scramble and temperature on LegionRF.\n\n"
+            "**New features: pending hardware testing.** Install the OTA ZIP with nRF Connect "
+            "or UF2 over USB.\n\n"
+            f"[Commands]({source}/COMMANDS.md) · [Automatic features]({source}/AUTOMATIC-FEATURES.md) · "
             f"[Manual en español]({source}/docs/Legion-Spanish-friendly-user-manual.pdf) · "
             f"[English manual]({source}/docs/Legion-English-friendly-user-manual.pdf)\n\n"
         )

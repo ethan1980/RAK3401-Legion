@@ -224,14 +224,16 @@ void testCrypto()
 
 void testBoot(const std::string &scenario)
 {
+    const bool thermal = scenario == "thermal" || scenario == "thermal_watchdog";
+    const bool scramble = scenario == "scramble";
     powerRegisters.GPREGRET2 = 0xb2; // Our marker plus a foreign low-nibble CRC flag.
     if (scenario == "por")
         cachedResetReason = 0;
-    else if (scenario == "watchdog")
+    else if (scenario == "watchdog" || scenario == "thermal_watchdog")
         cachedResetReason = 2;
     else if (scenario == "lockup")
         cachedResetReason = 8;
-    else if (scenario == "software")
+    else if (scenario == "software" || scenario == "thermal" || scramble)
         cachedResetReason = 4;
     else if (scenario == "pin")
         cachedResetReason = 1;
@@ -241,12 +243,20 @@ void testBoot(const std::string &scenario)
         powerRegisters.GPREGRET2 = 2;
     if (scenario == "foreign")
         powerRegisters.GPREGRET2 = 0x72;
-    softDevice = scenario == "wake" || scenario == "api_failure";
+    if (thermal)
+        powerRegisters.GPREGRET2 = 0xe2;
+    if (scramble)
+        powerRegisters.GPREGRET2 = 0xf2;
+    softDevice = scenario == "wake" || scenario == "api_failure" || scenario == "thermal";
     failPowerApi = scenario == "api_failure";
     legionBootCapture();
     const auto boot = legionBootSnapshot();
     const bool known = scenario == "software" || scenario == "wake" || scenario == "api_failure";
-    assert((boot.previous == LegionShutdown::LowBattery) == known);
+    const auto expected = thermal   ? LegionShutdown::CpuThermal
+                          : scramble ? LegionShutdown::Scramble
+                          : known    ? LegionShutdown::LowBattery
+                                     : LegionShutdown::Unknown;
+    assert(boot.previous == expected);
     assert(boot.reset == cachedResetReason);
     assert(powerRegisters.GPREGRET == 0xa8);
     const auto expectedRegister = scenario == "foreign" ? 0x72u : scenario == "api_failure" ? 0xb2u : 2u;
@@ -262,6 +272,10 @@ void testBoot(const std::string &scenario)
     assert(legionBootFormat(output, sizeof(output), 0xabcdef01));
     const std::string report = output;
     assert(report.find("!abcdef01 BOOT") == 0 && report.find("VBAT:3891 VDD:3310mV USB:0") != std::string::npos);
+    if (thermal)
+        assert(report.find("prev:cpu-thermal") != std::string::npos);
+    if (scramble)
+        assert(report.find("prev:scramble") != std::string::npos);
     assert(report.size() <= 199 && report.find("CC310") == std::string::npos);
     const auto before = legionCryptoStats();
     assert(legionComponentsFormat(output, sizeof(output), 0xabcdef01));
@@ -282,6 +296,8 @@ void testBoot(const std::string &scenario)
         assert(powerRegisters.GPREGRET2 == 0xa2);
         assert(legionBootRecordShutdown(LegionShutdown::LowVdd) && powerRegisters.GPREGRET2 == 0xc2);
         assert(legionBootRecordShutdown(LegionShutdown::SystemOff) && powerRegisters.GPREGRET2 == 0xd2);
+        assert(legionBootRecordShutdown(LegionShutdown::CpuThermal) && powerRegisters.GPREGRET2 == 0xe2);
+        assert(legionBootRecordShutdown(LegionShutdown::Scramble) && powerRegisters.GPREGRET2 == 0xf2);
     }
     assert(powerRegisters.GPREGRET == 0xa8);
     std::cout << "Boot " << scenario << " passed: " << report << '\n';

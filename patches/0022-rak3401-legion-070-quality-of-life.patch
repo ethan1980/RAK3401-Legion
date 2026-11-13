@@ -1,0 +1,1242 @@
+diff --git a/src/mesh/MeshService.cpp b/src/mesh/MeshService.cpp
+index 6bad69c..f3f9d9d 100644
+--- a/src/mesh/MeshService.cpp
++++ b/src/mesh/MeshService.cpp
+@@ -390,7 +390,8 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs,
+ ErrorCode MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPhone)
+ {
+ #if RAK3401_LEGION_CONTROL
+-    if (legionScrambleDeadline() || (src == RX_SRC_USER && legionControlTryScramble(*p))) {
++    if (!legionHibernationAllowsTx(p->id, src == RX_SRC_LOCAL && isFromUs(p)) ||
++        (src == RX_SRC_USER && legionControlTryScramble(*p))) {
+         releaseToPool(p);
+         return ERRNO_DISABLED;
+     }
+diff --git a/src/mesh/NodeDB.h b/src/mesh/NodeDB.h
+index d8dad84..f116ce1 100644
+--- a/src/mesh/NodeDB.h
++++ b/src/mesh/NodeDB.h
+@@ -376,6 +376,7 @@ class NodeDB
+     /// Declare that config.lora holds a temporary radio switch - a beacon keying up on another preset.
+     /// While set the committed slot is pinned, so neither the switch nor its restore reads as a move.
+     void setLoraSlotTransient(bool transient) { loraSlotTransient = transient; }
++    bool isLoraSlotTransient() const { return loraSlotTransient; }
+ 
+     void addFromContact(const meshtastic_SharedContact);
+ 
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index 1f3fb64..562a2b1 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -3,6 +3,10 @@
+ #include "modules/LegionTraffic.h"
+ static_assert(legion::TRAFFIC_TAG_CAPACITY >= MAX_TX_QUEUE + 2, "Legion metadata must cover queued and in-flight packets");
+ #endif
++#if RAK3401_LEGION_CONTROL
++#include "modules/LegionControlModule.h"
++#include "modules/LegionScramble.h"
++#endif
+ #include "MeshTypes.h"
+ #include "NodeDB.h"
+ #include "PowerMon.h"
+@@ -841,6 +845,10 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+ #endif
+ #if RAK3401_LEGION_TRAFFIC
+     legionTrafficTxEnded(sendingPacket, true);
++#endif
++#if RAK3401_LEGION_CONTROL
++    if (sendingPacket && isFromUs(sendingPacket))
++        legionFinishHibernationNotice(sendingPacket->id);
+ #endif
+     // Null if we forced the device into standby, which already completed the
+     // send.
+@@ -1075,6 +1083,9 @@ void RadioLibInterface::handleReceiveInterrupt(const CapturedRxInfo *captured)
+ 
+             airTime->logAirtime(RX_LOG, rxMsec);
+ 
++#if RAK3401_LEGION_CONTROL
++            legionControlObserveMeshRx(*mp, getHopsAway(*mp));
++#endif
+             deliverToReceiver(mp);
+         }
+     }
+@@ -1564,14 +1575,17 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+ 
+     /* NOTE: Minimize the actions before startTransmit() to keep the time between
+              channel scan and actual transmit as low as possible to avoid collisions. */
++    bool allow = !disabled && config.lora.tx_enabled;
++#if RAK3401_LEGION_CONTROL
++    allow = allow && legionHibernationAllowsTx(txp->id, isFromUs(txp));
++#endif
+ #if RAK3401_LEGION_POWER
+     const bool powerReady = legionPowerTxReady();
+     if (!powerReady)
+         LOG_WARN("Legion blocked TX: battery or VDD reserve");
+-    if (disabled || !config.lora.tx_enabled || !powerReady) {
+-#else
+-    if (disabled || !config.lora.tx_enabled) {
++    allow = allow && powerReady;
+ #endif
++    if (!allow) {
+         LOG_WARN("Drop Tx packet: LoRa Tx disabled");
+         // Never reaches completeSending(), so any per-packet radio state has to be released here.
+         RadioTxHooks::packetReleased(this, txp);
+diff --git a/src/mesh/ReliableRouter.cpp b/src/mesh/ReliableRouter.cpp
+index f2c71bb..1d01c4a 100644
+--- a/src/mesh/ReliableRouter.cpp
++++ b/src/mesh/ReliableRouter.cpp
+@@ -9,6 +9,9 @@
+ #include "mesh-pb-constants.h"
+ #include "modules/NodeInfoModule.h"
+ #include "modules/RoutingModule.h"
++#if RAK3401_LEGION_CONTROL
++#include "modules/LegionControlModule.h"
++#endif
+ 
+ // ReliableRouter::ReliableRouter() {}
+ 
+@@ -179,6 +182,11 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
+             !(isFromUs(p) && p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT)) {
+             LOG_DEBUG("Received a %s for 0x%08x, stopping retransmissions", ackId ? "ACK" : "NAK", ackId);
+             if (ackId) {
++#if RAK3401_LEGION_CONTROL
++                if (c && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
++                    p->decoded.portnum == meshtastic_PortNum_ROUTING_APP)
++                    legionControlObserveMeshAck(*p, ackId);
++#endif
+                 stopRetransmission(p->to, ackId);
+                 // M3: an end-to-end ACK proves the directed route to the ACK's sender currently works,
+                 // so clear its failure count and refresh freshness (keeps a good route pinned).
+diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
+index 5989be2..c19d6b8 100644
+--- a/src/mesh/Router.cpp
++++ b/src/mesh/Router.cpp
+@@ -485,7 +485,7 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
+ ErrorCode Router::send(meshtastic_MeshPacket *p)
+ {
+ #if RAK3401_LEGION_CONTROL
+-    if (legionScrambleDeadline()) {
++    if (!legionHibernationAllowsTx(p->id, isFromUs(p))) {
+         packetPool.release(p);
+         return ERRNO_DISABLED;
+     }
+@@ -791,7 +791,7 @@ static bool legionDropsAuthenticated(const meshtastic_MeshPacket &packet)
+ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
+ {
+ #if RAK3401_LEGION_CONTROL
+-    if (legionScrambleDeadline()) {
++    if (legionHibernationPending()) {
+         clearRoutingAuthCache();
+         return RoutingAuthVerdict::REJECT;
+     }
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index f1ed1be..58b42ce 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -5,6 +5,7 @@
+ #include "LegionScramble.h"
+ #include "MeshService.h"
+ #include "NodeDB.h"
++#include "PowerStatus.h"
+ #include "UptimeClock.h"
+ #include "concurrency/LockGuard.h"
+ #include "main.h"
+@@ -207,6 +208,10 @@ void LegionControlModule::observeLink(const meshtastic_MeshPacket &packet, int8_
+                         packet.rx_snr >= -128 && packet.rx_snr <= 127;
+     concurrency::LockGuard guard(&stateLock);
+     directLinks.observe(packet.from, radioGeneration, direct);
++    if (direct && !nodeDB->isLoraSlotTransient()) {
++        advanceMeshHealth();
++        meshHealth.hear(packet.from, 0);
++    }
+ }
+ 
+ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAway)
+@@ -215,6 +220,62 @@ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAw
+         legionControlModule->observeLink(packet, hopsAway);
+ }
+ 
++void LegionControlModule::advanceMeshHealth()
++{
++    meshHealth.advance(Time::getMillisMonotonic(), radioGeneration, nodeDB->committedLoraSlot(), config.device.role);
++}
++
++void LegionControlModule::observeMeshRx(const meshtastic_MeshPacket &packet, int8_t hopsAway)
++{
++    if (packet.via_mqtt || packet.from == nodeDB->getNodeNum() || nodeDB->isLoraSlotTransient())
++        return;
++    if (hopsAway == 0 && (!packet.has_rx_rssi || !std::isfinite(packet.rx_snr) || packet.rx_snr < -128 || packet.rx_snr > 127))
++        hopsAway = -1;
++    concurrency::LockGuard guard(&stateLock);
++    advanceMeshHealth();
++    meshHealth.hear(packet.from, hopsAway);
++}
++
++void LegionControlModule::observeMeshTx(const meshtastic_MeshPacket &packet, bool directMessage)
++{
++    if (packet.via_mqtt || (!directMessage && isFromUs(&packet)) || nodeDB->isLoraSlotTransient())
++        return;
++    concurrency::LockGuard guard(&stateLock);
++    advanceMeshHealth();
++    if (directMessage)
++        meshHealth.directTx(packet.to, packet.id);
++    else
++        meshHealth.relay(packet.from);
++}
++
++void LegionControlModule::observeMeshAck(uint32_t target, uint32_t id)
++{
++    if (nodeDB->isLoraSlotTransient())
++        return;
++    concurrency::LockGuard guard(&stateLock);
++    advanceMeshHealth();
++    meshHealth.acknowledge(target, id);
++}
++
++void legionControlObserveMeshRx(const meshtastic_MeshPacket &packet, int8_t hopsAway)
++{
++    if (legionControlModule)
++        legionControlModule->observeMeshRx(packet, hopsAway);
++}
++
++void legionControlObserveMeshTx(const meshtastic_MeshPacket &packet, bool directMessage)
++{
++    if (legionControlModule)
++        legionControlModule->observeMeshTx(packet, directMessage);
++}
++
++void legionControlObserveMeshAck(const meshtastic_MeshPacket &packet, uint32_t id)
++{
++    if (legionControlModule && packet.to == nodeDB->getNodeNum() && !packet.via_mqtt && packet.has_rx_rssi &&
++        packet.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA && !isFromUs(&packet))
++        legionControlModule->observeMeshAck(packet.from, id);
++}
++
+ bool LegionControlModule::sendText(uint8_t channel, const char *text, bool message)
+ {
+     const auto length = std::strlen(text);
+@@ -241,6 +302,80 @@ void LegionControlModule::reply(uint8_t channel, const char *text)
+         sendText(channel, output);
+ }
+ 
++void LegionControlModule::sendHibernationNotice(const char *text, bool thermal, bool entering)
++{
++    Channel control;
++    if (!legionPowerTxReady() || !router->getRadioIface() || !findControlChannel(control))
++        return;
++    if (!entering) {
++        reply(control.index, text);
++        return;
++    }
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    const int length = std::snprintf(output, sizeof(output), "!%08lx: %s", (unsigned long)nodeDB->getNodeNum(), text);
++    if (length <= 0 || size_t(length) >= sizeof(output))
++        return;
++    auto *packet = allocDataPacket();
++    if (!packet)
++        return;
++    packet->channel = control.index;
++    packet->to = NODENUM_BROADCAST;
++    packet->want_ack = false;
++    packet->decoded.want_response = false;
++    packet->priority = meshtastic_MeshPacket_Priority_HIGH;
++    packet->decoded.payload.size = length;
++    std::memcpy(packet->decoded.payload.bytes, output, length);
++    const auto id = packet->id;
++    legionStartHibernationNotice(id, thermal);
++    if (service->sendToMesh(packet, RX_SRC_LOCAL, true) != 0)
++        legionFinishHibernationNotice(id);
++}
++
++void legionControlEnterHibernation(bool thermal)
++{
++    if (thermal)
++        legionStartHibernationNotice(0, true);
++    if (legionControlModule)
++        legionControlModule->sendHibernationNotice(
++            thermal ? "Entering hibernation due to high CPU temperature." : "Entering hibernation for Scramble.", thermal, true);
++}
++
++void legionControlLowSupplyNotice()
++{
++    if (legionControlModule && !legionHibernationPending())
++        legionControlModule->sendHibernationNotice("Low supply voltage. Hibernation possible.", false, false);
++}
++
++void LegionControlModule::pollRecoveryNotice()
++{
++#if RAK3401_LEGION_BOOT
++    if (recoveryNoticeAttempted || controlBusy() || !legionPowerTxReady() || !router->getRadioIface())
++        return;
++    const char *message = nullptr;
++    switch (legionBootSnapshot().previous) {
++    case LegionShutdown::BootProtect:
++    case LegionShutdown::LowBattery:
++    case LegionShutdown::LowVdd:
++        message = "Hibernation ended. Supply voltage recovered.";
++        break;
++    case LegionShutdown::CpuThermal:
++        message = "Hibernation ended. CPU cooled down.";
++        break;
++    case LegionShutdown::Scramble:
++        message = "Hibernation ended. Scramble complete.";
++        break;
++    default:
++        recoveryNoticeAttempted = true;
++        return;
++    }
++    Channel control;
++    if (!findControlChannel(control))
++        return;
++    recoveryNoticeAttempted = true;
++    reply(control.index, message);
++#endif
++}
++
+ void LegionControlModule::report(const Pending &command, uint32_t now, bool zeroHop)
+ {
+     auto &snapshot = zeroHop ? zeroHopReport : ignoreReport;
+@@ -358,6 +493,28 @@ bool legionControlApcAllowRelay(const meshtastic_MeshPacket &packet, RadioInterf
+     return !legionControlModule || legionControlModule->allowApcRelay(packet, radio);
+ }
+ 
++bool LegionControlModule::canArmApc(Channel &primary) const
++{
++    return config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT && !controlBusy() &&
++           readChannel(channels.getPrimaryIndex(), primary);
++}
++
++bool LegionControlModule::setApcMode(legion::ApcMode mode, const Channel &control, const Channel &primary)
++{
++#if RAK3401_LEGION_TRAFFIC
++    if (mode == legion::ApcMode::Off)
++        legionTrafficRfResetFault();
++#endif
++    const bool changed = legionApcSetMode(mode, static_cast<uint32_t>(random(1, 0x7fffffff)), radioGeneration);
++    apcBound = mode != legion::ApcMode::Off;
++    apcControl = control;
++    apcPrimary = primary;
++    apcLora = config.lora;
++    apcGeneration = radioGeneration;
++    apcReport.valid = false;
++    return changed;
++}
++
+ void LegionControlModule::apc(const Pending &command, uint32_t now)
+ {
+     const auto &request = command.request;
+@@ -367,33 +524,17 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+                           : request.apcAction == 5 ? legion::ApcMode::On
+                                                    : legion::ApcMode::Off;
+         Channel primary;
+-        if (mode != legion::ApcMode::Off && (!readChannel(channels.getPrimaryIndex(), primary) ||
+-                                             config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT || rebootAtMsec ||
+-                                             shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
+-#if !MESHTASTIC_EXCLUDE_ADMIN
+-                                             || (adminModule && adminModule->isEditingSettings())
+-#endif
+-                                                 )) {
++        if (mode != legion::ApcMode::Off && !canArmApc(primary)) {
+             reply(command.control.index, "APC requires CLIENT, stable configuration "
+                                          "and no pending restart/transfer");
+             return;
+         }
+-#if RAK3401_LEGION_TRAFFIC
+-        if (mode == legion::ApcMode::Off)
+-            legionTrafficRfResetFault();
+-#endif
+-        const bool changed = legionApcSetMode(mode, static_cast<uint32_t>(random(1, 0x7fffffff)), radioGeneration);
+-        apcBound = mode != legion::ApcMode::Off;
+-        apcControl = command.control;
+-        apcPrimary = primary;
+-        apcLora = config.lora;
+-        apcGeneration = radioGeneration;
++        const bool changed = setApcMode(mode, command.control, primary);
+         char output[150];
+         std::snprintf(output, sizeof(output), "APC %s%s; %s; RAM only, boot OFF", legion::apcModeName(mode),
+                       changed ? " selected" : " unchanged",
+                       mode == legion::ApcMode::On ? "S1+S2 armed after warmup" : "normal TX/relays");
+         reply(command.control.index, output);
+-        apcReport.valid = false;
+         return;
+     }
+     const auto page = request.page;
+@@ -513,25 +654,39 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+ #endif
+ 
+ #if RAK3401_LEGION_TRAFFIC
++void LegionControlModule::setGuardMode(legion::GuardMode mode)
++{
++    legionTrafficSetGuard(mode);
++    spamReport.valid = false;
++}
++
++void LegionControlModule::arm(const Pending &command)
++{
++    const bool enable = command.request.command == legion::ControlCommand::Arm;
++    Channel primary;
++    if (enable && !canArmApc(primary)) {
++        reply(command.control.index, "Arm requires CLIENT, stable configuration and no pending restart/transfer");
++        return;
++    }
++    setGuardMode(enable ? legion::GuardMode::On : legion::GuardMode::Off);
++    setApcMode(enable ? legion::ApcMode::On : legion::ApcMode::Off, command.control, primary);
++    reply(command.control.index, enable ? "APC ON (S1+S2). SPAM ON." : "APC OFF. SPAM OFF.");
++}
++
+ void LegionControlModule::guard(const Pending &command, uint32_t now)
+ {
+     const auto &r = command.request;
+     char output[legion::CONTROL_TEXT_MAX + 1];
+     if (r.command == legion::ControlCommand::Guard) {
+         if (r.guardAction >= 2 && r.guardAction <= 4) {
+-            if (r.guardAction != 3 && (rebootAtMsec || shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
+-#if !MESHTASTIC_EXCLUDE_ADMIN
+-                                       || (adminModule && adminModule->isEditingSettings())
+-#endif
+-                                           )) {
++            if (r.guardAction != 3 && controlBusy()) {
+                 reply(command.control.index, "SPAM requires stable configuration and "
+                                              "no pending restart/transfer");
+                 return;
+             }
+-            legionTrafficSetGuard(r.guardAction == 4   ? legion::GuardMode::On
+-                                  : r.guardAction == 2 ? legion::GuardMode::Observe
+-                                                       : legion::GuardMode::Off);
+-            spamReport.valid = false;
++            setGuardMode(r.guardAction == 4   ? legion::GuardMode::On
++                         : r.guardAction == 2 ? legion::GuardMode::Observe
++                                              : legion::GuardMode::Off);
+         } else if (r.guardAction == 5) {
+             legionTrafficClearSpam(r.target);
+             spamReport.valid = false;
+@@ -603,6 +758,12 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         case legion::ControlCommand::SpamList:
+             usage = "Usage: /spamlist !legionid [positive page]";
+             break;
++        case legion::ControlCommand::Arm:
++            usage = "Usage: /arm !nodeid";
++            break;
++        case legion::ControlCommand::Disarm:
++            usage = "Usage: /disarm !nodeid";
++            break;
+ #endif
+         case legion::ControlCommand::Reboot:
+             usage = "Usage: /reboot !nodeid";
+@@ -657,6 +818,10 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         return;
+     }
+ #if RAK3401_LEGION_TRAFFIC
++    if (request.command == legion::ControlCommand::Arm || request.command == legion::ControlCommand::Disarm) {
++        arm(command);
++        return;
++    }
+     if (request.command == legion::ControlCommand::Guard || request.command == legion::ControlCommand::SpamList) {
+         guard(command, now);
+         return;
+@@ -844,51 +1009,99 @@ void LegionControlModule::editChannel(const Pending &command)
+     respond(text);
+ }
+ 
+-void LegionControlModule::pollDaily()
++bool LegionControlModule::controlBusy() const
++{
++    return rebootAtMsec || shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
++#if !MESHTASTIC_EXCLUDE_ADMIN
++           || (adminModule && adminModule->isEditingSettings())
++#endif
++        ;
++}
++
++void LegionControlModule::cutDaily(uint64_t now)
++{
++    const auto slot = now / legion::DailySchedule::DAY_MS;
++    if (!slot || slot != dailySlot) {
++        const auto percent = powerStatus && powerStatus->getHasBattery() ? powerStatus->getBatteryChargePercent() : 255;
++        dailyBattery.sample(slot, {legionPowerBatteryMv(), percent <= 100 ? int16_t(percent) : int16_t(-1)});
++    }
++    {
++        concurrency::LockGuard guard(&stateLock);
++        advanceMeshHealth();
++        if (slot != dailySlot)
++            dailyMeshHealth = meshHealth.last();
++    }
++    if (slot != dailySlot) {
++        dailySlot = slot;
++        dailyPart = 0;
++        dailyBase[0] = '\0';
++    }
++}
++
++void LegionControlModule::pollDaily(uint64_t now)
+ {
+     {
+         concurrency::LockGuard guard(&stateLock);
+         if (requests.isPending() || trace.id)
+             return;
+     }
+-    if (rebootAtMsec || shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy() || !legionPowerTxReady()
+-#if !MESHTASTIC_EXCLUDE_ADMIN
+-        || (adminModule && adminModule->isEditingSettings())
+-#endif
+-    )
+-        return;
+-    const uint64_t now = Time::getMillisMonotonic();
+-    if (!daily.due(now))
++    if (controlBusy() || !legionPowerTxReady())
+         return;
+     Channel control;
+     if (!findControlChannel(control))
+         return;
+-    const auto backup = legionBackupStatus();
++    if (dailyPart && !sameChannel(dailyChannel, control)) {
++        daily.queued(now);
++        return;
++    }
++    if (!daily.due(now))
++        return;
++    if (!dailyBase[0]) {
++        const auto backup = legionBackupStatus();
+ #if RAK3401_LEGION_TRAFFIC
+-    const auto spam = legionTrafficGuardStatus();
++        const auto spam = legionTrafficGuardStatus();
+ #endif
+-    char apcState[32] = "UNKNOWN";
++        char apcState[32] = "UNKNOWN";
+ #if RAK3401_LEGION_APC
+-    const auto apc = legionApcControlSnapshot();
+-    if (apc.mode == legion::ApcMode::Off)
+-        std::strcpy(apcState, "OFF");
+-    else
+-        std::snprintf(apcState, sizeof(apcState), "%s %s", legion::apcModeName(apc.mode), legion::apcStateName(apc.state));
++        const auto apc = legionApcControlSnapshot();
++        if (apc.mode == legion::ApcMode::Off)
++            std::strcpy(apcState, "OFF");
++        else
++            std::snprintf(apcState, sizeof(apcState), "%s %s", legion::apcModeName(apc.mode), legion::apcStateName(apc.state));
+ #endif
+-    char output[legion::CONTROL_TEXT_MAX + 1];
++        char battery[48];
++        dailyBattery.format(battery, sizeof(battery));
+ #if RAK3401_LEGION_TRAFFIC
+-    const int length = std::snprintf(output, sizeof(output), "!%08lx DAILY\nAPC:%s\nSPAM:%s %s:%u\nBACKUP:%s",
+-                                     (unsigned long)nodeDB->getNodeNum(), apcState, legion::guardModeName(spam.mode),
+-                                     spam.mode == legion::GuardMode::Observe ? "simQ" : "Q", unsigned(spam.active),
+-                                     legionBackupStateName(backup.state));
++        const int length = std::snprintf(dailyBase, sizeof(dailyBase), "APC:%s\nSPAM:%s %s:%u\nBACKUP:%s\n%s", apcState,
++                                         legion::guardModeName(spam.mode), spam.mode == legion::GuardMode::Observe ? "simQ" : "Q",
++                                         unsigned(spam.active), legionBackupStateName(backup.state), battery);
+ #else
+-    const int length = std::snprintf(output, sizeof(output), "!%08lx DAILY\nAPC:%s\nBACKUP:%s",
+-                                     (unsigned long)nodeDB->getNodeNum(), apcState, legionBackupStateName(backup.state));
++        const int length = std::snprintf(dailyBase, sizeof(dailyBase), "APC:%s\nBACKUP:%s\n%s", apcState,
++                                         legionBackupStateName(backup.state), battery);
+ #endif
++        if (length <= 0 || size_t(length) >= sizeof(dailyBase)) {
++            dailyBase[0] = '\0';
++            return;
++        }
++    }
++    char health[128];
++    dailyMeshHealth.format(health, sizeof(health));
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    const auto id = (unsigned long)nodeDB->getNodeNum();
++    int length = std::snprintf(output, sizeof(output), "!%08lx DAILY\n%s\n%s", id, dailyBase, health);
++    const bool split = length >= int(sizeof(output));
++    if (split)
++        length = std::snprintf(output, sizeof(output), "!%08lx DAILY %u/2\n%s", id, unsigned(dailyPart + 1),
++                               dailyPart ? health : dailyBase);
+     Channel current;
+     if (length > 0 && static_cast<size_t>(length) < sizeof(output) && findControlChannel(current) &&
+-        sameChannel(current, control) && sendText(control.index, output))
+-        daily.queued(now);
++        sameChannel(current, control) && sendText(control.index, output)) {
++        if (split && !dailyPart) {
++            dailyPart = 1;
++            dailyChannel = control;
++        } else
++            daily.queued(now);
++    }
+ }
+ 
+ void LegionControlModule::startTrace(const Pending &command, uint32_t now)
+@@ -1109,6 +1322,8 @@ void LegionControlModule::pollTrace(uint32_t now)
+ int32_t LegionControlModule::runOnce()
+ {
+     const uint32_t now = Time::getMillis();
++    const uint64_t uptime = Time::getMillisMonotonic();
++    cutDaily(uptime);
+     pollTrace(now);
+ #if RAK3401_LEGION_TRAFFIC
+     (void)legionTrafficGuardStatus(); // Disarm stale channel/role context even
+@@ -1135,8 +1350,10 @@ int32_t LegionControlModule::runOnce()
+     Channel control;
+     if (executeCommand && findControlChannel(control) && sameChannel(control, command.control) && legionPowerTxReady())
+         execute(command, now);
+-    if (!executeCommand)
+-        pollDaily();
++    if (!executeCommand) {
++        pollRecoveryNotice();
++        pollDaily(uptime);
++    }
+     return 1000;
+ }
+ #endif
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 90f1fb0..d0a51ea 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -26,6 +26,10 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     LegionControlModule();
+     bool tryScramble(const meshtastic_MeshPacket &packet) const;
+     void observeLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
++    void observeMeshRx(const meshtastic_MeshPacket &packet, int8_t hopsAway);
++    void observeMeshTx(const meshtastic_MeshPacket &packet, bool directMessage);
++    void observeMeshAck(uint32_t target, uint32_t id);
++    void sendHibernationNotice(const char *text, bool thermal, bool entering);
+     void observeTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+     void observeTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
+ #if RAK3401_LEGION_APC
+@@ -76,9 +80,15 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     void execute(const Pending &command, uint32_t now);
+     void report(const Pending &command, uint32_t now, bool zeroHop);
+     void editChannel(const Pending &command);
+-    void pollDaily();
++    bool controlBusy() const;
++    void advanceMeshHealth();
++    void cutDaily(uint64_t now);
++    void pollDaily(uint64_t now);
++    void pollRecoveryNotice();
+ #if RAK3401_LEGION_TRAFFIC
+     void guard(const Pending &command, uint32_t now);
++    void setGuardMode(legion::GuardMode mode);
++    void arm(const Pending &command);
+     struct SpamReport {
+         legion::SpamEntry entries[legion::SPAM_QUARANTINES]{};
+         Channel control;
+@@ -89,12 +99,22 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     } spamReport;
+ #endif
+     legion::DailySchedule daily;
++    legion::DailyBattery dailyBattery;
++    legion::MeshHealth meshHealth;
++    legion::MeshHealthTotals dailyMeshHealth;
++    uint64_t dailySlot = 0;
++    uint8_t dailyPart = 0;
++    char dailyBase[128]{};
++    Channel dailyChannel;
++    bool recoveryNoticeAttempted = false;
+     void startTrace(const Pending &command, uint32_t now);
+     void pollTrace(uint32_t now);
+     bool matchesTrace(const meshtastic_MeshPacket &packet) const;
+     void formatTrace(const Trace &result, bool back, char *output, size_t size) const;
+ #if RAK3401_LEGION_APC
+     void apc(const Pending &command, uint32_t now);
++    bool canArmApc(Channel &primary) const;
++    bool setApcMode(legion::ApcMode mode, const Channel &control, const Channel &primary);
+     bool apcContext();
+     Channel apcControl;
+     Channel apcPrimary;
+@@ -129,6 +149,11 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+ extern LegionControlModule *legionControlModule;
+ bool legionControlTryScramble(const meshtastic_MeshPacket &packet);
+ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
++void legionControlObserveMeshRx(const meshtastic_MeshPacket &packet, int8_t hopsAway);
++void legionControlObserveMeshTx(const meshtastic_MeshPacket &packet, bool directMessage);
++void legionControlObserveMeshAck(const meshtastic_MeshPacket &packet, uint32_t id);
++void legionControlEnterHibernation(bool thermal);
++void legionControlLowSupplyNotice();
+ void legionControlObserveTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+ void legionControlObserveTraceError(const meshtastic_MeshPacket &packet, meshtastic_Routing_Error error);
+ #if RAK3401_LEGION_APC
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index 4c81d9e..b6dd8b7 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -34,7 +34,9 @@ enum class ControlCommand : uint8_t {
+     CreateChannel,
+     DeleteChannel,
+     Guard,
+-    SpamList
++    SpamList,
++    Arm,
++    Disarm
+ };
+ struct ControlRequest {
+     ControlCommand command = ControlCommand::None;
+@@ -349,6 +351,10 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+ #if RAK3401_LEGION_TRAFFIC
+     else if (parser.token("/spamlist"))
+         result.command = ControlCommand::SpamList;
++    else if (parser.token("/arm"))
++        result.command = ControlCommand::Arm;
++    else if (parser.token("/disarm"))
++        result.command = ControlCommand::Disarm;
+ #endif
+     else
+         return result;
+diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
+index 0593486..c29d291 100644
+--- a/src/modules/LegionDailyPolicy.h
++++ b/src/modules/LegionDailyPolicy.h
+@@ -1,6 +1,9 @@
+ #pragma once
+ 
++#include <algorithm>
++#include <array>
+ #include <cstdint>
++#include <cstdio>
+ 
+ namespace legion
+ {
+@@ -28,4 +31,242 @@ class DailySchedule
+   private:
+     uint64_t closedSlot = 0, attemptSlot = 0, lastAttempt = 0;
+ };
++
++struct DailyBatterySample {
++    uint16_t mv = 0;
++    int16_t percent = -1;
++};
++
++class DailyBattery
++{
++  public:
++    void sample(uint64_t slot, DailyBatterySample value)
++    {
++        if (!slot) {
++            if (!current.mv)
++                current.mv = value.mv;
++            if (current.percent < 0)
++                current.percent = value.percent;
++        } else if (slot != lastSlot) {
++            previous = slot == lastSlot + 1 ? current : DailyBatterySample{};
++            current = value;
++            lastSlot = slot;
++        }
++    }
++
++    void format(char *out, size_t size) const
++    {
++        char percent[20] = "", voltage[25] = "";
++        const bool percentDelta = current.percent >= 0 && previous.percent >= 0;
++        const bool voltageDelta = current.mv && previous.mv;
++        if (percentDelta)
++            std::snprintf(percent, sizeof(percent), "%d%% (%+dpp) ", int(current.percent), current.percent - previous.percent);
++        else if (current.percent >= 0)
++            std::snprintf(percent, sizeof(percent), "%d%% ", int(current.percent));
++        if (voltageDelta)
++            std::snprintf(voltage, sizeof(voltage), "%u.%02uV (%+ldmV)", unsigned(current.mv / 1000),
++                          unsigned(current.mv % 1000 / 10), long(current.mv) - previous.mv);
++        else if (current.mv)
++            std::snprintf(voltage, sizeof(voltage), "%u.%02uV", unsigned(current.mv / 1000), unsigned(current.mv % 1000 / 10));
++        else
++            std::snprintf(voltage, sizeof(voltage), "NA");
++        std::snprintf(out, size, "BAT:%s%s%s", percent, voltage, percentDelta || voltageDelta ? "" : " 24h:NA");
++    }
++
++  private:
++    uint64_t lastSlot = 0;
++    DailyBatterySample current, previous;
++};
++
++struct MeshHealthTotals {
++    uint16_t heard = 0, direct = 0, distant = 0, sources = 0, targets = 0, confirmed = 0;
++    uint32_t relayed = 0;
++    int16_t score = -1;
++    bool partial = false;
++
++    void format(char *out, size_t size) const
++    {
++        char grade[12];
++        if (score >= 0)
++            std::snprintf(grade, sizeof(grade), "%u/100", unsigned(score));
++        else
++            std::snprintf(grade, sizeof(grade), "%s", partial ? "PARTIAL" : "NA");
++        std::snprintf(out, size,
++                      "MeshHealth %s\nHeard:%u Direct:%u 2+ hops:%u\nRelayed:%lu Sources:%u\nDM targets:%u Confirmed:%u", grade,
++                      unsigned(heard), unsigned(direct), unsigned(distant), (unsigned long)relayed, unsigned(sources),
++                      unsigned(targets), unsigned(confirmed));
++    }
++};
++
++class MeshHealth
++{
++  public:
++    void advance(uint64_t now, uint32_t generation, uint16_t slot, uint8_t role)
++    {
++        const auto day = now / DailySchedule::DAY_MS;
++        if (haveContext && (generation != radioGeneration || slot != radioSlot || role != radioRole)) {
++            partial = true;
++            historySize = 0;
++            historyNext = 0;
++        }
++        haveContext = true;
++        radioGeneration = generation;
++        radioSlot = slot;
++        radioRole = role;
++        if (day <= currentDay)
++            return;
++
++        closed = day == currentDay + 1 ? summarize() : MeshHealthTotals{};
++        if (day != currentDay + 1)
++            closed.partial = true;
++        if (!closed.partial) {
++            closed.score = score(closed);
++            history[historyNext] = {closed.heard, closed.direct, closed.sources};
++            historyNext = (historyNext + 1) % history.size();
++            if (historySize < history.size())
++                ++historySize;
++        }
++        currentDay = day;
++        nodes.fill(0);
++        facts.fill(0);
++        outstanding.fill({});
++        nodeCount = 0;
++        relayed = 0;
++        partial = false;
++    }
++
++    const MeshHealthTotals &last() const { return closed; }
++
++    void hear(uint32_t node, int8_t hops)
++    {
++        if (auto *fact = find(node, true)) {
++            *fact |= HEARD;
++            const auto best = *fact & HOP_MASK;
++            if (hops >= 0 && hops <= 7 && (!best || hops + 1 < best))
++                *fact = (*fact & ~HOP_MASK) | (hops + 1);
++        }
++    }
++
++    void relay(uint32_t node)
++    {
++        if (relayed != UINT32_MAX)
++            ++relayed;
++        if (auto *fact = find(node, true))
++            *fact |= RELAYED;
++    }
++
++    void directTx(uint32_t target, uint32_t packet)
++    {
++        auto *fact = find(target, true);
++        if (!fact)
++            return;
++        *fact |= TARGETED;
++        if (*fact & CONFIRMED)
++            return;
++        PendingAck *free = nullptr;
++        for (auto &pending : outstanding) {
++            if (pending.packet == packet && pending.target == target)
++                return;
++            if (!free && !pending.packet)
++                free = &pending;
++        }
++        if (free)
++            *free = {target, packet};
++        else
++            partial = true;
++    }
++
++    void acknowledge(uint32_t target, uint32_t packet)
++    {
++        const auto match = std::find_if(outstanding.begin(), outstanding.end(),
++                                        [=](const PendingAck &ack) { return ack.target == target && ack.packet == packet; });
++        if (match == outstanding.end())
++            return;
++        if (auto *fact = find(target, false))
++            *fact |= CONFIRMED;
++        for (auto &pending : outstanding)
++            if (pending.target == target)
++                pending = {};
++    }
++
++  private:
++    static constexpr uint8_t HOP_MASK = 0x0f, HEARD = 0x10, RELAYED = 0x20, TARGETED = 0x40, CONFIRMED = 0x80;
++    static constexpr size_t CAPACITY = 1024, MAX_TRACKED = 768;
++    struct PendingAck {
++        uint32_t target = 0, packet = 0;
++    };
++    using Baseline = std::array<uint16_t, 3>;
++
++    uint8_t *find(uint32_t node, bool insert)
++    {
++        if (node < 4 || node == UINT32_MAX)
++            return nullptr;
++        auto slot = size_t(((node ^ (node >> 16)) * 2654435761u) >> 22);
++        while (nodes[slot] && nodes[slot] != node)
++            slot = (slot + 1) % CAPACITY;
++        if (!nodes[slot]) {
++            if (!insert)
++                return nullptr;
++            if (nodeCount == MAX_TRACKED) {
++                partial = true;
++                return nullptr;
++            }
++            nodes[slot] = node;
++            ++nodeCount;
++        }
++        return &facts[slot];
++    }
++
++    MeshHealthTotals summarize() const
++    {
++        MeshHealthTotals total;
++        total.relayed = relayed;
++        total.partial = partial;
++        for (const auto fact : facts) {
++            const auto hops = fact & HOP_MASK;
++            total.heard += (fact & HEARD) != 0;
++            total.direct += hops == 1;
++            total.distant += hops >= 3;
++            total.sources += (fact & RELAYED) != 0;
++            total.targets += (fact & TARGETED) != 0;
++            total.confirmed += (fact & CONFIRMED) != 0;
++        }
++        return total;
++    }
++
++    int16_t score(const MeshHealthTotals &total) const
++    {
++        if (!historySize)
++            return -1;
++        const Baseline today{total.heard, total.direct, total.sources};
++        constexpr Baseline weights{40, 25, 35};
++        float points = 0;
++        unsigned possible = 0;
++        for (size_t metric = 0; metric < weights.size(); ++metric) {
++            std::array<uint16_t, 7> values{};
++            for (size_t i = 0; i < historySize; ++i)
++                values[i] = history[i][metric];
++            std::sort(values.begin(), values.begin() + historySize);
++            const unsigned doubleMedian = values[(historySize - 1) / 2] + values[historySize / 2];
++            if (doubleMedian) {
++                possible += weights[metric];
++                points += weights[metric] * std::min(2u * today[metric], doubleMedian) / float(doubleMedian);
++            }
++        }
++        return possible ? int16_t(100 * points / possible + 0.5f) : -1;
++    }
++
++    std::array<uint32_t, CAPACITY> nodes{};
++    std::array<uint8_t, CAPACITY> facts{};
++    std::array<PendingAck, 96> outstanding{};
++    std::array<Baseline, 7> history{};
++    size_t nodeCount = 0, historySize = 0, historyNext = 0;
++    uint64_t currentDay = 0;
++    uint32_t radioGeneration = 0, relayed = 0;
++    uint16_t radioSlot = 0;
++    uint8_t radioRole = 0;
++    bool haveContext = false, partial = false;
++    MeshHealthTotals closed;
++};
++static_assert(sizeof(MeshHealth) <= 6144, "MeshHealth RAM budget exceeded");
+ } // namespace legion
+diff --git a/src/modules/LegionScramble.cpp b/src/modules/LegionScramble.cpp
+index 8fdfefa..f7f567a 100644
+--- a/src/modules/LegionScramble.cpp
++++ b/src/modules/LegionScramble.cpp
+@@ -8,6 +8,8 @@
+ 
+ namespace {
+ std::atomic<uint32_t> deadline{0};
++std::atomic<uint32_t> noticeId{0};
++std::atomic<bool> thermalPending{false};
+ }
+ 
+ void legionArmScramble() {
+@@ -18,4 +20,34 @@ void legionArmScramble() {
+ }
+ 
+ uint32_t legionScrambleDeadline() { return deadline.load(); }
++
++bool legionHibernationPending()
++{
++    return thermalPending.load() || legionScrambleDeadline();
++}
++
++bool legionHibernationAllowsTx(uint32_t id, bool local)
++{
++    return !legionHibernationPending() || (local && id && id == noticeId.load());
++}
++
++void legionStartHibernationNotice(uint32_t id, bool thermal)
++{
++    noticeId.store(id);
++    if (thermal)
++        thermalPending.store(true);
++}
++
++bool legionHibernationNoticeWaiting()
++{
++    return noticeId.load() != 0;
++}
++
++void legionFinishHibernationNotice(uint32_t id)
++{
++    if (id)
++        noticeId.compare_exchange_strong(id, 0);
++    else
++        noticeId.store(0);
++}
+ #endif
+diff --git a/src/modules/LegionScramble.h b/src/modules/LegionScramble.h
+index 0377cb5..e5e34a1 100644
+--- a/src/modules/LegionScramble.h
++++ b/src/modules/LegionScramble.h
+@@ -5,7 +5,13 @@
+ namespace legion
+ {
+ constexpr uint32_t SCRAMBLE_MS = 60 * 60 * 1000;
++constexpr uint32_t HIBERNATION_NOTICE_MS = 4000;
+ }
+ 
+ void legionArmScramble();
+ uint32_t legionScrambleDeadline();
++bool legionHibernationPending();
++bool legionHibernationAllowsTx(uint32_t id, bool local);
++void legionStartHibernationNotice(uint32_t id, bool thermal);
++bool legionHibernationNoticeWaiting();
++void legionFinishHibernationNotice(uint32_t id);
+diff --git a/src/modules/LegionTraffic.cpp b/src/modules/LegionTraffic.cpp
+index 1ad3a13..b0ca6c6 100644
+--- a/src/modules/LegionTraffic.cpp
++++ b/src/modules/LegionTraffic.cpp
+@@ -6,6 +6,7 @@
+ #endif
+ #include "Channels.h"
+ #include "LegionApc.h"
++#include "LegionControlModule.h"
+ #include "LegionScramble.h"
+ #include "NodeDB.h"
+ #include "UptimeClock.h"
+@@ -34,7 +35,7 @@ struct Tag {
+     uint32_t id = 0;
+     legion::RelayKind kind = legion::RelayKind::Protected;
+     int8_t nominal = 0, proposed = 0, applied = 0;
+-    bool primaryText = false, started = false;
++    bool primaryText = false, started = false, directMessage = false;
+ } tags[legion::TRAFFIC_TAG_CAPACITY];
+ const meshtastic_MeshPacket *preparedPacket = nullptr;
+ int8_t preparedPower = 0;
+@@ -168,7 +169,7 @@ bool legionTrafficAllowRelay(const meshtastic_MeshPacket &p)
+ }
+ bool legionTrafficAllowQueued(const meshtastic_MeshPacket *p)
+ {
+-    if (legionScrambleDeadline() || (p && legionNameIgnoreDropsOrigin(*p)))
++    if (p && (!legionHibernationAllowsTx(p->id, isFromUs(p)) || legionNameIgnoreDropsOrigin(*p)))
+         return false;
+     syncContext();
+     concurrency::LockGuard lock(&trafficLock);
+@@ -184,13 +185,17 @@ void legionTrafficTagOutgoing(const meshtastic_MeshPacket *p)
+     value.id = p->id;
+     value.kind = classify(*p);
+     value.primaryText = primaryText(*p) && identityOf(*p, value.identity);
++    value.directMessage = isFromUs(p) && legion::validPeer(p->to) && !p->via_mqtt &&
++                          p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
++                          (p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
++                           p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP);
+     if (value.kind == legion::RelayKind::NodeInfo)
+         value.nodeInfoHash = contentHash(*p);
+     concurrency::LockGuard lock(&trafficLock);
+     Tag *slot = findTag(p);
+     if (slot)
+         *slot = {};
+-    if (value.kind == legion::RelayKind::Protected && !value.primaryText)
++    if (value.kind == legion::RelayKind::Protected && !value.primaryText && !value.directMessage)
+         return;
+     for (auto &candidate : tags) {
+         if (!candidate.packet) {
+@@ -267,10 +272,17 @@ void legionTrafficTxStarted(const meshtastic_MeshPacket *p)
+ }
+ void legionTrafficTxEnded(const meshtastic_MeshPacket *p, bool done)
+ {
+-    concurrency::LockGuard lock(&trafficLock);
+-    const Tag *tag = findTag(p);
+-    if (tag && tag->started && done && tag->kind == legion::RelayKind::NodeInfo)
+-        rfPolicy.nodeInfoDone(tag->identity.node, tag->nodeInfoHash, Time::getMillis());
++    if (!p || !done)
++        return;
++    bool directMessage;
++    {
++        concurrency::LockGuard lock(&trafficLock);
++        const Tag *tag = findTag(p);
++        directMessage = tag && tag->started && tag->directMessage;
++        if (tag && tag->started && tag->kind == legion::RelayKind::NodeInfo)
++            rfPolicy.nodeInfoDone(tag->identity.node, tag->nodeInfoHash, Time::getMillis());
++    }
++    legionControlObserveMeshTx(*p, directMessage);
+ }
+ void legionTrafficSetGuard(legion::GuardMode mode)
+ {
+diff --git a/src/platform/nrf52/LegionBoot.cpp b/src/platform/nrf52/LegionBoot.cpp
+index f7dde46..3d96f5f 100644
+--- a/src/platform/nrf52/LegionBoot.cpp
++++ b/src/platform/nrf52/LegionBoot.cpp
+@@ -25,6 +25,7 @@ LegionShutdown decode(uint8_t value)
+     case LegionShutdown::LowVdd:
+     case LegionShutdown::SystemOff:
+     case LegionShutdown::CpuThermal:
++    case LegionShutdown::Scramble:
+         return static_cast<LegionShutdown>(value & REASON_MASK);
+     default:
+         return LegionShutdown::Unknown;
+@@ -70,6 +71,8 @@ const char *shutdownName(LegionShutdown reason)
+         return "system-off";
+     case LegionShutdown::CpuThermal:
+         return "cpu-thermal";
++    case LegionShutdown::Scramble:
++        return "scramble";
+     default:
+         return "unknown";
+     }
+diff --git a/src/platform/nrf52/LegionBoot.h b/src/platform/nrf52/LegionBoot.h
+index 7e52360..cab0de3 100644
+--- a/src/platform/nrf52/LegionBoot.h
++++ b/src/platform/nrf52/LegionBoot.h
+@@ -13,6 +13,7 @@ enum class LegionShutdown : uint8_t {
+     LowVdd = 0xc0,
+     SystemOff = 0xd0,
+     CpuThermal = 0xe0,
++    Scramble = 0xf0,
+ };
+ 
+ struct LegionBootSnapshot {
+diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
+index 68814dd..1e4c6c4 100644
+--- a/src/platform/nrf52/main-nrf52.cpp
++++ b/src/platform/nrf52/main-nrf52.cpp
+@@ -41,7 +41,10 @@
+ #include "power/RAK3401LegionPower.h"
+ #endif
+ #if RAK3401_LEGION_CONTROL
++#include "UptimeClock.h"
+ #include "mesh/Router.h"
++#include "mesh/Throttle.h"
++#include "modules/LegionControlModule.h"
+ #include "modules/LegionScramble.h"
+ #ifdef USE_TINYUSB
+ #include <Adafruit_TinyUSB.h>
+@@ -415,14 +418,27 @@ void nrf52Loop()
+     nrfx_wdt_channel_feed(&nrfx_wdt, nrfx_wdt_channel_id_nrf52_main);
+ 
+ #if RAK3401_LEGION_CONTROL
+-    const bool cpuOverheated = legionCpuThermalSuspendDue();
++    static bool cpuOverheated = false;
++    static bool noticeStarted = false;
++    static uint32_t noticeDeadline = 0;
++    cpuOverheated = cpuOverheated || legionCpuThermalSuspendDue();
+     const auto deadline = legionScrambleDeadline();
+     if (cpuOverheated || deadline) {
+-        quiesceLegionInterfaces();
+-        if (cpuOverheated)
+-            legionWaitForThermalRecovery(deadline);
+-        legionPrepareSystemOff(false);
+-        legionWaitForTimedRestart(deadline);
++        if (!noticeStarted) {
++            noticeStarted = true;
++            noticeDeadline = Time::timerEndsAtMillis(legion::HIBERNATION_NOTICE_MS);
++            legionControlEnterHibernation(cpuOverheated);
++        }
++        if (!legionHibernationNoticeWaiting() || Throttle::deadlinePassed(noticeDeadline)) {
++            legionFinishHibernationNotice(0);
++            quiesceLegionInterfaces();
++            if (cpuOverheated)
++                legionWaitForThermalRecovery(deadline);
++            legionWaitForTimedRestart(deadline);
++        }
++        checkSDEvents();
++        variant_nrf52LoopHook();
++        return;
+     }
+ #endif
+     checkSDEvents();
+diff --git a/src/power/LegionPowerPolicy.h b/src/power/LegionPowerPolicy.h
+index 7e9bef9..f8a0c5e 100644
+--- a/src/power/LegionPowerPolicy.h
++++ b/src/power/LegionPowerPolicy.h
+@@ -78,4 +78,33 @@ class PowerPolicy
+     uint8_t recoverySamples = 0;
+     bool vddUnsafe = false;
+ };
++
++class LowSupplyNotice
++{
++  public:
++    bool observe(uint16_t battery, uint16_t vdd, bool usb)
++    {
++        constexpr uint8_t confirmations = 3;
++        if (sent) {
++            const bool recovered = (usb || battery >= 3750) && vdd >= 3200;
++            samples = recovered ? samples + 1 : 0;
++            if (samples == confirmations) {
++                samples = 0;
++                sent = false;
++            }
++            return false;
++        }
++        const bool low = !usb && transmitPowerReady(battery, vdd, false) && (battery <= 3650 || vdd <= 3100);
++        samples = low ? samples + 1 : 0;
++        if (samples < confirmations)
++            return false;
++        samples = 0;
++        sent = true;
++        return true;
++    }
++
++  private:
++    uint8_t samples = 0;
++    bool sent = false;
++};
+ } // namespace legion
+diff --git a/src/power/RAK3401LegionPower.cpp b/src/power/RAK3401LegionPower.cpp
+index aef6c7e..6e4cc5f 100644
+--- a/src/power/RAK3401LegionPower.cpp
++++ b/src/power/RAK3401LegionPower.cpp
+@@ -19,6 +19,7 @@
+ #endif
+ #if RAK3401_LEGION_CONTROL
+ #include "LegionThermalPolicy.h"
++#include "modules/LegionControlModule.h"
+ #include "platform/nrf52/LegionTelemetryHal.h"
+ #endif
+ #include <algorithm>
+@@ -44,6 +45,7 @@ std::atomic<bool> energySleep{false};
+ legion::PowerPolicy policy;
+ #if RAK3401_LEGION_CONTROL
+ legion::CpuThermalPolicy thermalPolicy;
++legion::LowSupplyNotice supplyNotice;
+ #endif
+ 
+ uint16_t readBatteryMv()
+@@ -204,7 +206,7 @@ void legionPowerBootGate()
+     if (legionBootSnapshot().previous == LegionShutdown::CpuThermal) {
+         int16_t quarterDegrees = 0;
+         const bool valid = legionReadCpuTemperature(quarterDegrees);
+-        if (!legion::cpuThermalCooled(valid, quarterDegrees))
++        if (!(legionBootSnapshot().reset & POWER_RESETREAS_SREQ_Msk) || !legion::cpuThermalCooled(valid, quarterDegrees))
+             legionWaitForThermalRecovery();
+     }
+ #endif
+@@ -252,6 +254,10 @@ void legionPrepareSystemOff(bool enableBatteryWake)
+ 
+ [[noreturn]] void legionWaitForTimedRestart(uint32_t deadline)
+ {
++#if RAK3401_LEGION_BOOT
++    legionBootRecordShutdown(LegionShutdown::Scramble);
++#endif
++    powerOffPeripherals();
+     sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+     auto now = Time::getMillis();
+     while (!Throttle::deadlinePassedAt(now, deadline)) {
+@@ -317,6 +323,10 @@ void legionPowerPoll()
+     if (!sampled || Throttle::hasElapsed(lastBatteryCheck, BATTERY_CHECK_MS)) {
+         lastBatteryCheck = Time::getMillis();
+         readBatteryMv();
++#if RAK3401_LEGION_CONTROL
++        if (supplyNotice.observe(lastBatteryMv.load(), lastVddMv.load(), powerHAL_isVBUSConnected()))
++            legionControlLowSupplyNotice();
++#endif
+ #if RAK3401_LEGION_APC
+         legionApcSample(lastBatteryMv.load(), lastVddMv.load(), powerHAL_isVBUSConnected(), radioGeneration);
+ #endif

@@ -685,6 +685,42 @@ class ReleaseValidationTests(unittest.TestCase):
                     release.prepare_release(self.directory, self.commit)
                 self.manifest[field] = original
 
+    def test_v070_quality_of_life_release_checks_daily_features_and_commands(self):
+        self.traffic_manifest()
+        self.manifest.update(
+            legion_version="0.7.0",
+            advertised_firmware_version="2.8.2.Legion0.7.0",
+            hardware_tested=False,
+            ota_hardware_tested=False,
+            apc_hardware_tested=False,
+            antispam_hardware_tested=False,
+            name_ignore=True,
+            scramble=True,
+            scramble_duration_seconds=3600,
+            daily_battery_balance=True,
+            daily_mesh_health=True,
+            cpu_thermal_hibernation=True,
+            hibernation_notices=True,
+        )
+        self.manifest["control_commands"] += ["unignorename", "scramble", "arm", "disarm"]
+        self.write_manifest()
+        result = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(result["tag"], "legion-v0.7.0-aaaaaaa")
+        self.assertFalse(result["prerelease"])
+        for term in ("MeshHealth", "/arm", "/disarm", "pending hardware testing", "English manual"):
+            self.assertIn(term, result["notes"])
+        for field in ("daily_battery_balance", "daily_mesh_health", "cpu_thermal_hibernation", "hibernation_notices"):
+            with self.subTest(field=field):
+                self.manifest[field] = False
+                self.write_manifest()
+                with self.assertRaises(ValueError):
+                    release.prepare_release(self.directory, self.commit)
+                self.manifest[field] = True
+        self.manifest["control_commands"].remove("disarm")
+        self.write_manifest()
+        with self.assertRaises(ValueError):
+            release.prepare_release(self.directory, self.commit)
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

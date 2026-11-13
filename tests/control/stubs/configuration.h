@@ -38,6 +38,7 @@ constexpr int meshtastic_PortNum_TELEMETRY_APP = 67;
 constexpr int meshtastic_Config_DeviceConfig_Role_CLIENT = 0;
 constexpr int meshtastic_MeshPacket_Priority_BACKGROUND = 10;
 constexpr int meshtastic_MeshPacket_Priority_DEFAULT = 64;
+constexpr int meshtastic_MeshPacket_Priority_HIGH = 100;
 constexpr int meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA = 1;
 constexpr int meshtastic_Channel_Role_DISABLED = 0;
 constexpr int meshtastic_Channel_Role_PRIMARY = 1;

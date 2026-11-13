@@ -1,3 +1,26 @@
+# Legion 0.7.0 - quality-of-life update
+
+Legion 0.7.0 uses Meshtastic v2.8.2.d5f1619 and reports
+`2.8.2.Legion0.7.0` on the RAK3401 1W with RAK13302.
+
+- **DAILY.** Shows battery change over 24 hours and MeshHealth, a 0-100
+  comparison with the node's own LoRa activity. A long report uses two messages.
+- **Arm and disarm.** `/arm !nodeid` and `/disarm !nodeid` set APC and
+  antispam together and return one confirmation.
+- **CPU thermal hibernation.** Sleeps after 3 minutes at 70 °C or above
+  and restarts after two consecutive samples at 60 °C or below.
+- **LegionRF notices.** Low-supply prewarning and recovery, and entry and
+  recovery for Scramble and thermal hibernation, subject to TX checks.
+
+**New features: pending hardware testing.** Use the OTA ZIP with nRF Connect
+or UF2 over USB.
+
+[Commands](COMMANDS.md) · [Automatic features](AUTOMATIC-FEATURES.md) ·
+[Manual en español](docs/Legion-Spanish-friendly-user-manual.pdf) ·
+[English manual](docs/Legion-English-friendly-user-manual.pdf)
+
+---
+
 # Legion 0.6.6 — emergency release
 
 Legion 0.6.6 uses the same Meshtastic v2.8.2.d5f1619 base as 0.6.5 and reports

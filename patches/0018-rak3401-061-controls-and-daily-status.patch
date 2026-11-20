@@ -1,6 +1,6 @@
 diff --git a/src/mesh/LegionBackupStatus.h b/src/mesh/LegionBackupStatus.h
 new file mode 100644
-index 0000000..f94d273
+index 0000000000000000000000000000000000000000..f94d2738b86e4b267fecd4c903b72e2827970f17
 --- /dev/null
 +++ b/src/mesh/LegionBackupStatus.h
 @@ -0,0 +1,28 @@
@@ -33,7 +33,7 @@ index 0000000..f94d273
 +    }
 +}
 diff --git a/src/mesh/LegionRecovery.cpp b/src/mesh/LegionRecovery.cpp
-index c542f96..86c693f 100644
+index c542f9601535ec2727ed1499c2e8fc05e62149bf..86c693f39c8de1822858b4f760fb3d2a197497d7 100644
 --- a/src/mesh/LegionRecovery.cpp
 +++ b/src/mesh/LegionRecovery.cpp
 @@ -15,6 +15,7 @@
@@ -238,7 +238,7 @@ index c542f96..86c693f 100644
          respond("storage invalid or incompatible; no changes");
          return;
 diff --git a/src/mesh/LegionRecovery.h b/src/mesh/LegionRecovery.h
-index 78ab80a..92a6e10 100644
+index 78ab80ae9aea1cc4696c591efe6c820962953be0..92a6e108d429bac670bf41ee0602b8c1c151f1a7 100644
 --- a/src/mesh/LegionRecovery.h
 +++ b/src/mesh/LegionRecovery.h
 @@ -3,6 +3,7 @@
@@ -259,7 +259,7 @@ index 78ab80a..92a6e10 100644
  bool legionRecoveryNoticeAttempt();
  void legionRecoveryNoticeQueued();
 diff --git a/src/mesh/LegionRecoveryStore.h b/src/mesh/LegionRecoveryStore.h
-index 25abfcb..c89d729 100644
+index 25abfcbf88fe4c914dd955eba202e2f01c074af4..c89d7298e830907a0b4e13db83c6154de07d2bb0 100644
 --- a/src/mesh/LegionRecoveryStore.h
 +++ b/src/mesh/LegionRecoveryStore.h
 @@ -17,7 +17,7 @@ constexpr uint32_t RECOVERY_SCHEMA = 0x04cb8881;
@@ -306,31 +306,8 @@ index 25abfcb..c89d729 100644
 +    bool occupied = false;
  };
  } // namespace legion
-diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
-index 8c321bf..c3ce60f 100644
---- a/src/mesh/RadioInterface.cpp
-+++ b/src/mesh/RadioInterface.cpp
-@@ -24,6 +24,9 @@
- #include <pb_decode.h>
- #include <pb_encode.h>
- #include <string.h>
-+#if RAK3401_LEGION_COMPONENTS
-+#include "platform/nrf52/LegionComponents.h"
-+#endif
- 
- #ifdef ARCH_PORTDUINO
- #include "platform/portduino/PortduinoGlue.h"
-@@ -384,6 +387,8 @@ std::unique_ptr<RadioInterface> initLoRa()
- 
- #if ARCH_PORTDUINO
-     SPISettings loraSpiSettings(portduino_config.spiSpeed, MSBFIRST, SPI_MODE0);
-+#elif RAK3401_LEGION_COMPONENTS
-+    SPISettings loraSpiSettings(LEGION_RADIO_SPI_HZ, MSBFIRST, SPI_MODE0);
- #elif RAK3401_LEGION_SPI_BULK
-     SPISettings loraSpiSettings(8000000, MSBFIRST, SPI_MODE0);
- #else
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index e89fa4d..d4ea94b 100644
+index 073096136161886c79d244cbaa64fb88bc171a0e..f8949c34733b42b8d3bbc6d35c859e8d54ee0187 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
 @@ -30,11 +30,23 @@
@@ -358,21 +335,21 @@ index e89fa4d..d4ea94b 100644
  
  void LockingArduinoHal::spiEndTransaction()
 diff --git a/src/mesh/RadioLibInterface.h b/src/mesh/RadioLibInterface.h
-index 51d5e1f..88e82d9 100644
+index 604120954cc7e6a6e437d9cc391696b8875c0647..ee8f9c84912642f6174f4a522ca4b161fc03bbe3 100644
 --- a/src/mesh/RadioLibInterface.h
 +++ b/src/mesh/RadioLibInterface.h
-@@ -46,6 +46,9 @@ class LockingArduinoHal : public ArduinoHal
+@@ -63,6 +63,9 @@ class LockingArduinoHal : public ArduinoHal
  
      void spiBeginTransaction() override;
      void spiEndTransaction() override;
 +#if RAK3401_LEGION_COMPONENTS
 +    void term() override;
 +#endif
- #if RAK3401_LEGION_SPI_BULK && (!defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302))
- #error "Legion bulk SPI requires the RAK3401 + RAK13302 nRF52 profile"
- #endif
+ #if RADIO_SPI_BULK
+     void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+ 
 diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
-index 795e870..e8ff976 100644
+index cc35ff8cc04827dcf0c647cf5bc1cebe4b62cf5b..da3a8cca1636f1ce5553461fe7de66407e533a39 100644
 --- a/src/mesh/Router.cpp
 +++ b/src/mesh/Router.cpp
 @@ -14,6 +14,9 @@
@@ -385,7 +362,7 @@ index 795e870..e8ff976 100644
  #include <ErriezCRC32.h>
  #include <pb_decode.h>
  #include <pb_encode.h>
-@@ -1249,6 +1252,11 @@ meshtastic_Routing_Error perhapsEncode(meshtastic_MeshPacket *p)
+@@ -1281,6 +1284,11 @@ meshtastic_Routing_Error perhapsEncode(meshtastic_MeshPacket *p)
  
              LOG_DEBUG("Original length - %d ", p->decoded.payload.size);
              LOG_DEBUG("Compressed length - %d ", compressed_len);
@@ -398,7 +375,7 @@ index 795e870..e8ff976 100644
  
              // If the compressed length is greater than or equal to the original size, don't use the compressed form
 diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
-index f480f43..9d5a66e 100644
+index f480f43cb164274e3ebf1c10b3d9c23777e3f91f..9d5a66e524f2baa3f1ecbcb713558cc10d36d93a 100644
 --- a/src/modules/LegionControlModule.cpp
 +++ b/src/modules/LegionControlModule.cpp
 @@ -17,6 +17,12 @@
@@ -693,7 +670,7 @@ index f480f43..9d5a66e 100644
  }
  #endif
 diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
-index a308bd1..8f69dc1 100644
+index a308bd1ca3308000459228c6692332c7b88af0a3..8f69dc1518994830a15a93024f12ef6d47c19261 100644
 --- a/src/modules/LegionControlModule.h
 +++ b/src/modules/LegionControlModule.h
 @@ -7,6 +7,7 @@
@@ -724,7 +701,7 @@ index a308bd1..8f69dc1 100644
      void pollTrace(uint32_t now);
      bool matchesTrace(const meshtastic_MeshPacket &packet) const;
 diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
-index 9f65ef1..1306fb9 100644
+index 9f65ef1dd6c12e26794001527ea7abff14fe310f..1306fb949517d9371312da864c364ad387b015b3 100644
 --- a/src/modules/LegionControlPolicy.h
 +++ b/src/modules/LegionControlPolicy.h
 @@ -15,17 +15,32 @@ constexpr uint32_t TRACE_WAIT_MS = 90000;
@@ -940,7 +917,7 @@ index 9f65ef1..1306fb9 100644
      }
 diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
 new file mode 100644
-index 0000000..0593486
+index 0000000000000000000000000000000000000000..059348646738938792ec39eb2ad962172a0643aa
 --- /dev/null
 +++ b/src/modules/LegionDailyPolicy.h
 @@ -0,0 +1,31 @@
@@ -977,7 +954,7 @@ index 0000000..0593486
 +} // namespace legion
 diff --git a/src/modules/LegionSecretText.h b/src/modules/LegionSecretText.h
 new file mode 100644
-index 0000000..6b53699
+index 0000000000000000000000000000000000000000..6b53699098d830a75a229662cbfa8e5740a0a938
 --- /dev/null
 +++ b/src/modules/LegionSecretText.h
 @@ -0,0 +1,20 @@
@@ -1002,12 +979,12 @@ index 0000000..6b53699
 +}
 +} // namespace legion
 diff --git a/src/modules/MeshBeaconModule.cpp b/src/modules/MeshBeaconModule.cpp
-index eda236d..1c1a918 100644
+index a93e7c728d1eee8ae716acd7ef2b1fc3108075c7..0b7652ef6bc0e6d16323918691daf789138a9453 100644
 --- a/src/modules/MeshBeaconModule.cpp
 +++ b/src/modules/MeshBeaconModule.cpp
-@@ -12,6 +12,11 @@
- #include "meshUtils.h"
+@@ -13,6 +13,11 @@
  #include <Throttle.h>
+ #include <algorithm>
  #include <string.h>
 +#if RAK3401_LEGION_CONTROL
 +#include <atomic>
@@ -1017,7 +994,7 @@ index eda236d..1c1a918 100644
  
  // Static members
  meshtastic_Config_LoRaConfig_ModemPreset MeshBeaconModule::originalModemPreset;
-@@ -42,9 +47,33 @@ static uint8_t evictedNext;
+@@ -43,9 +48,33 @@ static uint8_t evictedNext;
  
  // Explicit switch state, not inferred: "live config differs from the snapshot" missed name/PSK-only
  // swaps and fired on legitimate channel edits.
@@ -1051,7 +1028,7 @@ index eda236d..1c1a918 100644
  // The interval runOnce() schedules on: configured, else the default, never below the minimum.
  static uint32_t beaconIntervalMs()
  {
-@@ -156,6 +185,10 @@ bool MeshBeaconModule::setTargetRadioSettings(const meshtastic_MeshPacket *p, me
+@@ -157,6 +186,10 @@ bool MeshBeaconModule::setTargetRadioSettings(const meshtastic_MeshPacket *p, me
      target->channelHash = channelHash;
      target->usePreset = usePreset;
      target->armedAtMs = Time::getMillis(); // the clock Throttle::hasElapsed() reads it against
@@ -1062,7 +1039,7 @@ index eda236d..1c1a918 100644
      return true;
  }
  
-@@ -170,6 +203,9 @@ static void clearTargetRadioSettingsById(PacketId id)
+@@ -171,6 +204,9 @@ static void clearTargetRadioSettingsById(PacketId id)
      for (auto &entry : targetRadioSettings) {
          if (entry.inUse && entry.id == id) {
              entry.inUse = false;
@@ -1072,7 +1049,7 @@ index eda236d..1c1a918 100644
              return;
          }
      }
-@@ -199,6 +235,10 @@ bool MeshBeaconModule::beaconTxConfigInvalid(const meshtastic_MeshPacket *p)
+@@ -200,6 +236,10 @@ bool MeshBeaconModule::beaconTxConfigInvalid(const meshtastic_MeshPacket *p)
          return false; // not a beacon-switch packet - nothing to validate, normal traffic unaffected
      }
  
@@ -1084,10 +1061,10 @@ index eda236d..1c1a918 100644
          LOG_WARN("Beacon: packet 0x%08x queued past its broadcast interval, drop", p->id);
          return true;
 diff --git a/src/modules/MeshBeaconModule.h b/src/modules/MeshBeaconModule.h
-index 113258a..91a70bb 100644
+index e54330cb0e2e2b47668825fc44ac7370d37f1fe8..902f3b72b8bc7d6e26b4ca97d133b89b9fd65111 100644
 --- a/src/modules/MeshBeaconModule.h
 +++ b/src/modules/MeshBeaconModule.h
-@@ -34,6 +34,9 @@ typedef struct {
+@@ -35,6 +35,9 @@ typedef struct {
      uint32_t armedAtMs;
      // False keeps the node's custom modem params, for a target that names no preset on a node not using one.
      bool usePreset;
@@ -1097,7 +1074,7 @@ index 113258a..91a70bb 100644
  } MeshBeaconModule_TargetRadioSettings;
  
  /**
-@@ -44,6 +47,10 @@ class MeshBeaconModule
+@@ -45,6 +48,10 @@ class MeshBeaconModule
  {
    public:
      MeshBeaconModule();
@@ -1109,7 +1086,7 @@ index 113258a..91a70bb 100644
      /**
       * Reconfigure the radio for beacon TX, or restore to original config if p is NULL.
 diff --git a/src/modules/TextMessageModule.cpp b/src/modules/TextMessageModule.cpp
-index 843311a..779b21a 100644
+index 843311a125e27ce3263758893fb20b1dbf96e282..779b21a6e3d07dcc514227881b0d193c2492a9cd 100644
 --- a/src/modules/TextMessageModule.cpp
 +++ b/src/modules/TextMessageModule.cpp
 @@ -10,13 +10,21 @@
@@ -1160,7 +1137,7 @@ index 843311a..779b21a 100644
  
  bool TextMessageModule::wantPacket(const meshtastic_MeshPacket *p)
 diff --git a/src/platform/nrf52/LegionBoot.cpp b/src/platform/nrf52/LegionBoot.cpp
-index 0550e7b..144d4c8 100644
+index 0550e7b4ef7d4202352a5baa0f7d35c03b190591..144d4c8aef4b63b919354dbfe0c1d0dc86c06da9 100644
 --- a/src/platform/nrf52/LegionBoot.cpp
 +++ b/src/platform/nrf52/LegionBoot.cpp
 @@ -8,9 +8,6 @@
@@ -1209,16 +1186,17 @@ index 0550e7b..144d4c8 100644
  #endif
 diff --git a/src/platform/nrf52/LegionComponents.cpp b/src/platform/nrf52/LegionComponents.cpp
 new file mode 100644
-index 0000000..275d859
+index 0000000000000000000000000000000000000000..84b83f6d73fad267459d890285a73323ed07677f
 --- /dev/null
 +++ b/src/platform/nrf52/LegionComponents.cpp
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,44 @@
 +#include "LegionComponents.h"
 +
 +#if RAK3401_LEGION_COMPONENTS
 +#if !defined(ARCH_NRF52) || !defined(RAK3401) || !defined(RAK13302)
 +#error "Legion components require the RAK3401 + RAK13302 nRF52 profile"
 +#endif
++#include "mesh/RadioLibInterface.h"
 +#include <atomic>
 +#include <cstdio>
 +#include <nrf_soc.h>
@@ -1252,23 +1230,22 @@ index 0000000..275d859
 +        std::snprintf(clock, sizeof(clock), "%luMHz", (unsigned long)(LEGION_RADIO_SPI_HZ / 1000000));
 +    const int used =
 +        std::snprintf(output, size, "!%08lx COMPONENTS\n%s\nSPI:%s %s BULK:%s\nDC/DC:%s REG1", (unsigned long)node, crypto,
-+                      spi ? "ON" : "OFF", clock, RAK3401_LEGION_SPI_BULK ? "ON" : "OFF", NRF_POWER->DCDCEN == 1 ? "ON" : "OFF");
++                      spi ? "ON" : "OFF", clock, RADIO_SPI_BULK ? "ON" : "OFF", NRF_POWER->DCDCEN == 1 ? "ON" : "OFF");
 +    return used > 0 && static_cast<size_t>(used) < size && used <= 199;
 +}
 +#endif
 diff --git a/src/platform/nrf52/LegionComponents.h b/src/platform/nrf52/LegionComponents.h
 new file mode 100644
-index 0000000..ad8fd31
+index 0000000000000000000000000000000000000000..42d05b8a23e48b14ab6093cf25e543f1d0d6bc26
 --- /dev/null
 +++ b/src/platform/nrf52/LegionComponents.h
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,9 @@
 +#pragma once
 +#include "configuration.h"
 +
 +#if RAK3401_LEGION_COMPONENTS
 +#include <cstddef>
 +#include <cstdint>
-+constexpr uint32_t LEGION_RADIO_SPI_HZ = RAK3401_LEGION_SPI_BULK ? 8000000 : 4000000;
 +void legionComponentsSpiAvailable(bool available);
 +bool legionComponentsFormat(char *output, size_t size, uint32_t node);
 +#endif

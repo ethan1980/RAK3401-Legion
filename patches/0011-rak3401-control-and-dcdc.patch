@@ -1,6 +1,6 @@
 diff --git a/src/mesh/LegionIgnore.cpp b/src/mesh/LegionIgnore.cpp
 new file mode 100644
-index 0000000..a7f1c90
+index 0000000000000000000000000000000000000000..a7f1c90edcba9a80094b284f9fb60c64dd206b5a
 --- /dev/null
 +++ b/src/mesh/LegionIgnore.cpp
 @@ -0,0 +1,97 @@
@@ -103,7 +103,7 @@ index 0000000..a7f1c90
 +#endif
 diff --git a/src/mesh/LegionIgnore.h b/src/mesh/LegionIgnore.h
 new file mode 100644
-index 0000000..eb3c473
+index 0000000000000000000000000000000000000000..eb3c473402267b65c09143b81408d31cb5f7c66b
 --- /dev/null
 +++ b/src/mesh/LegionIgnore.h
 @@ -0,0 +1,3 @@
@@ -111,10 +111,10 @@ index 0000000..eb3c473
 +
 +enum class LegionIgnoreResult { Unchanged, Saved, Pending, Capacity, Unavailable, Invalid };
 diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
-index e480f73..703a53e 100644
+index 68d74ee92327b64e5cd597619489aa5deb0f22ff..64f1cd83d1f8783838dc39c7a3b2503e272c8f57 100644
 --- a/src/mesh/NodeDB.cpp
 +++ b/src/mesh/NodeDB.cpp
-@@ -53,6 +53,9 @@
+@@ -56,6 +56,9 @@
  #if RAK3401_LEGION_RECOVERY
  #include "LegionRecovery.h"
  #endif
@@ -124,7 +124,7 @@ index e480f73..703a53e 100644
  #include <vector>
  
  #ifdef MESHTASTIC_ENCRYPTED_STORAGE
-@@ -3921,6 +3924,12 @@ static bool isStorageLocked()
+@@ -4060,6 +4063,12 @@ static bool isStorageLocked()
  
  void NodeDB::saveNodeDatabaseIfDirty()
  {
@@ -137,7 +137,7 @@ index e480f73..703a53e 100644
      // Single attempt; shares updateUser()'s once-a-minute budget, so the write rate is unchanged.
      if (!nodeDatabaseDirty || isStorageLocked() || Throttle::isWithinTimespanMs(lastNodeDbSave, ONE_MINUTE_MS))
          return;
-@@ -3930,6 +3939,9 @@ void NodeDB::saveNodeDatabaseIfDirty()
+@@ -4069,6 +4078,9 @@ void NodeDB::saveNodeDatabaseIfDirty()
  
  int NodeDB::onReboot(void *)
  {
@@ -147,7 +147,7 @@ index e480f73..703a53e 100644
      // A graceful reboot has no other save point.
      if (nodeDatabaseDirty && !isStorageLocked())
          saveNodeDatabaseToDisk();
-@@ -4129,6 +4141,9 @@ void NodeDB::updateFrom(const meshtastic_MeshPacket &mp)
+@@ -4268,6 +4280,9 @@ void NodeDB::updateFrom(const meshtastic_MeshPacket &mp)
              info->has_hops_away = true;
              info->hops_away = hopsAway;
          }
@@ -158,7 +158,7 @@ index e480f73..703a53e 100644
      }
  }
 diff --git a/src/mesh/NodeDB.h b/src/mesh/NodeDB.h
-index 82430d5..01d1729 100644
+index 243be6a81c89a694c0baf2fdf50f9ca3a41fe73f..d19f4816dd4882e13a91462cb0a545bd4b0704a1 100644
 --- a/src/mesh/NodeDB.h
 +++ b/src/mesh/NodeDB.h
 @@ -15,6 +15,9 @@
@@ -171,7 +171,7 @@ index 82430d5..01d1729 100644
  #include "mesh-pb-constants.h"
  #include "mesh/generated/meshtastic/mesh.pb.h" // For CriticalErrorCode
  
-@@ -343,6 +346,10 @@ class NodeDB
+@@ -352,6 +355,10 @@ class NodeDB
  
      /// Write node changes that were deferred, at most once a minute. Called from the main loop.
      void saveNodeDatabaseIfDirty();
@@ -182,7 +182,7 @@ index 82430d5..01d1729 100644
  
      /** Reinit radio config if needed, because either:
       * a) sometimes a buggy android app might send us bogus settings or
-@@ -718,6 +725,12 @@ class NodeDB
+@@ -734,6 +741,12 @@ class NodeDB
      uint32_t lastSort = 0;           // When last sorted the nodeDB
  
      bool nodeDatabaseDirty = false; // nodes.proto is behind the in-memory db
@@ -197,7 +197,7 @@ index 82430d5..01d1729 100644
  
 diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
 new file mode 100644
-index 0000000..2143ad2
+index 0000000000000000000000000000000000000000..2143ad2a1a88fc10d20e86fe49fe7cd02191cb54
 --- /dev/null
 +++ b/src/modules/LegionControlModule.cpp
 @@ -0,0 +1,344 @@
@@ -547,7 +547,7 @@ index 0000000..2143ad2
 +#endif
 diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
 new file mode 100644
-index 0000000..90bdba4
+index 0000000000000000000000000000000000000000..90bdba4f0f9b0124b8509e13812690bb0e0b78ee
 --- /dev/null
 +++ b/src/modules/LegionControlModule.h
 @@ -0,0 +1,62 @@
@@ -615,7 +615,7 @@ index 0000000..90bdba4
 +#endif
 diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
 new file mode 100644
-index 0000000..d3aa404
+index 0000000000000000000000000000000000000000..d3aa404f6af6c3d69821fd2fbbd80b01e417b46c
 --- /dev/null
 +++ b/src/modules/LegionControlPolicy.h
 @@ -0,0 +1,382 @@
@@ -1002,7 +1002,7 @@ index 0000000..d3aa404
 +};
 +} // namespace legion
 diff --git a/src/modules/LegionTelemetryModule.cpp b/src/modules/LegionTelemetryModule.cpp
-index 54d73e8..10b4a39 100644
+index 54d73e82e8173cf6815aa3bffbd21039e6d0b8b7..10b4a3997706e235fc1f6eb24c2227e2c3b3ea0e 100644
 --- a/src/modules/LegionTelemetryModule.cpp
 +++ b/src/modules/LegionTelemetryModule.cpp
 @@ -21,7 +21,7 @@ LegionTelemetryModule *legionTelemetryModule = nullptr;
@@ -1015,7 +1015,7 @@ index 54d73e8..10b4a39 100644
  }
  
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
-index 3599fea..fde29c3 100644
+index 78ccf39482072d2d1be5c2252966b80001da2a46..61614175705b1cb3c775c96da9d847baba34af0b 100644
 --- a/src/modules/Modules.cpp
 +++ b/src/modules/Modules.cpp
 @@ -2,6 +2,9 @@
@@ -1028,7 +1028,7 @@ index 3599fea..fde29c3 100644
  #if !MESHTASTIC_EXCLUDE_INPUTBROKER
  #include "buzz/BuzzerFeedbackThread.h"
  #include "modules/SystemCommandsModule.h"
-@@ -137,6 +140,9 @@ void setupModules()
+@@ -162,6 +165,9 @@ void setupModules()
  #if RAK3401_LEGION_TELEMETRY
      new LegionTelemetryModule();
  #endif
@@ -1040,7 +1040,7 @@ index 3599fea..fde29c3 100644
          inputBroker = new InputBroker();
 diff --git a/src/platform/nrf52/LegionDcdc.cpp b/src/platform/nrf52/LegionDcdc.cpp
 new file mode 100644
-index 0000000..660e967
+index 0000000000000000000000000000000000000000..660e967113a377497b46cecddde76e004ef2093e
 --- /dev/null
 +++ b/src/platform/nrf52/LegionDcdc.cpp
 @@ -0,0 +1,29 @@
@@ -1075,7 +1075,7 @@ index 0000000..660e967
 +#endif
 diff --git a/src/platform/nrf52/LegionDcdc.h b/src/platform/nrf52/LegionDcdc.h
 new file mode 100644
-index 0000000..ff4d668
+index 0000000000000000000000000000000000000000..ff4d66884876293dc15d1e62ae9cb89d3297a7f7
 --- /dev/null
 +++ b/src/platform/nrf52/LegionDcdc.h
 @@ -0,0 +1,7 @@
@@ -1087,7 +1087,7 @@ index 0000000..ff4d668
 +extern "C" void legionEnableDcdcReg1();
 +#endif
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 059b831..ebc9849 100644
+index 9d075450ad9b13b753dfcae0def622b2b8a3cf04..78e0ebd449d50203f09869454ee8f383ffadef86 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
 @@ -16,6 +16,9 @@
@@ -1100,13 +1100,13 @@ index 059b831..ebc9849 100644
  static BLEService meshBleService = BLEService(BLEUuid(MESH_SERVICE_UUID_16));
  static BLECharacteristic fromNum = BLECharacteristic(BLEUuid(FROMNUM_UUID_16));
  static BLECharacteristic fromRadio = BLECharacteristic(BLEUuid(FROMRADIO_UUID_16));
-@@ -342,6 +345,9 @@ void NRF52Bluetooth::setup()
-         RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_UNSPECIFIED);
+@@ -411,6 +414,9 @@ void NRF52Bluetooth::setup()
          return;
      }
+     bleStarted = true;
 +#if RAK3401_LEGION_DCDC
 +    legionEnableDcdcReg1();
 +#endif
+ 
      // Clear existing data.
      Bluefruit.Advertising.stop();
-     Bluefruit.Advertising.clearData();

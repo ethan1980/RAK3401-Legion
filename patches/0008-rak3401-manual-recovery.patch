@@ -1,5 +1,5 @@
 diff --git a/src/mesh/CryptoEngine.cpp b/src/mesh/CryptoEngine.cpp
-index b89c5a1..d7da5a0 100644
+index 26abd339af97b7e64ff9652ee8971e0274b6df69..2ab9b15ede426cbb2b024f4f114ac89ff0d7f370 100644
 --- a/src/mesh/CryptoEngine.cpp
 +++ b/src/mesh/CryptoEngine.cpp
 @@ -4,6 +4,7 @@
@@ -33,10 +33,10 @@ index b89c5a1..d7da5a0 100644
   * Create a public/private key pair with Curve25519.
   *
 diff --git a/src/mesh/CryptoEngine.h b/src/mesh/CryptoEngine.h
-index 180c663..d51e6f2 100644
+index a278213918817357d964e3b50028cefda0d4ddb2..d84042eb966964bc0145271575425b6e94f68f0c 100644
 --- a/src/mesh/CryptoEngine.h
 +++ b/src/mesh/CryptoEngine.h
-@@ -182,6 +182,9 @@ class CryptoEngine
+@@ -179,6 +179,9 @@ class CryptoEngine
      virtual void encryptPacket(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes);
      virtual void decrypt(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes);
      virtual void encryptAESCtr(CryptoKey key, uint8_t *nonce, size_t numBytes, uint8_t *bytes);
@@ -48,7 +48,7 @@ index 180c663..d51e6f2 100644
  #endif
 diff --git a/src/mesh/LegionRecovery.cpp b/src/mesh/LegionRecovery.cpp
 new file mode 100644
-index 0000000..c27c377
+index 0000000000000000000000000000000000000000..c27c3778f0c71fa713ca86c02ac410e642bf9436
 --- /dev/null
 +++ b/src/mesh/LegionRecovery.cpp
 @@ -0,0 +1,483 @@
@@ -537,7 +537,7 @@ index 0000000..c27c377
 +#endif
 diff --git a/src/mesh/LegionRecovery.h b/src/mesh/LegionRecovery.h
 new file mode 100644
-index 0000000..78ab80a
+index 0000000000000000000000000000000000000000..78ab80ae9aea1cc4696c591efe6c820962953be0
 --- /dev/null
 +++ b/src/mesh/LegionRecovery.h
 @@ -0,0 +1,23 @@
@@ -566,7 +566,7 @@ index 0000000..78ab80a
 +#endif
 diff --git a/src/mesh/LegionRecoveryPolicy.h b/src/mesh/LegionRecoveryPolicy.h
 new file mode 100644
-index 0000000..e918d96
+index 0000000000000000000000000000000000000000..e918d96e9828b664527adcc00c91cec47b4c9fe6
 --- /dev/null
 +++ b/src/mesh/LegionRecoveryPolicy.h
 @@ -0,0 +1,66 @@
@@ -638,7 +638,7 @@ index 0000000..e918d96
 +}
 diff --git a/src/mesh/LegionRecoveryRunner.h b/src/mesh/LegionRecoveryRunner.h
 new file mode 100644
-index 0000000..8cc49b1
+index 0000000000000000000000000000000000000000..8cc49b16a7802a40a38156b31a37198c0c6f6763
 --- /dev/null
 +++ b/src/mesh/LegionRecoveryRunner.h
 @@ -0,0 +1,36 @@
@@ -680,7 +680,7 @@ index 0000000..8cc49b1
 +} // namespace legion
 diff --git a/src/mesh/LegionRecoveryStore.h b/src/mesh/LegionRecoveryStore.h
 new file mode 100644
-index 0000000..25abfcb
+index 0000000000000000000000000000000000000000..25abfcbf88fe4c914dd955eba202e2f01c074af4
 --- /dev/null
 +++ b/src/mesh/LegionRecoveryStore.h
 @@ -0,0 +1,139 @@
@@ -824,10 +824,10 @@ index 0000000..25abfcb
 +};
 +} // namespace legion
 diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
-index 5e77f7c..e480f73 100644
+index a019625b669621fd57d2a33d3fb6065b53c63825..68d74ee92327b64e5cd597619489aa5deb0f22ff 100644
 --- a/src/mesh/NodeDB.cpp
 +++ b/src/mesh/NodeDB.cpp
-@@ -50,6 +50,9 @@
+@@ -53,6 +53,9 @@
  #if RAK3401_LEGION_FLASH
  #include "LegionPersistence.h"
  #endif
@@ -837,7 +837,7 @@ index 5e77f7c..e480f73 100644
  #include <vector>
  
  #ifdef MESHTASTIC_ENCRYPTED_STORAGE
-@@ -482,6 +485,23 @@ NodeDB::NodeDB()
+@@ -600,6 +603,23 @@ NodeDB::NodeDB()
  {
      LOG_INFO("Init NodeDB");
      rebootObserver.observe(&notifyReboot);
@@ -861,7 +861,7 @@ index 5e77f7c..e480f73 100644
      loadFromDisk();
      cleanupMeshDB();
  
-@@ -734,6 +754,28 @@ NodeDB::NodeDB()
+@@ -852,6 +872,28 @@ NodeDB::NodeDB()
      // resetRadioConfig() above loaded config and channels, so this records the slot we booted on.
      refreshCommittedLoraSlot();
      saveToDisk(saveWhat);
@@ -890,7 +890,7 @@ index 5e77f7c..e480f73 100644
      bootInitializationInProgress = false;
  }
  
-@@ -923,6 +965,14 @@ void NodeDB::refreshCommittedLoraSlot()
+@@ -1041,6 +1083,14 @@ void NodeDB::refreshCommittedLoraSlot()
  
  bool NodeDB::factoryReset(bool eraseBleBonds)
  {
@@ -905,7 +905,7 @@ index 5e77f7c..e480f73 100644
      LOG_INFO("Factory reset");
      // first, remove the "/prefs" (this removes most prefs)
      spiLock->lock();
-@@ -3123,6 +3173,10 @@ bool NodeDB::disableLockdownToPlaintext()
+@@ -3303,6 +3353,10 @@ bool NodeDB::disableLockdownToPlaintext()
  bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *dest_struct,
                         bool fullAtomic)
  {
@@ -916,7 +916,7 @@ index 5e77f7c..e480f73 100644
  
      // Only the radio profile is at risk from an unverified config load, so only defer those writes.
      // Devicestate/nodedb/module writes must still land, otherwise boot-time recovery (e.g. loadFromDisk()
-@@ -3484,6 +3538,10 @@ static bool filesystemStillReadable()
+@@ -3623,6 +3677,10 @@ static bool filesystemStillReadable()
  
  bool NodeDB::saveToDisk(int saveWhat)
  {
@@ -927,7 +927,7 @@ index 5e77f7c..e480f73 100644
      LOG_DEBUG("Save to disk %d", saveWhat);
  
      // do not try to save anything if power level is not safe. In many cases flash will be lock-protected
-@@ -4764,6 +4822,16 @@ bool NodeDB::generateCryptoKeyPair(const uint8_t *privateKey)
+@@ -4960,6 +5018,16 @@ bool NodeDB::generateCryptoKeyPair(const uint8_t *privateKey)
  
      // Update sizes and copy to owner if successful
      if (keygenSuccess) {
@@ -945,10 +945,10 @@ index 5e77f7c..e480f73 100644
          memcpy(owner.public_key.bytes, config.security.public_key.bytes, 32);
  
 diff --git a/src/modules/AdminModule.cpp b/src/modules/AdminModule.cpp
-index 7e10a3e..3429015 100644
+index 497876190e6fad4f6a235cfdf165c0ca065b44e8..c609d8384ddb2fc246a09ed6f063da00f206cdb5 100644
 --- a/src/modules/AdminModule.cpp
 +++ b/src/modules/AdminModule.cpp
-@@ -21,6 +21,9 @@
+@@ -22,6 +22,9 @@
  #endif
  #include "Router.h"
  #include "configuration.h"
@@ -958,22 +958,23 @@ index 7e10a3e..3429015 100644
  #include "main.h"
  #ifdef ARCH_NRF52
  #include "main.h"
-@@ -780,6 +783,12 @@ void AdminModule::handleGetModuleConfigResponse(const meshtastic_MeshPacket &mp,
+@@ -799,6 +802,13 @@ void AdminModule::handleGetModuleConfigResponse(const meshtastic_MeshPacket &mp,
  
  void AdminModule::handleSetOwner(const meshtastic_User &o)
  {
 +#if RAK3401_LEGION_RECOVERY
 +    if (o.is_licensed && !owner.is_licensed && !legionRecoveryForgetIdentity()) {
-+        sendWarning("Unable to disable rescue point before licensed-mode change");
++        sendWarning(meshtastic_ClientNotification_NotificationType_UNSET,
++                    "Unable to disable rescue point before licensed-mode change");
 +        return;
 +    }
 +#endif
      int changed = 0;
      bool identityUpdated = false;
      bool channelsSanitized = false;
-@@ -1202,6 +1211,15 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c, bool fromOthers)
+@@ -1230,6 +1240,16 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c, bool fromOthers)
              LOG_WARN(warning);
-             sendWarning(warning);
+             sendWarning(meshtastic_ClientNotification_NotificationType_PACKET_SIGNATURE_POLICY_UNAVAILABLE, warning);
          }
 +#endif
 +#if RAK3401_LEGION_RECOVERY
@@ -981,19 +982,21 @@ index 7e10a3e..3429015 100644
 +            (config.security.private_key.size != 32 ||
 +             std::memcmp(incoming.private_key.bytes, config.security.private_key.bytes, 32)) &&
 +            !legionRecoveryForgetIdentity()) {
-+            sendWarning("Unable to disable rescue point before identity change");
++            sendWarning(meshtastic_ClientNotification_NotificationType_UNSET,
++                        "Unable to disable rescue point before identity change");
 +            return;
 +        }
  #endif
          config.security = incoming;
          // A remote admin does not get to drop the host's own admin keys.
-@@ -1939,6 +1957,12 @@ static bool isBlankName(const char *start)
+@@ -1915,6 +1935,13 @@ static bool isBlankName(const char *start)
  
  bool AdminModule::handleSetHamMode(const meshtastic_HamParameters &p)
  {
 +#if RAK3401_LEGION_RECOVERY
 +    if (!legionRecoveryForgetIdentity()) {
-+        sendWarning("Unable to disable rescue point before licensed-mode change");
++        sendWarning(meshtastic_ClientNotification_NotificationType_UNSET,
++                    "Unable to disable rescue point before licensed-mode change");
 +        return false;
 +    }
 +#endif
@@ -1001,7 +1004,7 @@ index 7e10a3e..3429015 100644
  
      // The call sign is the station ID the whole licensed mode is built around, so it is required;
 diff --git a/src/modules/AdminModule.h b/src/modules/AdminModule.h
-index 0fbc8ac..6986371 100644
+index aa860d382e162174a9b69a0943375fbb01ed7a1d..bf01cfac744664a626c73f91b27d4142b3d62481 100644
 --- a/src/modules/AdminModule.h
 +++ b/src/modules/AdminModule.h
 @@ -31,6 +31,8 @@ class AdminModule : public ProtobufModule<meshtastic_AdminMessage>, public Obser
@@ -1014,7 +1017,7 @@ index 0fbc8ac..6986371 100644
      /** Called to handle a particular incoming message
  
 diff --git a/src/modules/LegionTelemetryModule.cpp b/src/modules/LegionTelemetryModule.cpp
-index c1a44f5..54d73e8 100644
+index c1a44f557c7ae030ed623bf7cc45cce78b508381..54d73e82e8173cf6815aa3bffbd21039e6d0b8b7 100644
 --- a/src/modules/LegionTelemetryModule.cpp
 +++ b/src/modules/LegionTelemetryModule.cpp
 @@ -10,6 +10,9 @@
@@ -1164,7 +1167,7 @@ index c1a44f5..54d73e8 100644
  }
  #endif
 diff --git a/src/modules/LegionTelemetryModule.h b/src/modules/LegionTelemetryModule.h
-index a012bcf..00c34c3 100644
+index a012bcf5bc726bd6917b63e674e429b9673e50b4..00c34c346309807c47467576e0294cb72e793467 100644
 --- a/src/modules/LegionTelemetryModule.h
 +++ b/src/modules/LegionTelemetryModule.h
 @@ -7,6 +7,9 @@
@@ -1198,7 +1201,7 @@ index a012bcf..00c34c3 100644
  
  extern LegionTelemetryModule *legionTelemetryModule;
 diff --git a/src/platform/nrf52/nrf52840_s140_v6.ld b/src/platform/nrf52/nrf52840_s140_v6.ld
-index a956c65..89f1c5c 100644
+index a956c6583f9b935299730ffdbbe0d82420e5c3d3..89f1c5c1f306533188ba9c05fdda36452b397bb1 100644
 --- a/src/platform/nrf52/nrf52840_s140_v6.ld
 +++ b/src/platform/nrf52/nrf52840_s140_v6.ld
 @@ -13,7 +13,7 @@ MEMORY

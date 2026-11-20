@@ -9,9 +9,9 @@
 </p>
 
 Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.7.0**, based on Meshtastic **v2.8.2.d5f1619**
-at [`d5f1619`](https://github.com/meshtastic/firmware/commit/d5f16191ca28b01b5024f590f04a67f25d66f1b1).
-The node reports **`2.8.2.Legion0.7.0`**.
+Current release: **Legion 0.7.1**, based on Meshtastic **v2.8.3.a8f6f58**
+at [`a8f6f58`](https://github.com/meshtastic/firmware/commit/a8f6f580476f0884965bc24fc94e6c0f24867dcb).
+The node reports **`2.8.3.Legion0.7.1`**.
 
 Legion focuses on this kit's radio operation, energy resilience and private
 remote tools. Current consumption and battery-life gains have not been measured.
@@ -24,22 +24,23 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
-| [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on hardware; new `/guard` parser tested in software. |
+| [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on HW. |
 | [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | Command operation confirmed on hardware. |
-| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together with one confirmation. | Pending hardware testing. |
-| [DAILY](COMMANDS.md#daily) | Includes a 24-hour battery balance and the MeshHealth score and LoRa activity. | Pending hardware testing for the new fields. |
-| [CPU thermal hibernation](AUTOMATIC-FEATURES.md#cpu-thermal-hibernation) | Sleeps at sustained high chip temperature and restarts after cooling. | Pending hardware testing. |
-| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. Reports hibernation entry and exit on LegionRF. | Original command confirmed. New notices pending hardware testing. |
-| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Energy sleep and return observed. New notices pending hardware testing. |
+| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together with one confirmation. | Tested on HW in rc.2. |
+| [DAILY](COMMANDS.md#daily) | Includes the 24-hour battery balance, MeshHealth and LoRa activity. Estimates beyond 768 tracked nodes carry `~`. | Tested on HW in rc.2, including the score. |
+| [CPU thermal hibernation](AUTOMATIC-FEATURES.md#cpu-thermal-hibernation) | Sleeps at sustained high chip temperature and restarts after cooling. | Tested on HW in rc.2. |
+| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. Reports hibernation entry and exit on LegionRF. | Command and notices tested on HW in rc.2. |
+| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Recovery and notices tested on HW in rc.2. |
 | [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
-| [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves and verifies temporary writes before replacement. | Identical-save and readback checks verified in software. |
+| [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves, verifies temporary writes and removes failed staging files when supply permits. | Save checks verified in software. New failed-save cleanup pending HW testing. |
+| [Fixed-position warning](AUTOMATIC-FEATURES.md#fixed-position-warning) | Warns on LegionRF after 5 minutes with fixed position enabled and coordinates `0,0`, then every 12 hours until corrected. | Verified in software. Pending HW testing. |
 | [REG1 DC/DC](AUTOMATIC-FEATURES.md#reg1-dcdc) | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation and readback confirmed on hardware. |
 
 “Tested” describes observed operation, not complete validation of every condition.
 The summary reflects observed operation across Legion builds.
 
-CC310, bulk SPI, flash persistence, REG1 DC/DC and CPU thermal hibernation are
+CC310, bulk SPI, flash persistence, REG1 DC/DC, CPU thermal hibernation and the fixed-position warning are
 [automatic features](AUTOMATIC-FEATURES.md): no activation command or app setting
 is required.
 

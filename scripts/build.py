@@ -61,7 +61,7 @@ def package(firmware, target, output):
                 raise RuntimeError(
                     f"Compiled firmware is missing command {command.decode()}"
                 )
-        for marker in (b"MeshHealth ", b"24h:NA", b"cpu-thermal", b"Hibernation ended.", b"Low supply voltage."):
+        for marker in (b"MeshHealth ", b"24h:NA", b"cpu-thermal", b"Hibernation ended.", b"Low supply voltage.", b"Fixed position is invalid."):
             if marker not in firmware_bytes:
                 raise RuntimeError(f"Compiled firmware is missing {marker.decode()}")
     print(f"Verified firmware identification: {advertised_version}")
@@ -136,6 +136,8 @@ def package(firmware, target, output):
         "energy_recovery": target == "legion",
         "flash_write_deduplication": target == "legion",
         "flash_readback_crc32": target == "legion",
+        "flash_failed_save_cleanup": target == "legion",
+        "flash_failed_save_cleanup_hardware_tested": False,
         "private_telemetry": target == "legion",
         "remote_control": target == "legion",
         "control_commands": (
@@ -183,14 +185,14 @@ def package(firmware, target, output):
         "trace_wait_seconds": 90 if target == "legion" else None,
         "trace_start_cooldown_seconds": 60 if target == "legion" else None,
         "trace_reply_gap_seconds": 6 if target == "legion" else None,
-        "trace_hardware_tested": False,
+        "trace_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("commands_tested")),
         "cc310_packet_sha256": target == "legion",
         "cc310_ack_hmac_sha256": target == "legion",
         "cc310_software_fallback": target == "legion",
         "cc310_hardware_measured": False,
         "boot_diagnostics": target == "legion",
         "boot_diagnostics_flash_writes": False,
-        "boot_diagnostics_hardware_tested": False,
+        "boot_diagnostics_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("commands_tested")),
         "apc_candidate_stage": "S2" if target == "legion" else None,
         "apc_battery_conservation": target == "legion",
         "apc_modes": ["off", "observe", "shadow", "on"] if target == "legion" else [],
@@ -212,6 +214,12 @@ def package(firmware, target, output):
         "scramble_duration_seconds": 3600 if target == "legion" else None,
         "daily_battery_balance": target == "legion",
         "daily_mesh_health": target == "legion",
+        "daily_mesh_health_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("daily_mesh_health_tested")),
+        "daily_unique_estimates": target == "legion",
+        "fixed_position_notice": target == "legion",
+        "fixed_position_notice_first_seconds": 300 if target == "legion" else None,
+        "fixed_position_notice_repeat_seconds": 43200 if target == "legion" else None,
+        "fixed_position_notice_hardware_tested": False,
         "cpu_thermal_hibernation": target == "legion",
         "hibernation_notices": target == "legion",
         "apc_hardware_tested": bool(
@@ -225,7 +233,7 @@ def package(firmware, target, output):
         "recovery_automatic_snapshot": False,
         "backup_freshness_status": target == "legion",
         "backup_freshness_flash_writes": False,
-        "backup_freshness_hardware_tested": False,
+        "backup_freshness_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("commands_tested")),
         "update_validation": update_validation,
         "telemetry_channel": "LegionRF" if target == "legion" else None,
         "telemetry_cooldown_seconds": 60 if target == "legion" else None,

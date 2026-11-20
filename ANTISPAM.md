@@ -59,6 +59,6 @@ BACKUP:UP TO DATE
 OBSERVE uses `SPAM:OBSERVE simQ:1` so a modeled quarantine is never presented as
 an enforced block. Status and DAILY do not reset evidence or APC report captures.
 
-The 0.6.5 candidate was installed and new control commands tested on hardware.
-The final action-first `/guard` syntax was checked by software tests after the field test.
+The owner confirmed commands and modes tested on HW with Legion 0.7.1 rc.2,
+including the action-first `/guard` syntax.
 RF range, consumption and measured energy savings remain unverified.

@@ -2,7 +2,7 @@
 
 [Overview](README.md) · [Automatic features](AUTOMATIC-FEATURES.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md) · [Antispam](ANTISPAM.md)
 
-These commands are available in **Legion 0.7.0**. The requesting node and
+These commands are available in **Legion 0.7.1**. The requesting node and
 phone app can use standard Meshtastic. See the
 [feature summary](README.md#what-legion-adds).
 
@@ -114,6 +114,12 @@ DM targets:5 Confirmed:3
 - **MeshHealth NA** appears while a comparable reference is unavailable.
   **MeshHealth PARTIAL** marks an incomplete cut or a configuration change.
   History starts again after reboot. The report uses existing traffic.
+- Tracking is exact for up to **768 distinct nodes** per cut. Above that, the
+  unique counts use bounded-memory estimates marked `~`; the cut can still
+  contribute a score and a reference. A score marked `~` uses estimated data
+  in the current cut or its reference. `Relayed` remains a packet count.
+  The first complete comparable cut normally shows `NA`; a score can appear
+  from the next complete cut.
 
 Reports over 199 bytes use `DAILY 1/2` for APC, SPAM, BACKUP and BAT, and
 `DAILY 2/2` for MeshHealth. Both parts share the same cut and node ID.
@@ -221,7 +227,7 @@ stale results. Other commands remain available while a trace waits.
 Illustrative reply:
 
 ```text
-2.8.2.Legion0.6.1 !abcdef01 up:194400s
+2.8.3.Legion0.7.1 !abcdef01 up:194400s
 CPU:29.25 / max 34.50C BAT:82% 4.01 / min 3.96V
 N:-116 peak:-88dBm n:600
 RX:450 BAD:7 TX:32 REL:24 DROP:2

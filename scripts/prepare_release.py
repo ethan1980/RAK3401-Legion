@@ -252,7 +252,11 @@ def prepare_release(directory, commit):
             )
     if level >= (0, 6, 5):
         if not (
-            manifest.get("commit") == "d5f16191ca28b01b5024f590f04a67f25d66f1b1"
+            manifest.get("commit") == (
+                "a8f6f580476f0884965bc24fc94e6c0f24867dcb"
+                if level >= (0, 7, 1)
+                else "d5f16191ca28b01b5024f590f04a67f25d66f1b1"
+            )
             and manifest.get("apc_adaptive_rf_power") is True
             and manifest.get("apc_rf_minimum_dbm") == 21
             and manifest.get("antispam") is True
@@ -280,6 +284,14 @@ def prepare_release(directory, commit):
     ):
         raise ValueError(f"Legion {version} requires the expanded DAILY, thermal protection and hibernation notices")
     spi_mhz = manifest.get("spi_hz", 4000000) // 1000000
+    if level >= (0, 7, 1) and not (
+        manifest.get("daily_unique_estimates") is True
+        and manifest.get("flash_failed_save_cleanup") is True
+        and manifest.get("fixed_position_notice") is True
+        and manifest.get("fixed_position_notice_first_seconds") == 300
+        and manifest.get("fixed_position_notice_repeat_seconds") == 43200
+    ):
+        raise ValueError(f"Legion {version} requires DAILY estimates, failed-save cleanup and fixed-position notices")
     features = f"This release includes bulk SPI at **{spi_mhz} MHz**.\n\n"
     if level >= (0, 5, 0):
         features += (
@@ -484,6 +496,11 @@ def prepare_release(directory, commit):
             f"[Manual en español]({source}/docs/Legion-Spanish-friendly-user-manual.pdf) · "
             f"[English manual]({source}/docs/Legion-English-friendly-user-manual.pdf)\n\n"
         )
+    if level >= (0, 7, 1):
+        release_notes = (Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md").read_text()
+        features = re.split(r"^---[ \t]*$", release_notes, flags=re.MULTILINE)[0].strip() + "\n\n"
+        source = f"https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/"
+        features = re.sub(r"\]\((?!https?://)([^)]+)\)", lambda match: f"]({source}{match[1]})", features)
     prerelease = level < (0, 6, 1) or "-" in version
     downloads = (
         "- Firmware packages: see the release assets.\n\n"

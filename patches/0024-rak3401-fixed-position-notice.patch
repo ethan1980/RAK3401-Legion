@@ -1,0 +1,103 @@
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -374,6 +374,27 @@
+     recoveryNoticeAttempted = true;
+     reply(control.index, message);
+ #endif
++}
++
++void LegionControlModule::pollPositionNotice(uint32_t now)
++{
++    if (!positionNotice.due(now) || controlBusy() || !legionPowerTxReady() || !router->getRadioIface())
++        return;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        if (requests.isPending() || trace.id)
++            return;
++    }
++    Channel control;
++    if (!findControlChannel(control))
++        return;
++    char text[legion::CONTROL_TEXT_MAX + 1];
++    std::snprintf(text, sizeof(text), "!%08lx: Fixed position is invalid. Set valid coordinates in Position settings.",
++                  (unsigned long)nodeDB->getNodeNum());
++    if (sendText(control.index, text))
++        positionNotice.queued(now);
++    else
++        positionNotice.deferred(now);
+ }
+ 
+ void LegionControlModule::report(const Pending &command, uint32_t now, bool zeroHop)
+@@ -1323,6 +1344,7 @@
+ {
+     const uint32_t now = Time::getMillis();
+     const uint64_t uptime = Time::getMillisMonotonic();
++    positionNotice.observe(now, config.position.fixed_position && !nodeDB->hasValidPosition(nodeDB->getMeshNode(nodeDB->getNodeNum())));
+     cutDaily(uptime);
+     pollTrace(now);
+ #if RAK3401_LEGION_TRAFFIC
+@@ -1353,6 +1375,7 @@
+     if (!executeCommand) {
+         pollRecoveryNotice();
+         pollDaily(uptime);
++        pollPositionNotice(now);
+     }
+     return 1000;
+ }
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -85,6 +85,7 @@
+     void cutDaily(uint64_t now);
+     void pollDaily(uint64_t now);
+     void pollRecoveryNotice();
++    void pollPositionNotice(uint32_t now);
+ #if RAK3401_LEGION_TRAFFIC
+     void guard(const Pending &command, uint32_t now);
+     void setGuardMode(legion::GuardMode mode);
+@@ -107,6 +108,7 @@
+     char dailyBase[128]{};
+     Channel dailyChannel;
+     bool recoveryNoticeAttempted = false;
++    legion::FixedPositionNotice positionNotice;
+     void startTrace(const Pending &command, uint32_t now);
+     void pollTrace(uint32_t now);
+     bool matchesTrace(const meshtastic_MeshPacket &packet) const;
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -15,6 +15,33 @@
+ constexpr uint32_t TRACE_WAIT_MS = 90000;
+ constexpr uint32_t TRACE_COOLDOWN_MS = 60000;
+ constexpr uint32_t TRACE_REPLY_GAP_MS = 6000;
++
++class FixedPositionNotice
++{
++  public:
++    static constexpr uint32_t FIRST_MS = 5 * 60 * 1000;
++    static constexpr uint32_t REPEAT_MS = 12 * 60 * 60 * 1000;
++    static constexpr uint32_t RETRY_MS = 60 * 1000;
++
++    void observe(uint32_t now, bool invalid)
++    {
++        if (!invalid) {
++            tracking = false;
++            return;
++        }
++        if (!tracking) {
++            tracking = true;
++            nextAt = now + FIRST_MS;
++        }
++    }
++    bool due(uint32_t now) const { return tracking && Throttle::deadlinePassedAt(now, nextAt); }
++    void queued(uint32_t now) { nextAt = now + REPEAT_MS; }
++    void deferred(uint32_t now) { nextAt = now + RETRY_MS; }
++
++  private:
++    uint32_t nextAt = 0;
++    bool tracking = false;
++};
+ 
+ enum class ControlCommand : uint8_t {
+     None,

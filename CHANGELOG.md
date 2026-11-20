@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.1 - 2026-11-20
+
+- Rebase on Meshtastic `2.8.3.a8f6f58` and use official bulk SPI at 8 MHz.
+- Bugfixes: daily report. Estimate unique activity above 768 tracked nodes and
+  keep comparable MeshHealth cuts scoreable, with `~` marking estimated data.
+- Clean failed-save staging files when the flash supply guard permits.
+- Add passive LegionRF warnings for empty fixed coordinates after 5 minutes,
+  repeating every 12 hours and stopping silently on correction.
+- Update the README and both illustrated manuals. Mark rc.2 operation tested on HW.
+
 ## 0.7.0 - 2026-11-13
 
 - Extend DAILY with the battery balance and a passive 24-hour MeshHealth score.

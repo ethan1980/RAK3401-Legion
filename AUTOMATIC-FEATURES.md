@@ -3,7 +3,7 @@
 [Overview](README.md) · [Commands](COMMANDS.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
 
 CC310 hashing, bulk radio SPI, flash persistence and REG1 DC/DC are included in
-the **Legion 0.6.1** firmware profile for the **RAK3401 1W with RAK13302**.
+the **Legion 0.7.1** firmware profile for the **RAK3401 1W with RAK13302**.
 They work automatically in their normal firmware paths and need no separate
 activation command or app setting. A private LegionRF channel is only needed
 to request the component report described below.
@@ -30,6 +30,7 @@ A zero `MAC` count can be normal when no ACK-proof HMAC operation has occurred.
 **SPI** is the internal communication bus between the nRF52840 MCU and the
 SX1262 LoRa radio. Legion configures this bus at **8 MHz** and transfers radio
 buffers in blocks through the nRF52 **SPI/EasyDMA** path.
+The pinned Meshtastic base supplies `RADIO_SPI_BULK`; Legion sets the bus clock.
 
 Block transfers avoid handling an entire buffer as individual byte transfers.
 The 8 MHz value is the internal bus clock; LoRa modulation and channel settings
@@ -51,6 +52,9 @@ replacing a saved file:
    successfully before the save can be committed.
 3. Read the temporary file back and check its **CRC32 and exact byte length**
    before proceeding with replacement.
+4. If encoding, writing, verification or renaming fails, close the staging file
+   and remove that attempt's `.tmp` when the supply is safe for flash operations.
+   An unsafe supply or failed removal leaves cleanup for the next opening.
 
 Critical configuration files use the staged replacement path. The large
 **NodeDB** file retains upstream's space-saving, **non-atomic replacement**.
@@ -87,6 +91,25 @@ When normal TX checks allow it, LegionRF receives one attempt at
 The entry notice has up to 4 seconds to transmit. The restart is recorded
 as `prev:cpu-thermal` in [boot diagnostics](COMMANDS.md#boot-fields).
 
+## Fixed-position warning
+
+With **Fixed position** enabled, Legion checks its local coordinates. If both
+latitude and longitude are `0`, it waits **5 minutes** and sends this on the
+private **LegionRF** channel, using the node's own ID.
+
+```text
+!abcdef01: Fixed position is invalid. Set valid coordinates in Position settings.
+```
+
+The warning repeats every **12 hours** while the coordinates remain empty.
+Correcting the coordinates or disabling fixed position cancels the pending
+warning silently. A new occurrence starts another five-minute delay. A restart
+also starts the delay again.
+
+The warning uses the existing TX and private-channel checks. A deferred attempt
+checks the position again before sending. The feature runs automatically and
+its state stays in RAM.
+
 ## Checking component status
 
 To query a Legion node, send this as a channel message on the private
@@ -114,6 +137,9 @@ persistence has no field in this report. See the
 
 CC310 hardware use, 8 MHz bulk SPI operation and REG1 activation/readback have
 been confirmed on hardware. Identical-save skipping and flash readback checks
-have been verified in software. These observations confirm operation within the
+have been verified in software. The owner confirmed rc.2 operation on HW,
+including its commands and DAILY score. Failed-save temporary cleanup and the
+fixed-position warning were added for the final 0.7.1 and have software tests;
+their HW checks remain pending. These observations confirm operation within the
 tested conditions; current consumption and battery-life gains have not been
 measured.

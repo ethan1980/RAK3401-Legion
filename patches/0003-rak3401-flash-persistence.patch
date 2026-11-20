@@ -1,18 +1,52 @@
 diff --git a/src/SafeFile.cpp b/src/SafeFile.cpp
-index 67086789ff0842746b12d625085870d86cafb441..564349cc55351b5a1ddea6c6ee8a169a78b58274 100644
+index 04919627d6aa0778e7dfd75059a83305a5192600..8684305711a5cf26329e433f2458e6b9480cbcb3 100644
 --- a/src/SafeFile.cpp
 +++ b/src/SafeFile.cpp
-@@ -1,5 +1,9 @@
+@@ -1,5 +1,10 @@
  #include "SafeFile.h"
  
 +#if RAK3401_LEGION_FLASH
 +#include "mesh/LegionCrc32.h"
++#include "power/PowerHAL.h"
 +#endif
 +
  #ifdef FSCom
  
  // Only way to work on both esp32 and nrf52
-@@ -40,7 +44,12 @@ size_t SafeFile::write(uint8_t ch)
+@@ -36,15 +41,50 @@ static File openFile(const char *filename, bool fullAtomic)
+ SafeFile::SafeFile(const char *_filename, bool fullAtomic)
+     : filename(_filename), f(openFile(_filename, fullAtomic)), fullAtomic(fullAtomic)
+ {
++#if RAK3401_LEGION_FLASH
++    ownsTemporary = bool(f);
++#endif
++}
++
++#if RAK3401_LEGION_FLASH
++SafeFile::~SafeFile()
++{
++    abort();
+ }
+ 
++void SafeFile::abort()
++{
++    concurrency::LockGuard guard(spiLock);
++    if (f)
++        f.close();
++    if (!ownsTemporary)
++        return;
++    ownsTemporary = false;
++    if (!powerHAL_isPowerLevelSafe())
++        return;
++    String temporary = filename;
++    temporary += ".tmp";
++    if (FSCom.exists(temporary.c_str()) && !FSCom.remove(temporary.c_str()))
++        LOG_ERROR("Can't remove failed temporary file %s", temporary.c_str());
++}
++#endif
++
+ size_t SafeFile::write(uint8_t ch)
+ {
      if (!f)
          return 0;
  
@@ -21,11 +55,17 @@ index 67086789ff0842746b12d625085870d86cafb441..564349cc55351b5a1ddea6c6ee8a169a
 +    ++expectedBytes;
 +#else
      hash ^= ch;
+-    return f.write(ch);
 +#endif
-     return f.write(ch);
++    const auto written = f.write(ch);
++#if RAK3401_LEGION_FLASH
++    writeFailed |= written != 1;
++#endif
++    return written;
  }
  
-@@ -50,8 +59,15 @@ size_t SafeFile::write(const uint8_t *buffer, size_t size)
+ size_t SafeFile::write(const uint8_t *buffer, size_t size)
+@@ -53,10 +93,21 @@ size_t SafeFile::write(const uint8_t *buffer, size_t size)
          return 0;
  
      for (size_t i = 0; i < size; i++) {
@@ -35,13 +75,70 @@ index 67086789ff0842746b12d625085870d86cafb441..564349cc55351b5a1ddea6c6ee8a169a
          hash ^= buffer[i];
 +#endif
      }
+-    return f.write((uint8_t const *)buffer, size); // This nasty cast is _IMPORTANT_ otherwise the correct adafruit method does
+-                                                   // not get used (they made a mistake in their typing)
 +#if RAK3401_LEGION_FLASH
 +    expectedBytes += size;
 +#endif
-     return f.write((uint8_t const *)buffer, size); // This nasty cast is _IMPORTANT_ otherwise the correct adafruit method does
-                                                    // not get used (they made a mistake in their typing)
++    // The cast selects Adafruit LittleFS's buffer-write overload.
++    const auto written = f.write((uint8_t const *)buffer, size);
++#if RAK3401_LEGION_FLASH
++    writeFailed |= written != size;
++#endif
++    return written;
  }
-@@ -98,13 +114,27 @@ bool SafeFile::testReadback()
+ 
+ /**
+@@ -66,6 +117,12 @@ size_t SafeFile::write(const uint8_t *buffer, size_t size)
+  */
+ bool SafeFile::close()
+ {
++#if RAK3401_LEGION_FLASH
++    if (writeFailed || !powerHAL_isPowerLevelSafe()) {
++        abort();
++        return false;
++    }
++#endif
+     if (!f)
+         return false;
+ 
+@@ -73,17 +130,34 @@ bool SafeFile::close()
+     f.close();
+     spiLock->unlock();
+ 
+-    if (!testReadback())
++    if (!testReadback()) {
++#if RAK3401_LEGION_FLASH
++        abort();
++#endif
+         return false;
++    }
++
++#if RAK3401_LEGION_FLASH
++    if (!powerHAL_isPowerLevelSafe()) {
++        abort();
++        return false;
++    }
++#endif
+ 
+     // Rename or overwrite (atomic operation)
+     String filenameTmp = filename;
+     filenameTmp += ".tmp";
+     if (!renameFile(filenameTmp.c_str(), filename.c_str())) {
+         LOG_ERROR("Can't rename new pref file");
++#if RAK3401_LEGION_FLASH
++        abort();
++#endif
+         return false;
+     }
+ 
++#if RAK3401_LEGION_FLASH
++    ownsTemporary = false;
++#endif
+     return true;
+ }
+ 
+@@ -101,13 +175,27 @@ bool SafeFile::testReadback()
      }
  
      int c = 0;
@@ -69,7 +166,7 @@ index 67086789ff0842746b12d625085870d86cafb441..564349cc55351b5a1ddea6c6ee8a169a
          LOG_ERROR("Readback failed hash mismatch");
          return false;
      }
-@@ -112,4 +142,4 @@ bool SafeFile::testReadback()
+@@ -115,4 +203,4 @@ bool SafeFile::testReadback()
      return true;
  }
  
@@ -77,7 +174,7 @@ index 67086789ff0842746b12d625085870d86cafb441..564349cc55351b5a1ddea6c6ee8a169a
 \ No newline at end of file
 +#endif
 diff --git a/src/SafeFile.h b/src/SafeFile.h
-index 3d0f81cad270a96613d8489adbfb1faab5d8793e..5003eb99e465348d341840c6635b7278bf684e0e 100644
+index 3d0f81cad270a96613d8489adbfb1faab5d8793e..799ce95953e7bdcbac578116aa2ab24256018657 100644
 --- a/src/SafeFile.h
 +++ b/src/SafeFile.h
 @@ -13,7 +13,7 @@
@@ -89,13 +186,26 @@ index 3d0f81cad270a96613d8489adbfb1faab5d8793e..5003eb99e465348d341840c6635b7278
   * - We do not allow seeking (because we want to maintain our hash)
   * - we provide an close() method which is similar to close but returns false if we were unable to successfully write the
   * file.  Also this method
-@@ -44,7 +44,12 @@ class SafeFile : public Print
+@@ -26,6 +26,10 @@ class SafeFile : public Print
+ {
+   public:
+     explicit SafeFile(char const *filepath, bool fullAtomic = false);
++#if RAK3401_LEGION_FLASH
++    ~SafeFile();
++    void abort();
++#endif
+ 
+     virtual size_t write(uint8_t);
+     virtual size_t write(const uint8_t *buffer, size_t size);
+@@ -44,7 +48,14 @@ class SafeFile : public Print
      String filename;
      File f;
      bool fullAtomic;
 +#if RAK3401_LEGION_FLASH
 +    uint32_t hash = 0xffffffffu;
 +    size_t expectedBytes = 0;
++    bool ownsTemporary = false;
++    bool writeFailed = false;
 +#else
      uint8_t hash = 0;
 +#endif
@@ -123,10 +233,10 @@ index 0000000000000000000000000000000000000000..d510e05b57bf368a6f68939f2ba7a80e
 +}
 diff --git a/src/mesh/LegionPersistence.cpp b/src/mesh/LegionPersistence.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..84e96b1c53b6c0228d0a4e3fc0bc9d0bbfca4b22
+index 0000000000000000000000000000000000000000..41885ab17e28d699f1688f1338f8c2c10899b886
 --- /dev/null
 +++ b/src/mesh/LegionPersistence.cpp
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,95 @@
 +#include "LegionPersistence.h"
 +
 +#if RAK3401_LEGION_FLASH
@@ -203,6 +313,7 @@ index 0000000000000000000000000000000000000000..84e96b1c53b6c0228d0a4e3fc0bc9d0b
 +    // A partial but successfully written encoding must never replace a complete saved file.
 +    if (!pb_encode(&stream, fields, source)) {
 +        LOG_ERROR("Legion protobuf encoding failed for %s", filename);
++        staged.abort();
 +        legionRecordProtoSave(false);
 +        return false;
 +    }

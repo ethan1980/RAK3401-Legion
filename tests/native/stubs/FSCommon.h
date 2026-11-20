@@ -54,6 +54,8 @@ struct FakeFilesystem {
     bool corruptClose = false;
     bool appendClose = false;
     bool shortWrites = false;
+    bool failRemove = false;
+    size_t writeBudget = SIZE_MAX;
     size_t mutations = 0;
     std::string failOpenName;
     bool exists(const char *name) const { return std::strcmp(name, "/") == 0 || files.count(name) != 0; }
@@ -63,6 +65,8 @@ struct FakeFilesystem {
     bool remove(const char *name)
     {
         ++mutations;
+        if (failRemove)
+            return false;
         return files.erase(name) != 0;
     }
     File open(const char *name, int mode)
@@ -95,6 +99,8 @@ inline size_t File::write(const uint8_t *data, size_t size)
         return 0;
     if (fakeFs.shortWrites && size)
         --size;
+    size = std::min(size, fakeFs.writeBudget);
+    fakeFs.writeBudget -= size;
     ++fakeFs.mutations;
     bytes->insert(bytes->end(), data, data + size);
     offset += size;

@@ -721,6 +721,48 @@ class ReleaseValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.prepare_release(self.directory, self.commit)
 
+    def test_v071_requires_pinned_base_and_the_planned_features(self):
+        self.traffic_manifest()
+        self.manifest.update(
+            legion_version="0.7.1",
+            meshtastic_version="2.8.3",
+            advertised_firmware_version="2.8.3.Legion0.7.1",
+            commit="a8f6f580476f0884965bc24fc94e6c0f24867dcb",
+            name_ignore=True,
+            scramble=True,
+            scramble_duration_seconds=3600,
+            daily_battery_balance=True,
+            daily_mesh_health=True,
+            cpu_thermal_hibernation=True,
+            hibernation_notices=True,
+            daily_unique_estimates=True,
+            flash_failed_save_cleanup=True,
+            fixed_position_notice=True,
+            fixed_position_notice_first_seconds=300,
+            fixed_position_notice_repeat_seconds=43200,
+        )
+        self.manifest["control_commands"] += ["unignorename", "scramble", "arm", "disarm"]
+        self.write_manifest()
+        result = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(result["tag"], "legion-v0.7.1-aaaaaaa")
+        self.assertFalse(result["prerelease"])
+        for term in ("Bugfixes: daily report", "a8f6f58", "5 minutes", "12 hours"):
+            self.assertIn(term, result["notes"])
+        for field, invalid in (
+            ("commit", "d5f16191ca28b01b5024f590f04a67f25d66f1b1"),
+            ("daily_unique_estimates", False),
+            ("flash_failed_save_cleanup", False),
+            ("fixed_position_notice", False),
+            ("fixed_position_notice_first_seconds", 0),
+            ("fixed_position_notice_repeat_seconds", 60),
+        ):
+            original = self.manifest[field]
+            self.manifest[field] = invalid
+            self.write_manifest()
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                release.prepare_release(self.directory, self.commit)
+            self.manifest[field] = original
+
     def test_v042_notes_record_verified_commands_and_pending_automatic_restore(self):
         self.v041_manifest()
         self.manifest.update(

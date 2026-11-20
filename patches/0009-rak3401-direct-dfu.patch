@@ -1,5 +1,5 @@
 diff --git a/src/platform/nrf52/LegionDfu.cpp b/src/platform/nrf52/LegionDfu.cpp
-index e7da607..3acca1d 100644
+index e7da607b4e0924d30d4781e04c4c7be34b11144c..3acca1d2d8cbe5eed3f7841719af04f93817b05a 100644
 --- a/src/platform/nrf52/LegionDfu.cpp
 +++ b/src/platform/nrf52/LegionDfu.cpp
 @@ -31,11 +31,15 @@
@@ -221,7 +221,7 @@ index e7da607..3acca1d 100644
  
  #endif
 diff --git a/src/platform/nrf52/LegionDfu.h b/src/platform/nrf52/LegionDfu.h
-index 0f1eb52..f881655 100644
+index 0f1eb52f7709dfb46d5a6d1cee64e5a9d2796d4f..f8816553ae604548c2f3832baefd729d6571644d 100644
 --- a/src/platform/nrf52/LegionDfu.h
 +++ b/src/platform/nrf52/LegionDfu.h
 @@ -3,3 +3,5 @@
@@ -231,10 +231,10 @@ index 0f1eb52..f881655 100644
 +extern "C" void legionDfuInstall(BLECharacteristic *characteristic);
 +extern "C" void legionDfuProcess();
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 07b4b31..059b831 100644
+index 068c1429e3ef226c479278f5ef74ab18491e8d54..9d075450ad9b13b753dfcae0def622b2b8a3cf04 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
-@@ -60,8 +60,13 @@ class QuiescingBLEDfu : public BLEDfu
+@@ -119,8 +119,13 @@ class QuiescingBLEDfu : public BLEDfu
      err_t begin() override
      {
          err_t err = BLEDfu::begin();
@@ -249,7 +249,7 @@ index 07b4b31..059b831 100644
      }
  };
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index cb6a513..cdc928e 100644
+index a00fe012524dc08579d17ab3944f8d1a3d572721..0bc5b98f28ee85ed091986f5f980b7e7ad6c893e 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
 @@ -1,5 +1,8 @@
@@ -258,10 +258,10 @@ index cb6a513..cdc928e 100644
 +#if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
 +#include "LegionDfu.h"
 +#endif
+ #include "memGet.h"
  #include "mesh/Throttle.h"
  #include <Adafruit_TinyUSB.h>
- #include <Adafruit_nRFCrypto.h>
-@@ -405,6 +408,9 @@ void nrf52Loop()
+@@ -469,6 +472,9 @@ void nrf52Loop()
  
      checkSDEvents();
      reportLittleFSCorruptionOnce();

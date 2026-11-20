@@ -1,3 +1,32 @@
+# Legion 0.7.1
+
+Legion 0.7.1 uses Meshtastic v2.8.3.a8f6f58 and reports
+`2.8.3.Legion0.7.1` on the RAK3401 1W with RAK13302.
+
+- **Bugfixes: daily report.** MeshHealth keeps scoring complete days above
+  768 tracked nodes. Estimated unique counts and scores carry `~`. The first
+  comparable daily cut establishes the reference and normally shows `NA`.
+- **Official bulk SPI at 8 MHz.** Uses Meshtastic's nRF52 SPI/EasyDMA path
+  with Legion's configured bus clock and `/components` diagnostics.
+- **Failed-save cleanup.** Removes the current attempt's temporary file after
+  encoding, short-write, CRC32/length or rename failure when supply permits.
+  Atomic configuration saves retain the previous file until replacement.
+- **Passive fixed-position warning.** With fixed position enabled and coordinates
+  `0,0`, LegionRF receives a warning after 5 minutes and then every 12 hours.
+  Correcting the coordinates or disabling fixed position stops it silently.
+
+The owner confirmed rc.2 operation on HW, including commands and the DAILY score.
+The two additions, failed-save cleanup and the fixed-position warning, have
+software tests and await their HW checks.
+
+Install the OTA ZIP with nRF Connect or the UF2 over USB.
+
+[Commands](COMMANDS.md) · [Automatic features](AUTOMATIC-FEATURES.md) ·
+[Manual en español](docs/Legion-Spanish-friendly-user-manual.pdf) ·
+[English manual](docs/Legion-English-friendly-user-manual.pdf)
+
+---
+
 # Legion 0.7.0 - quality-of-life update
 
 Legion 0.7.0 uses Meshtastic v2.8.2.d5f1619 and reports

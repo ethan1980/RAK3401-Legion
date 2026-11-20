@@ -16,6 +16,7 @@
 #include <utility>
 
 FakeFilesystem fakeFs;
+bool powerSafe = true;
 concurrency::Lock lock;
 concurrency::Lock *spiLock = &lock;
 
@@ -307,7 +308,7 @@ void test_failed_rename_preserves_good_file()
     fakeFs.failRename = true;
     assert(!file.close());
     assert(fakeFs.get("/prefs/config") == old);
-    assert(fakeFs.get("/prefs/config.tmp") == data);
+    assert(!fakeFs.exists("/prefs/config.tmp"));
 }
 
 void test_stale_temp_is_not_appended()
@@ -339,7 +340,80 @@ void test_partial_encoding_keeps_complete_file()
     const pb_msgdesc_t fields{false, 47};
     assert(!legionSaveProto("/prefs/config", 200, &fields, &data, true));
     assert(fakeFs.get("/prefs/config") == old);
-    assert(fakeFs.get("/prefs/config.tmp").size() == 47);
+    assert(!fakeFs.exists("/prefs/config.tmp"));
+}
+
+void test_failed_save_releases_space_and_next_save_succeeds()
+{
+    const auto data = payload();
+    const std::vector<uint8_t> old{9, 9};
+    fakeFs.put("/prefs/config", old);
+    const pb_msgdesc_t fields;
+    fakeFs.writeBudget = 60;
+    assert(!legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == old);
+    assert(!fakeFs.exists("/prefs/config.tmp"));
+    fakeFs.writeBudget = SIZE_MAX;
+    assert(legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == data);
+}
+
+void test_low_voltage_defers_failed_temporary_cleanup()
+{
+    const auto data = payload();
+    fakeFs.put("/prefs/config", {9, 9});
+    {
+        SafeFile file("/prefs/config", true);
+        assert(file.write(data.data(), data.size()) == data.size());
+        powerSafe = false;
+        const auto mutations = fakeFs.mutations;
+        file.abort();
+        assert(fakeFs.mutations == mutations);
+        assert(!file.close());
+    }
+    assert(fakeFs.get("/prefs/config") == std::vector<uint8_t>({9, 9}));
+    assert(fakeFs.exists("/prefs/config.tmp"));
+    powerSafe = true;
+    const pb_msgdesc_t fields;
+    assert(legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == data);
+    assert(!fakeFs.exists("/prefs/config.tmp"));
+}
+
+void test_failed_cleanup_is_retried_on_next_open()
+{
+    const auto data = payload();
+    fakeFs.put("/prefs/config", {9, 9});
+    {
+        SafeFile file("/prefs/config", true);
+        assert(file.write(data.data(), data.size()) == data.size());
+        fakeFs.failRemove = true;
+        file.abort();
+    }
+    assert(fakeFs.exists("/prefs/config.tmp"));
+    fakeFs.failRemove = false;
+    const pb_msgdesc_t fields;
+    assert(legionSaveProto("/prefs/config", 200, &fields, &data, true));
+    assert(fakeFs.get("/prefs/config") == data);
+}
+
+void test_unclosed_file_cleans_only_its_own_temporary()
+{
+    fakeFs.put("/prefs/config", {9, 9});
+    {
+        SafeFile file("/prefs/config", true);
+        assert(file.write(7) == 1);
+    }
+    assert(!fakeFs.exists("/prefs/config.tmp"));
+    fakeFs.put("/prefs/config.tmp", {4, 5});
+    fakeFs.failRemove = true;
+    const auto mutations = fakeFs.mutations;
+    {
+        SafeFile file("/prefs/config", true);
+        assert(!file.close());
+    }
+    assert(fakeFs.get("/prefs/config.tmp") == std::vector<uint8_t>({4, 5}));
+    assert(fakeFs.mutations == mutations + 1);
 }
 
 void test_proto_short_write_keeps_complete_file()
@@ -409,9 +483,14 @@ int main()
         {"complete protobuf save", test_complete_proto_save},
         {"partial encoding", test_partial_encoding_keeps_complete_file},
         {"protobuf short write", test_proto_short_write_keeps_complete_file},
+        {"out of space and subsequent save", test_failed_save_releases_space_and_next_save_succeeds},
+        {"low voltage defers cleanup", test_low_voltage_defers_failed_temporary_cleanup},
+        {"failed cleanup retried", test_failed_cleanup_is_retried_on_next_open},
+        {"unclosed temporary ownership", test_unclosed_file_cleans_only_its_own_temporary},
     };
     for (const auto &test : tests) {
         fakeFs = {};
+        powerSafe = true;
         test.second();
         std::cout << "PASS: " << test.first << '\n';
     }

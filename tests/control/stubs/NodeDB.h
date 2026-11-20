@@ -43,6 +43,7 @@ struct Config {
         int role = meshtastic_Config_DeviceConfig_Role_CLIENT;
     } device;
     meshtastic_Config_LoRaConfig lora;
+    struct { bool fixed_position = false; } position;
 };
 extern Config config;
 class NodeDB
@@ -56,6 +57,8 @@ class NodeDB
         return true;
     }
     uint32_t getNodeNum() const { return ownNode; }
+    bool validPosition = false;
+    bool hasValidPosition(const meshtastic_NodeInfoLite *) const { return validPosition; }
     uint32_t knownSigner = 0;
     bool isKnownXeddsaSigner(uint32_t node) const { return node == knownSigner; }
     std::vector<meshtastic_NodeInfoLite> nodes;

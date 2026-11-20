@@ -1401,6 +1401,103 @@ void test_mesh_health_scoring_and_ack_provenance()
     assert(last().find("DM targets:0 Confirmed:0") != std::string::npos);
 }
 
+void test_mesh_health_estimates_match_rc2_and_keep_comparable_days()
+{
+    using S = legion::DailySchedule;
+    for (const auto count : {768u, 769u, 1200u, 5000u}) {
+        legion::MeshHealth health;
+        health.advance(0, 1, 1, 0);
+        for (unsigned day = 1; day <= 2; ++day) {
+            for (unsigned node = 1000; node < 1000 + count; ++node)
+                health.hear(node, node < 1013 ? 0 : 3);
+            health.advance(day * S::DAY_MS, 1, 1, 0);
+            const auto &result = health.last();
+            // Counts come from Cortex-M4 emulation of the installed rc.2 OTA.
+            const unsigned expected = count == 5000 ? 5607 : count == 1200 ? 1242 : 768;
+            assert(result.heard == expected && result.direct == 13 && result.distant == expected - 13);
+            assert(!result.partial && result.estimated == (count > 768));
+            assert(result.score == (day == 1 ? -1 : 100));
+        }
+        health.advance(3 * S::DAY_MS, 2, 1, 0);
+        assert(health.last().partial && health.last().score == -1);
+    }
+}
+
+void test_fixed_position_notice_conditions_repetition_and_recovery()
+{
+    using N = legion::FixedPositionNotice;
+    reset();
+    Time::monotonic = 1;
+    TestModule module;
+    config.position.fixed_position = true;
+    module.runOnce();
+    Time::now = N::FIRST_MS - 1;
+    module.runOnce();
+    assert(meshService.sent.empty());
+    Time::now = N::FIRST_MS;
+    module.runOnce();
+    const std::string notice = "!abcdef01: Fixed position is invalid. Set valid coordinates in Position settings.";
+    assert(meshService.sent.size() == 1 && last() == notice);
+    Time::now += N::REPEAT_MS - 1;
+    module.runOnce();
+    assert(meshService.sent.size() == 1);
+    ++Time::now;
+    module.runOnce();
+    assert(meshService.sent.size() == 2 && last() == notice);
+    database.validPosition = true;
+    module.runOnce();
+    Time::now += N::REPEAT_MS;
+    module.runOnce();
+    assert(meshService.sent.size() == 2);
+    database.validPosition = false;
+    module.runOnce();
+    Time::now += N::FIRST_MS - 1;
+    module.runOnce();
+    assert(meshService.sent.size() == 2);
+    ++Time::now;
+    module.runOnce();
+    assert(meshService.sent.size() == 3 && last() == notice);
+}
+
+void test_fixed_position_notice_deferred_send_is_cancelled_on_correction()
+{
+    using N = legion::FixedPositionNotice;
+    reset();
+    Time::monotonic = 1;
+    TestModule module;
+    config.position.fixed_position = true;
+    module.runOnce();
+    Time::now = N::FIRST_MS;
+    supplyReady = false;
+    module.runOnce();
+    assert(meshService.sent.empty());
+    supplyReady = true;
+    meshService.result = 1;
+    module.runOnce();
+    assert(meshService.sent.size() == 1);
+    ++Time::now;
+    module.runOnce();
+    assert(meshService.sent.size() == 1);
+    database.validPosition = true;
+    Time::now += N::RETRY_MS;
+    module.runOnce();
+    assert(meshService.sent.size() == 1);
+    database.validPosition = false;
+    config.position.fixed_position = false;
+    module.runOnce();
+    Time::now += N::REPEAT_MS;
+    module.runOnce();
+    assert(meshService.sent.size() == 1);
+    legion::FixedPositionNotice schedule;
+    const uint32_t start = UINT32_MAX - 100;
+    schedule.observe(start, true);
+    assert(!schedule.due(start + N::FIRST_MS - 1));
+    assert(schedule.due(start + N::FIRST_MS));
+    schedule.queued(start + N::FIRST_MS);
+    assert(!schedule.due(start + N::FIRST_MS + N::REPEAT_MS - 1));
+    assert(schedule.due(start + N::FIRST_MS + N::REPEAT_MS));
+}
+
 void test_daily_split_retries_only_the_pending_part()
 {
     using S = legion::DailySchedule;
@@ -1437,8 +1534,14 @@ void test_daily_split_retries_only_the_pending_part()
     meshService.result = 1;
     Time::now += uint32_t(S::RETRY_MS);
     module.runOnce();
-    assert(meshService.sent.size() == 2 && last().find("!abcdef01 DAILY 2/2\nMeshHealth PARTIAL\n") == 0);
-    assert(last().find("Relayed:12000 Sources:768\nDM targets:100 Confirmed:100") != std::string::npos);
+    assert(meshService.sent.size() == 2 && last().find("!abcdef01 DAILY 2/2\nMeshHealth NA\n") == 0);
+    assert(last().find("Heard:~") != std::string::npos);
+    assert(last().find("Relayed:12000 Sources:~") != std::string::npos);
+    const auto dm = last().find("DM targets:~");
+    assert(dm != std::string::npos);
+    unsigned targets = 0, confirmed = 0;
+    assert(std::sscanf(last().c_str() + dm, "DM targets:~%u Confirmed:~%u", &targets, &confirmed) == 2);
+    assert(targets >= 100 && targets < 125 && confirmed >= 100 && confirmed <= targets);
     const auto second = last();
     meshService.result = 0;
     Time::now += uint32_t(S::RETRY_MS);
@@ -1731,6 +1834,9 @@ int main()
     RUN(test_daily_manual_priority_capture_and_busy_window);
     RUN(test_arm_and_disarm_use_the_private_control_gate);
     RUN(test_mesh_health_scoring_and_ack_provenance);
+    RUN(test_mesh_health_estimates_match_rc2_and_keep_comparable_days);
+    RUN(test_fixed_position_notice_conditions_repetition_and_recovery);
+    RUN(test_fixed_position_notice_deferred_send_is_cancelled_on_correction);
     RUN(test_daily_split_retries_only_the_pending_part);
     RUN(test_hibernation_notices_stay_on_legionrf);
     RUN(test_guard_control_scope_status_clear_and_daily);

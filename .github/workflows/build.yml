@@ -167,8 +167,16 @@ jobs:
                   entry = f'            "{document}",\n'
                   previous = previous.replace(entry, "")
                   current = current.replace(entry, "")
+              for feature in ("flash_failed_save_cleanup", "fixed_position_notice"):
+                  pending = f'        "{feature}_hardware_tested": False,\n'
+                  observed = (
+                      f'        "{feature}_hardware_tested": bool(target == "legion" '
+                      f'and config.get("hardware_observation", {{}}).get("{feature}_tested")),\n'
+                  )
+                  previous = previous.replace(pending, "").replace(observed, "")
+                  current = current.replace(pending, "").replace(observed, "")
               if previous != current:
-                  raise SystemExit("Build changes exceed documentation archive entries")
+                  raise SystemExit("Build changes exceed documentation and hardware observations")
           old = json.loads(subprocess.check_output(
               ["git", "show", f"{before}:upstream.json"], text=True
           ))

@@ -15,9 +15,8 @@ Legion 0.7.1 uses Meshtastic v2.8.3.a8f6f58 and reports
   `0,0`, LegionRF receives a warning after 5 minutes and then every 12 hours.
   Correcting the coordinates or disabling fixed position stops it silently.
 
-The owner confirmed rc.2 operation on HW, including commands and the DAILY score.
-The two additions, failed-save cleanup and the fixed-position warning, have
-software tests and await their HW checks.
+The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026,
+including failed-save cleanup, the fixed-position warning, commands and the DAILY score.
 
 Install the OTA ZIP with nRF Connect or the UF2 over USB.
 

@@ -33,12 +33,12 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Recovery and notices tested on HW in rc.2. |
 | [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
-| [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves, verifies temporary writes and removes failed staging files when supply permits. | Save checks verified in software. New failed-save cleanup pending HW testing. |
-| [Fixed-position warning](AUTOMATIC-FEATURES.md#fixed-position-warning) | Warns on LegionRF after 5 minutes with fixed position enabled and coordinates `0,0`, then every 12 hours until corrected. | Verified in software. Pending HW testing. |
+| [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves, verifies temporary writes and removes failed staging files when supply permits. | Tested on HW in Legion 0.7.1, including failed-save cleanup. |
+| [Fixed-position warning](AUTOMATIC-FEATURES.md#fixed-position-warning) | Warns on LegionRF after 5 minutes with fixed position enabled and coordinates `0,0`, then every 12 hours until corrected. | Tested on HW in Legion 0.7.1. |
 | [REG1 DC/DC](AUTOMATIC-FEATURES.md#reg1-dcdc) | Enables the MCU's efficient regulator after SoftDevice initialization. | Activation and readback confirmed on hardware. |
 
 “Tested” describes observed operation, not complete validation of every condition.
-The summary reflects observed operation across Legion builds.
+The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026.
 
 CC310, bulk SPI, flash persistence, REG1 DC/DC, CPU thermal hibernation and the fixed-position warning are
 [automatic features](AUTOMATIC-FEATURES.md): no activation command or app setting

@@ -135,11 +135,8 @@ persistence has no field in this report. See the
 
 ## Validation status
 
-CC310 hardware use, 8 MHz bulk SPI operation and REG1 activation/readback have
-been confirmed on hardware. Identical-save skipping and flash readback checks
-have been verified in software. The owner confirmed rc.2 operation on HW,
-including its commands and DAILY score. Failed-save temporary cleanup and the
-fixed-position warning were added for the final 0.7.1 and have software tests;
-their HW checks remain pending. These observations confirm operation within the
-tested conditions; current consumption and battery-life gains have not been
-measured.
+The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026.
+This includes failed-save temporary cleanup and the fixed-position warning,
+alongside the commands, DAILY score and previously verified components.
+Automated tests cover the save failure paths and voltage guards.
+Current consumption and battery-life gains have not been measured.

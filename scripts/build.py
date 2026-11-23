@@ -137,7 +137,7 @@ def package(firmware, target, output):
         "flash_write_deduplication": target == "legion",
         "flash_readback_crc32": target == "legion",
         "flash_failed_save_cleanup": target == "legion",
-        "flash_failed_save_cleanup_hardware_tested": False,
+        "flash_failed_save_cleanup_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("flash_failed_save_cleanup_tested")),
         "private_telemetry": target == "legion",
         "remote_control": target == "legion",
         "control_commands": (
@@ -219,7 +219,7 @@ def package(firmware, target, output):
         "fixed_position_notice": target == "legion",
         "fixed_position_notice_first_seconds": 300 if target == "legion" else None,
         "fixed_position_notice_repeat_seconds": 43200 if target == "legion" else None,
-        "fixed_position_notice_hardware_tested": False,
+        "fixed_position_notice_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("fixed_position_notice_tested")),
         "cpu_thermal_hibernation": target == "legion",
         "hibernation_notices": target == "legion",
         "apc_hardware_tested": bool(

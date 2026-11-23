@@ -30,14 +30,16 @@
     "patches/0024-rak3401-fixed-position-notice.patch"
   ],
   "hardware_observation": {
-    "observed_build": "2.8.3.LGN0.7.1rc2",
-    "confirmed_at": "2026-11-20",
+    "observed_build": "2.8.3.Legion0.7.1",
+    "confirmed_at": "2026-11-23",
     "confirmed_by": "Javier",
     "commands_tested": true,
     "apc_modes_tested": true,
     "antispam_tested": true,
     "daily_mesh_health_tested": true,
-    "scope": "Owner confirmed all rc.2 functions working on RAK3401 1W with RAK13302."
+    "scope": "Owner confirmed all Legion 0.7.1 functions working on RAK3401 1W with RAK13302, including failed-save cleanup and fixed-position warnings.",
+    "flash_failed_save_cleanup_tested": true,
+    "fixed_position_notice_tested": true
   },
   "ota_hardware_observation": {
     "observed_build": "2.8.3.LGN0.7.1rc2",

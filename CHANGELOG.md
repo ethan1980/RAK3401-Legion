@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.2 - 2026-11-23
+
+- Rebase Legion onto Meshtastic nightly 2.8.3.d0f4096; retain upstream CC310 signing acceleration, startup LoRa validation and interrupted XModem transfer recovery.
+- Accept full node IDs or short names in all targeted commands, including peer selection for trace, ignore/unignore and guard clear.
+- Add `/daily` for the last closed MeshHealth cut and `/position` for local position and configured publication.
+- Add `/listchannels` beside channel creation/deletion, preserving real one-based positions.
+- Extend `/components` with since-boot preference-save counters.
+- Add verified `/arm permanent` startup persistence; ordinary `/arm` and `/disarm` clear it.
+- Document `/drakarys` in the command reference and a new illustrated chapter in both manuals.
+- Update both illustrated manuals and distinguish inherited HW observations from pending 0.7.2 tests.
+- New base and capabilities are pending HW; software and cross-compilation checks accompany the release.
+
+
 ## 0.7.1 - 2026-11-20
 
 - Rebase on Meshtastic `2.8.3.a8f6f58` and use official bulk SPI at 8 MHz.
@@ -8,7 +21,7 @@
 - Clean failed-save staging files when the flash supply guard permits.
 - Add passive LegionRF warnings for empty fixed coordinates after 5 minutes,
   repeating every 12 hours and stopping silently on correction.
-- Update the README and both illustrated manuals. Mark rc.2 operation tested on HW.
+- Update the README and both illustrated manuals. Mark operation tested on HW.
 
 ## 0.7.0 - 2026-11-13
 

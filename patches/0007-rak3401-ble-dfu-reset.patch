@@ -133,7 +133,7 @@ index 0000000..0f1eb52
 +
 +extern "C" void legionDfuControlWrite(uint16_t connHandle, BLECharacteristic *characteristic, ble_gatts_evt_write_t *request);
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 76eaae0..c0f79df 100644
+index ca826f7..068c142 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
 @@ -13,6 +13,9 @@

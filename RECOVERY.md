@@ -6,6 +6,10 @@ Legion can save one rescue point and restore it after confirmed loss or corrupti
 of essential preferences. **Backup creation and replacement are always explicit.**
 Installing firmware, restarting or changing settings never refreshes it.
 
+All targeted backup commands accept the full node ID or the node's short name,
+for example `/backup status PSVR`. See [node selection](COMMANDS.md#node-selection).
+The separately saved permanent-arm preference is not part of the rescue snapshot.
+
 ## Commands
 
 Send these channel messages on the configured private **LegionRF** channel.

@@ -1,8 +1,8 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index 1d44bbd..da2a6af 100644
+index af2e985..787822e 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -53,6 +53,9 @@
+@@ -54,6 +54,9 @@
  #include "memGet.h"
  #endif
  #include "sleep.h"
@@ -12,7 +12,7 @@ index 1d44bbd..da2a6af 100644
  #include "target_specific.h"
  #include <memory>
  #include <utility>
-@@ -1111,6 +1114,9 @@ void setup()
+@@ -1112,6 +1115,9 @@ void setup()
  #endif
  
      // Now that the mesh service is created, create any modules
@@ -284,7 +284,7 @@ index 0000000..27a9941
 +bool legionNameIgnoreDropsReceived(const _meshtastic_MeshPacket &packet);
 +bool legionNameIgnoreDropsOrigin(const _meshtastic_MeshPacket &packet);
 diff --git a/src/mesh/MeshService.cpp b/src/mesh/MeshService.cpp
-index 0430a7c..6bad69c 100644
+index 4cd0bdc..d3c0cba 100644
 --- a/src/mesh/MeshService.cpp
 +++ b/src/mesh/MeshService.cpp
 @@ -68,6 +68,10 @@ Allocator<meshtastic_QueueStatus> &queueStatusPool = staticQueueStatusPool;
@@ -298,7 +298,7 @@ index 0430a7c..6bad69c 100644
  
  MeshService::MeshService()
  #ifdef ARCH_PORTDUINO
-@@ -385,6 +389,12 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs,
+@@ -423,6 +427,12 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs,
  
  ErrorCode MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPhone)
  {
@@ -312,7 +312,7 @@ index 0430a7c..6bad69c 100644
      nodeDB->updateFrom(*p); // update our local DB for this packet (because phone might have sent position packets etc...)
  
 diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
-index bccd19c..5989be2 100644
+index 3227477..ccf129d 100644
 --- a/src/mesh/Router.cpp
 +++ b/src/mesh/Router.cpp
 @@ -18,6 +18,9 @@
@@ -325,7 +325,7 @@ index bccd19c..5989be2 100644
  #include "modules/LegionSecretText.h"
  #endif
  #include <ErriezCRC32.h>
-@@ -481,6 +484,12 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
+@@ -485,6 +488,12 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
   */
  ErrorCode Router::send(meshtastic_MeshPacket *p)
  {
@@ -338,7 +338,7 @@ index bccd19c..5989be2 100644
      if (isToUs(p)) {
          LOG_ERROR("BUG! send() with packet for local node");
          packetPool.release(p);
-@@ -772,8 +781,21 @@ bool checkXeddsaReceivePolicy(meshtastic_MeshPacket *p)
+@@ -804,8 +813,21 @@ bool checkXeddsaReceivePolicy(meshtastic_MeshPacket *p)
  }
  #endif
  
@@ -360,7 +360,7 @@ index bccd19c..5989be2 100644
      // Only our own ack verification sets this. Cleared before the cache compare and both copies below,
      // so neither the auth cache nor the MQTT/UDP uplink snapshot can carry an inbound value onward.
      // It must stay ahead of routingAuthCacheMatches(): that compare is a memcmp over the whole packet,
-@@ -801,6 +823,10 @@ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
+@@ -833,6 +855,10 @@ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
              LOG_WARN("Already-decoded packet rejected by signature policy");
              return RoutingAuthVerdict::REJECT;
          }
@@ -371,7 +371,7 @@ index bccd19c..5989be2 100644
  #endif
          p->xeddsa_signed = authCandidate.xeddsa_signed;
          wire = *p;
-@@ -830,6 +856,10 @@ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
+@@ -862,6 +888,10 @@ RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
      // Only an explicit unknown-channel result remains eligible for opaque relay.
      if (state == DecodeState::DECODE_OPAQUE)
          return RoutingAuthVerdict::OPAQUE_RELAY_ONLY;
@@ -382,7 +382,7 @@ index bccd19c..5989be2 100644
      storeRoutingAuthCache(wire, authCandidate);
      return RoutingAuthVerdict::ACCEPT;
  }
-@@ -1754,6 +1784,12 @@ void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)
+@@ -1797,6 +1827,12 @@ void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)
          return;
      }
      if (authVerdict == RoutingAuthVerdict::OPAQUE_RELAY_ONLY) {
@@ -711,10 +711,10 @@ index a1e3b7d..1ad3a13 100644
      concurrency::LockGuard lock(&trafficLock);
      const Tag *tag = findTag(p);
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index cdc928e..7b1d4df 100644
+index 0bc5b98..8a2c353 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
-@@ -40,6 +40,14 @@
+@@ -42,6 +42,14 @@
  #if RAK3401_LEGION_POWER
  #include "power/RAK3401LegionPower.h"
  #endif
@@ -729,7 +729,7 @@ index cdc928e..7b1d4df 100644
  
  #ifdef BQ25703A_ADDR
  #include "BQ25713.h"
-@@ -406,6 +414,10 @@ void nrf52Loop()
+@@ -470,6 +478,10 @@ void nrf52Loop()
      }
      nrfx_wdt_channel_feed(&nrfx_wdt, nrfx_wdt_channel_id_nrf52_main);
  
@@ -740,7 +740,7 @@ index cdc928e..7b1d4df 100644
      checkSDEvents();
      reportLittleFSCorruptionOnce();
  #if defined(RAK3401_LEGION_DFU) && RAK3401_LEGION_DFU
-@@ -508,6 +520,35 @@ void nrf52FlashQuiesce()
+@@ -575,6 +587,35 @@ void nrf52FlashQuiesce()
      flash_nrf5x_flush();
  }
  

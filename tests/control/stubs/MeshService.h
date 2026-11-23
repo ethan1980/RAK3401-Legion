@@ -12,6 +12,7 @@ class MeshService
     std::vector<SentPacket> sent;
     int result = 0;
     std::function<void(const meshtastic_MeshPacket &)> onSend;
+    void releaseToPool(meshtastic_MeshPacket *p) { delete p; }
     int sendToMesh(meshtastic_MeshPacket *p, int source, bool toPhone)
     {
         sent.push_back({*p, source, toPhone});

@@ -1,0 +1,590 @@
+diff --git a/src/mesh/MeshPacketQueue.cpp b/src/mesh/MeshPacketQueue.cpp
+index d570b50..c470505 100644
+--- a/src/mesh/MeshPacketQueue.cpp
++++ b/src/mesh/MeshPacketQueue.cpp
+@@ -105,6 +105,14 @@ meshtastic_MeshPacket *MeshPacketQueue::dequeue()
+     return p;
+ }
+ 
++#if RAK3401_LEGION_TRAFFIC
++meshtastic_MeshPacket *MeshPacketQueue::dequeueScanned(const meshtastic_MeshPacket *expected, PacketId id)
++{
++    auto *front = getFront();
++    return front && front == expected && front->id == id ? dequeue() : nullptr;
++}
++#endif
++
+ meshtastic_MeshPacket *MeshPacketQueue::getFront()
+ {
+     if (empty()) {
+@@ -229,4 +237,4 @@ bool MeshPacketQueue::replaceLowerPriorityPacket(meshtastic_MeshPacket *p)
+ 
+     // If the back packet's priority is not lower, no replacement occurs
+     return false;
+-}
+\ No newline at end of file
++}
+diff --git a/src/mesh/MeshPacketQueue.h b/src/mesh/MeshPacketQueue.h
+index 3d3902c..aec5edb 100644
+--- a/src/mesh/MeshPacketQueue.h
++++ b/src/mesh/MeshPacketQueue.h
+@@ -34,6 +34,9 @@ class MeshPacketQueue
+     size_t getMaxLen() { return maxLen; }
+ 
+     meshtastic_MeshPacket *dequeue();
++#if RAK3401_LEGION_TRAFFIC
++    meshtastic_MeshPacket *dequeueScanned(const meshtastic_MeshPacket *expected, PacketId id);
++#endif
+ 
+     meshtastic_MeshPacket *getFront();
+ 
+@@ -46,4 +49,4 @@ class MeshPacketQueue
+ 
+     /* Attempt to find a packet from this queue. Return true if it was found. */
+     bool find(const NodeNum from, const PacketId id);
+-};
+\ No newline at end of file
++};
+diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
+index 7812560..9249b00 100644
+--- a/src/mesh/RadioInterface.cpp
++++ b/src/mesh/RadioInterface.cpp
+@@ -1522,7 +1522,7 @@ void RadioInterface::limitPower(int8_t loraMaxPower)
+     power = resolveTxPower(config.lora.tx_power, loraMaxPower);
+ }
+ 
+-int8_t RadioInterface::resolveTxPower(int8_t requested, int8_t loraMaxPower) const
++int8_t RadioInterface::resolveTxPower(int8_t requested, int8_t loraMaxPower, bool respectRegion) const
+ {
+     int8_t power = requested;
+     uint8_t maxPower = 255; // No limit
+@@ -1530,7 +1530,7 @@ int8_t RadioInterface::resolveTxPower(int8_t requested, int8_t loraMaxPower) con
+     if (myRegion->powerLimit)
+         maxPower = myRegion->powerLimit;
+ 
+-    if ((power > maxPower) && !devicestate.owner.is_licensed) {
++    if (respectRegion && (power > maxPower) && !devicestate.owner.is_licensed) {
+         LOG_INFO("Lower Tx power: regulatory limits");
+         power = maxPower;
+     }
+diff --git a/src/mesh/RadioInterface.h b/src/mesh/RadioInterface.h
+index d975844..ab73114 100644
+--- a/src/mesh/RadioInterface.h
++++ b/src/mesh/RadioInterface.h
+@@ -330,7 +330,7 @@ class RadioInterface
+      * This function should be called by subclasses after setting their desired power.  It might lower it
+      */
+     void limitPower(int8_t MAX_POWER);
+-    int8_t resolveTxPower(int8_t requested, int8_t loraMaxPower) const;
++    int8_t resolveTxPower(int8_t requested, int8_t loraMaxPower, bool respectRegion = true) const;
+ 
+     /**
+      * Save the frequency we selected for later reuse.
+diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
+index c8d8aa8..095297e 100644
+--- a/src/mesh/RadioLibInterface.cpp
++++ b/src/mesh/RadioLibInterface.cpp
+@@ -742,6 +742,9 @@ void RadioLibInterface::onNotify(uint32_t notification)
+                     RadioSequence seq(this);
+                     // Listen-before-talk: a CAD preamble scan immediately before we key up.
+                     LOG_DEBUG_RADIO("CAD arm");
++#if RAK3401_LEGION_TRAFFIC
++                    const PacketId scannedId = txp->id;
++#endif
+                     scanForTx = txp;
+                     const bool channelActive = isChannelActive();
+                     scanForTx = nullptr;
+@@ -753,7 +756,8 @@ void RadioLibInterface::onNotify(uint32_t notification)
+                         setTransmitDelay();
+                     }
+ #if RAK3401_LEGION_TRAFFIC
+-                    else if (!legionTrafficAllowQueued(txp) || !legionTrafficTxPlanCurrent(txp, config.lora.tx_power)) {
++                    else if (txQueue.getFront() != txp || txp->id != scannedId || !legionTrafficAllowQueued(txp) ||
++                             !legionTrafficTxPlanCurrent(txp, config.lora.tx_power)) {
+                         rearmReceive();
+                         setTransmitDelay(); // A mode or quarantine changed while CAD was
+                                             // running; scan again.
+@@ -766,7 +770,16 @@ void RadioLibInterface::onNotify(uint32_t notification)
+                                             Time::getMillis() - peekHoldStart);
+                         // Send any outgoing packets we have ready as fast as possible to keep the time between channel scan and
+                         // actual transmission as short as possible
++#if RAK3401_LEGION_TRAFFIC
++                        txp = txQueue.dequeueScanned(txp, scannedId);
++                        if (!txp) {
++                            rearmReceive();
++                            setTransmitDelay();
++                            break;
++                        }
++#else
+                         txp = txQueue.dequeue();
++#endif
+                         assert(txp);
+                         startSend(txp);
+                         LOG_TRACE("%d packets in TX queue", txQueue.getMaxLen() - txQueue.getFree());
+diff --git a/src/mesh/SX126xInterface.cpp b/src/mesh/SX126xInterface.cpp
+index 6c3910b..cfff3cc 100644
+--- a/src/mesh/SX126xInterface.cpp
++++ b/src/mesh/SX126xInterface.cpp
+@@ -696,7 +696,10 @@ template <typename T> bool SX126xInterface<T>::isChannelActive()
+         const int8_t nominal = config.lora.tx_power;
+         const int8_t requested = legionTrafficTxPower(scanForTx, nominal);
+         if (!legionPowerValid || legionAppliedTarget != requested) {
+-            const int8_t chip = requested == nominal ? power : resolveTxPower(requested, SX126X_MAX_POWER);
++            const bool drakarys = legionTrafficIsDrakarys(scanForTx);
++            const int8_t chip = requested == nominal && !drakarys
++                                    ? power
++                                    : resolveTxPower(requested, SX126X_MAX_POWER, !drakarys);
+ #ifdef SX126X_NO_POWER_OPTIMIZATION_TABLE
+             int16_t setting = lora.setOutputPower(chip, false);
+ #else
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index ffbe953..aa1f452 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -190,7 +190,7 @@ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &
+                 pending.selectedChannel = channels.getByIndex(selected.index);
+             }
+         }
+-        if (request.valid && request.command == legion::ControlCommand::Message)
++        if (request.valid && request.sendsChannelText())
+             pending.destinationMatches = findDestination(request.channel, pending.destination);
+         else if (request.valid && request.command == legion::ControlCommand::Trace)
+             pending.destinationMatches = findTraceDestination(request.target, pending.destination) &&
+@@ -236,8 +236,17 @@ void LegionControlModule::observeMeshRx(const meshtastic_MeshPacket &packet, int
+     meshHealth.hear(packet.from, hopsAway);
+ }
+ 
+-void LegionControlModule::observeMeshTx(const meshtastic_MeshPacket &packet, bool directMessage)
++void LegionControlModule::observeMeshTx(const meshtastic_MeshPacket &packet, bool directMessage, bool drakarys)
+ {
++#if RAK3401_LEGION_TRAFFIC
++    if (drakarys) {
++        concurrency::LockGuard guard(&stateLock);
++        if (drakarysRepliesPending < UINT8_MAX)
++            ++drakarysRepliesPending;
++    }
++#else
++    (void)drakarys;
++#endif
+     if (packet.via_mqtt || (!directMessage && isFromUs(&packet)) || nodeDB->isLoraSlotTransient())
+         return;
+     concurrency::LockGuard guard(&stateLock);
+@@ -263,10 +272,10 @@ void legionControlObserveMeshRx(const meshtastic_MeshPacket &packet, int8_t hops
+         legionControlModule->observeMeshRx(packet, hopsAway);
+ }
+ 
+-void legionControlObserveMeshTx(const meshtastic_MeshPacket &packet, bool directMessage)
++void legionControlObserveMeshTx(const meshtastic_MeshPacket &packet, bool directMessage, bool drakarys)
+ {
+     if (legionControlModule)
+-        legionControlModule->observeMeshTx(packet, directMessage);
++        legionControlModule->observeMeshTx(packet, directMessage, drakarys);
+ }
+ 
+ void legionControlObserveMeshAck(const meshtastic_MeshPacket &packet, uint32_t id)
+@@ -276,7 +285,7 @@ void legionControlObserveMeshAck(const meshtastic_MeshPacket &packet, uint32_t i
+         legionControlModule->observeMeshAck(packet.from, id);
+ }
+ 
+-bool LegionControlModule::sendText(uint8_t channel, const char *text, bool message)
++bool LegionControlModule::sendText(uint8_t channel, const char *text, legion::ControlCommand command)
+ {
+     const auto length = std::strlen(text);
+     if (!length || length > legion::CONTROL_TEXT_MAX || !legionPowerTxReady())
+@@ -288,12 +297,44 @@ bool LegionControlModule::sendText(uint8_t channel, const char *text, bool messa
+     packet->to = NODENUM_BROADCAST;
+     packet->want_ack = false;
+     packet->decoded.want_response = false;
+-    packet->priority = message ? meshtastic_MeshPacket_Priority_DEFAULT : meshtastic_MeshPacket_Priority_BACKGROUND;
++    packet->priority = command == legion::ControlCommand::None ? meshtastic_MeshPacket_Priority_BACKGROUND
++                                                               : meshtastic_MeshPacket_Priority_DEFAULT;
+     packet->decoded.payload.size = length;
+     std::memcpy(packet->decoded.payload.bytes, text, length);
++#if RAK3401_LEGION_TRAFFIC
++    if (command == legion::ControlCommand::Drakarys) {
++        packet->hop_limit = HOP_MAX;
++        if (!legionTrafficMarkDrakarys(packet)) {
++            service->releaseToPool(packet);
++            return false;
++        }
++        const uint32_t id = packet->id;
++        if (service->sendToMesh(packet, RX_SRC_LOCAL, true) == 0)
++            return true;
++        // An early router rejection may precede transfer of the RF tag to the queue.
++        legionTrafficForget(packet, id);
++        return false;
++    }
++#endif
+     return service->sendToMesh(packet, RX_SRC_LOCAL, true) == 0;
+ }
+ 
++#if RAK3401_LEGION_TRAFFIC
++void LegionControlModule::pollDrakarys()
++{
++    Channel control;
++    if (!legionPowerTxReady() || !findControlChannel(control))
++        return;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        if (!drakarysRepliesPending)
++            return;
++        --drakarysRepliesPending;
++    }
++    reply(control.index, "Dracarys! Pōntes valar! - Dracarys!, flame them all!");
++}
++#endif
++
+ void LegionControlModule::reply(uint8_t channel, const char *text)
+ {
+     char output[legion::CONTROL_TEXT_MAX + 1];
+@@ -773,6 +814,9 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+                             "UTF-8 bytes, channel <=11 bytes";
+         switch (request.command) {
+ #if RAK3401_LEGION_TRAFFIC
++        case legion::ControlCommand::Drakarys:
++            usage = "Usage: /drakarys !nodeid <channel> <message>";
++            break;
+         case legion::ControlCommand::Guard:
+             usage = "Usage: /guard status|observe|on|off !legionid; /guard clear !legionid !peerid";
+             break;
+@@ -902,7 +946,7 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+     } else if (request.command == legion::ControlCommand::CreateChannel ||
+                request.command == legion::ControlCommand::DeleteChannel) {
+         editChannel(command);
+-    } else if (request.command == legion::ControlCommand::Message) {
++    } else if (request.sendsChannelText()) {
+         if (command.destinationMatches != 1) {
+             reply(channel, command.destinationMatches ? "Ambiguous channel name" : "Channel not found or disabled");
+             return;
+@@ -912,10 +956,12 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+             reply(channel, "Destination channel changed; request cancelled");
+             return;
+         }
+-        if (sendText(current.index, request.text, true)) {
+-            char status[80];
+-            std::snprintf(status, sizeof(status), "Message queued to %s", current.name);
+-            reply(channel, status);
++        if (sendText(current.index, request.text, request.command)) {
++            if (request.command == legion::ControlCommand::Message) {
++                char status[80];
++                std::snprintf(status, sizeof(status), "Message queued to %s", current.name);
++                reply(channel, status);
++            }
+         } else
+             reply(channel, "Message queue rejected; no delivery confirmation");
+     } else {
+@@ -1373,6 +1419,9 @@ int32_t LegionControlModule::runOnce()
+     if (executeCommand && findControlChannel(control) && sameChannel(control, command.control) && legionPowerTxReady())
+         execute(command, now);
+     if (!executeCommand) {
++#if RAK3401_LEGION_TRAFFIC
++        pollDrakarys();
++#endif
+         pollRecoveryNotice();
+         pollDaily(uptime);
+         pollPositionNotice(now);
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 904dabb..6b7b270 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -27,7 +27,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     bool tryScramble(const meshtastic_MeshPacket &packet) const;
+     void observeLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+     void observeMeshRx(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+-    void observeMeshTx(const meshtastic_MeshPacket &packet, bool directMessage);
++    void observeMeshTx(const meshtastic_MeshPacket &packet, bool directMessage, bool drakarys = false);
+     void observeMeshAck(uint32_t target, uint32_t id);
+     void sendHibernationNotice(const char *text, bool thermal, bool entering);
+     void observeTraceRoute(const meshtastic_MeshPacket &packet, const meshtastic_RouteDiscovery &route);
+@@ -75,7 +75,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     uint8_t findDestination(const char *name, Channel &result) const;
+     bool findTraceDestination(uint32_t target, Channel &result) const;
+     static bool sameChannel(const Channel &a, const Channel &b);
+-    bool sendText(uint8_t channel, const char *text, bool message = false);
++    bool sendText(uint8_t channel, const char *text, legion::ControlCommand command = legion::ControlCommand::None);
+     void reply(uint8_t channel, const char *text);
+     void execute(const Pending &command, uint32_t now);
+     void report(const Pending &command, uint32_t now, bool zeroHop);
+@@ -87,6 +87,8 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     void pollRecoveryNotice();
+     void pollPositionNotice(uint32_t now);
+ #if RAK3401_LEGION_TRAFFIC
++    uint8_t drakarysRepliesPending = 0;
++    void pollDrakarys();
+     void guard(const Pending &command, uint32_t now);
+     void setGuardMode(legion::GuardMode mode);
+     void arm(const Pending &command);
+@@ -152,7 +154,7 @@ extern LegionControlModule *legionControlModule;
+ bool legionControlTryScramble(const meshtastic_MeshPacket &packet);
+ void legionControlObserveLink(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+ void legionControlObserveMeshRx(const meshtastic_MeshPacket &packet, int8_t hopsAway);
+-void legionControlObserveMeshTx(const meshtastic_MeshPacket &packet, bool directMessage);
++void legionControlObserveMeshTx(const meshtastic_MeshPacket &packet, bool directMessage, bool drakarys = false);
+ void legionControlObserveMeshAck(const meshtastic_MeshPacket &packet, uint32_t id);
+ void legionControlEnterHibernation(bool thermal);
+ void legionControlLowSupplyNotice();
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index 129cef2..6251ea6 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -46,6 +46,7 @@ class FixedPositionNotice
+ enum class ControlCommand : uint8_t {
+     None,
+     Message,
++    Drakarys,
+     Reboot,
+     ZeroHop,
+     Ignore,
+@@ -77,6 +78,8 @@ struct ControlRequest {
+     char channel[12]{};
+     char text[CONTROL_TEXT_MAX + 1]{};
+     bool valid = false;
++
++    bool sendsChannelText() const { return command == ControlCommand::Message || command == ControlCommand::Drakarys; }
+ };
+ 
+ inline bool validPeer(uint32_t node)
+@@ -376,6 +379,8 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+     else if (parser.token("/ignorelist"))
+         result.command = parser.token("names") ? ControlCommand::IgnoreNameList : ControlCommand::IgnoreList;
+ #if RAK3401_LEGION_TRAFFIC
++    else if (parser.token("/drakarys"))
++        result.command = ControlCommand::Drakarys;
+     else if (parser.token("/spamlist"))
+         result.command = ControlCommand::SpamList;
+     else if (parser.token("/arm"))
+@@ -389,7 +394,7 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+         result.command = ControlCommand::None;
+         return result;
+     }
+-    if (result.command == ControlCommand::Message)
++    if (result.sendsChannelText())
+         result.valid = parser.message(result);
+     else if (result.command == ControlCommand::ZeroHop || result.command == ControlCommand::IgnoreList ||
+              result.command == ControlCommand::SpamList || result.command == ControlCommand::IgnoreNameList)
+diff --git a/src/modules/LegionTraffic.cpp b/src/modules/LegionTraffic.cpp
+index b0ca6c6..c9ad7ec 100644
+--- a/src/modules/LegionTraffic.cpp
++++ b/src/modules/LegionTraffic.cpp
+@@ -28,6 +28,7 @@ struct Context {
+     bool aead = false;
+ } context;
+ bool haveContext = false;
++enum class DrakarysTx : uint8_t { None, Queued, Cancelled };
+ struct Tag {
+     const meshtastic_MeshPacket *packet = nullptr;
+     legion::SpamIdentity identity;
+@@ -36,6 +37,7 @@ struct Tag {
+     legion::RelayKind kind = legion::RelayKind::Protected;
+     int8_t nominal = 0, proposed = 0, applied = 0;
+     bool primaryText = false, started = false, directMessage = false;
++    DrakarysTx drakarys = DrakarysTx::None;
+ } tags[legion::TRAFFIC_TAG_CAPACITY];
+ const meshtastic_MeshPacket *preparedPacket = nullptr;
+ int8_t preparedPower = 0;
+@@ -66,8 +68,12 @@ void syncContext()
+             if (changed) {
+                 guardPolicy.contextChanged();
+                 rfPolicy.contextChanged();
+-                for (auto &tag : tags)
+-                    tag = {};
++                for (auto &tag : tags) {
++                    if (tag.drakarys != DrakarysTx::None)
++                        tag.drakarys = DrakarysTx::Cancelled;
++                    else
++                        tag = {};
++                }
+             }
+         }
+     }
+@@ -142,8 +148,34 @@ Tag *findTag(const meshtastic_MeshPacket *packet)
+             return &tag;
+     return nullptr;
+ }
++
++bool storeTag(const Tag &value)
++{
++    for (auto &candidate : tags) {
++        if (!candidate.packet) {
++            candidate = value;
++            return true;
++        }
++    }
++    rfPolicy.metadataFull();
++    return false;
++}
+ } // namespace
+ 
++bool legionTrafficMarkDrakarys(const meshtastic_MeshPacket *p)
++{
++    syncContext();
++    concurrency::LockGuard lock(&trafficLock);
++    if (rfPolicy.snapshot().fault)
++        return false;
++    Tag value{};
++    value.packet = p;
++    value.id = p->id;
++    value.identity.node = getFrom(p);
++    value.drakarys = DrakarysTx::Queued;
++    return storeTag(value);
++}
++
+ bool legionTrafficAllowReceived(const meshtastic_MeshPacket &p, RxSource source)
+ {
+     syncContext();
+@@ -174,6 +206,8 @@ bool legionTrafficAllowQueued(const meshtastic_MeshPacket *p)
+     syncContext();
+     concurrency::LockGuard lock(&trafficLock);
+     const Tag *tag = findTag(p);
++    if (tag && tag->drakarys != DrakarysTx::None)
++        return tag->drakarys == DrakarysTx::Queued && !rfPolicy.snapshot().fault;
+     return !tag || !tag->primaryText || guardPolicy.allowPending(Time::getMillis(), tag->identity, tag->id);
+ }
+ void legionTrafficTagOutgoing(const meshtastic_MeshPacket *p)
+@@ -193,26 +227,27 @@ void legionTrafficTagOutgoing(const meshtastic_MeshPacket *p)
+         value.nodeInfoHash = contentHash(*p);
+     concurrency::LockGuard lock(&trafficLock);
+     Tag *slot = findTag(p);
+-    if (slot)
++    if (slot) {
++        if (slot->drakarys != DrakarysTx::None && slot->id == p->id)
++            return;
+         *slot = {};
++    }
+     if (value.kind == legion::RelayKind::Protected && !value.primaryText && !value.directMessage)
+         return;
+-    for (auto &candidate : tags) {
+-        if (!candidate.packet) {
+-            candidate = value;
+-            return;
+-        }
+-    }
+-    rfPolicy.metadataFull();
++    storeTag(value);
+ }
+-void legionTrafficForget(const meshtastic_MeshPacket *p)
++void legionTrafficForget(const meshtastic_MeshPacket *p, uint32_t id)
+ {
+-    if (!p)
+-        return;
+     concurrency::LockGuard lock(&trafficLock);
+-    if (auto *tag = findTag(p))
++    if (auto *tag = findTag(p); tag && tag->id == id)
+         *tag = {};
+ }
++bool legionTrafficIsDrakarys(const meshtastic_MeshPacket *p)
++{
++    concurrency::LockGuard lock(&trafficLock);
++    const Tag *tag = findTag(p);
++    return tag && tag->drakarys == DrakarysTx::Queued;
++}
+ int8_t legionTrafficTxPower(const meshtastic_MeshPacket *p, int8_t nominal)
+ {
+     syncContext();
+@@ -224,6 +259,12 @@ int8_t legionTrafficTxPower(const meshtastic_MeshPacket *p, int8_t nominal)
+     if (!tag)
+         return nominal;
+     tag->nominal = nominal;
++    if (tag->drakarys == DrakarysTx::Queued) {
++        preparedPower = legion::DRAKARYS_TX_DBM;
++        tag->applied = preparedPower;
++        tag->proposed = preparedPower;
++        return preparedPower;
++    }
+     tag->proposed = rfPolicy.target(apc, tag->kind, tag->identity.node, tag->id, tag->nodeInfoHash, nominal, Time::getMillis());
+     tag->applied = apc.mode == legion::ApcMode::On ? tag->proposed : nominal;
+     preparedPower = tag->applied;
+@@ -235,6 +276,9 @@ bool legionTrafficTxPlanCurrent(const meshtastic_MeshPacket *p, int8_t nominal)
+     const auto apc = legionApcControlSnapshot();
+     concurrency::LockGuard lock(&trafficLock);
+     const Tag *tag = findTag(p);
++    if (tag && tag->drakarys != DrakarysTx::None)
++        return preparedPacket == p && preparedPower == legion::DRAKARYS_TX_DBM && tag->drakarys == DrakarysTx::Queued &&
++               !rfPolicy.snapshot().fault;
+     const int8_t desired = tag && apc.mode == legion::ApcMode::On ? rfPolicy.target(apc, tag->kind, tag->identity.node, tag->id,
+                                                                                     tag->nodeInfoHash, nominal, Time::getMillis())
+                                                                   : nominal;
+@@ -253,8 +297,11 @@ void legionTrafficPowerProgrammed(int8_t chip, bool success)
+ void legionTrafficPowerFallback(const meshtastic_MeshPacket *p, int8_t nominal)
+ {
+     concurrency::LockGuard lock(&trafficLock);
+-    if (auto *tag = findTag(p))
++    if (auto *tag = findTag(p)) {
+         tag->applied = nominal;
++        if (tag->drakarys != DrakarysTx::None)
++            tag->drakarys = DrakarysTx::Cancelled;
++    }
+     if (preparedPacket == p)
+         preparedPower = nominal;
+ }
+@@ -274,15 +321,16 @@ void legionTrafficTxEnded(const meshtastic_MeshPacket *p, bool done)
+ {
+     if (!p || !done)
+         return;
+-    bool directMessage;
++    bool directMessage, drakarys;
+     {
+         concurrency::LockGuard lock(&trafficLock);
+         const Tag *tag = findTag(p);
+         directMessage = tag && tag->started && tag->directMessage;
++        drakarys = tag && tag->started && tag->drakarys == DrakarysTx::Queued;
+         if (tag && tag->started && tag->kind == legion::RelayKind::NodeInfo)
+             rfPolicy.nodeInfoDone(tag->identity.node, tag->nodeInfoHash, Time::getMillis());
+     }
+-    legionControlObserveMeshTx(*p, directMessage);
++    legionControlObserveMeshTx(*p, directMessage, drakarys);
+ }
+ void legionTrafficSetGuard(legion::GuardMode mode)
+ {
+diff --git a/src/modules/LegionTraffic.h b/src/modules/LegionTraffic.h
+index ee7649b..6ce0b38 100644
+--- a/src/modules/LegionTraffic.h
++++ b/src/modules/LegionTraffic.h
+@@ -7,13 +7,23 @@
+ #include "LegionRfPolicy.h"
+ #include "MeshTypes.h"
+ 
+-namespace legion { constexpr size_t TRAFFIC_TAG_CAPACITY = 24; }
++namespace legion {
++constexpr size_t TRAFFIC_TAG_CAPACITY = 24;
++constexpr int8_t DRAKARYS_TX_DBM = 30;
++}
+ 
+ bool legionTrafficAllowReceived(const meshtastic_MeshPacket &packet, RxSource source);
+ bool legionTrafficAllowRelay(const meshtastic_MeshPacket &packet);
+ bool legionTrafficAllowQueued(const meshtastic_MeshPacket *packet);
+ void legionTrafficTagOutgoing(const meshtastic_MeshPacket *packet);
+-void legionTrafficForget(const meshtastic_MeshPacket *packet);
++bool legionTrafficIsDrakarys(const meshtastic_MeshPacket *packet);
++bool legionTrafficMarkDrakarys(const meshtastic_MeshPacket *packet);
++void legionTrafficForget(const meshtastic_MeshPacket *packet, uint32_t id);
++inline void legionTrafficForget(const meshtastic_MeshPacket *packet)
++{
++    if (packet)
++        legionTrafficForget(packet, packet->id);
++}
+ int8_t legionTrafficTxPower(const meshtastic_MeshPacket *packet, int8_t nominal);
+ bool legionTrafficTxPlanCurrent(const meshtastic_MeshPacket *packet, int8_t nominal);
+ void legionTrafficRfResetFault();
+@@ -30,15 +40,19 @@ size_t legionTrafficSpamList(legion::SpamEntry *entries, size_t capacity);
+ class LegionTrafficPacketLease
+ {
+   public:
+-    explicit LegionTrafficPacketLease(const meshtastic_MeshPacket *packet) : packet(packet) { legionTrafficTagOutgoing(packet); }
++    explicit LegionTrafficPacketLease(const meshtastic_MeshPacket *packet) : packet(packet), id(packet->id)
++    {
++        legionTrafficTagOutgoing(packet);
++    }
+     ~LegionTrafficPacketLease()
+     {
+         if (packet)
+-            legionTrafficForget(packet);
++            legionTrafficForget(packet, id);
+     }
+     void transferred() { packet = nullptr; }
+ 
+   private:
+     const meshtastic_MeshPacket *packet;
++    const uint32_t id;
+ };
+ #endif

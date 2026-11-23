@@ -65,6 +65,7 @@ class FakeChannels
 };
 extern FakeChannels channels;
 struct Owner {
+    char short_name[5] = "PSVR";
     bool is_licensed = false;
 };
 extern Owner owner;

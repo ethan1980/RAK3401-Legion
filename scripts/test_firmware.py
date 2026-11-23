@@ -141,6 +141,7 @@ def run_engine_tests(firmware, compiler, *, leak_check=True):
         "src/mesh/LegionRecovery.h",
         "src/mesh/LegionBackupStatus.h",
         "src/mesh/LegionRecoveryPolicy.h",
+        "src/modules/LegionNodeSelector.h",
         "src/mesh/LegionRecoveryRunner.h",
         "src/mesh/LegionRecoveryStore.h",
         "src/mesh/LegionCrc32.h",
@@ -254,6 +255,7 @@ def run_telemetry_tests(firmware, compiler, *, leak_check=True):
         "src/concurrency/LockGuard.cpp",
         "src/platform/nrf52/LegionTelemetryHal.h",
         "src/mesh/LegionRecoveryPolicy.h",
+        "src/modules/LegionNodeSelector.h",
     )
     with tempfile.TemporaryDirectory(prefix="legion-telemetry-") as folder:
         directory = Path(folder)

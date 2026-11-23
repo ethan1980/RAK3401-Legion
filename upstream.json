@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/meshtastic/firmware.git",
-  "commit": "a8f6f580476f0884965bc24fc94e6c0f24867dcb",
+  "commit": "d0f4096788545fb3c5e22d2a7e52ac6c268caac1",
   "meshtastic_version": "2.8.3",
-  "legion_version": "0.7.1",
+  "legion_version": "0.7.2",
   "release_stage": "stable",
   "patches": [
     "patches/0002-rak3401-energy-recovery.patch",
@@ -27,7 +27,9 @@
     "patches/0021-rak3401-cpu-thermal-suspension.patch",
     "patches/0022-rak3401-legion-070-quality-of-life.patch",
     "patches/0023-rak3401-daily-estimates.patch",
-    "patches/0024-rak3401-fixed-position-notice.patch"
+    "patches/0024-rak3401-fixed-position-notice.patch",
+    "patches/0025-rak3401-drakarys.patch",
+    "patches/0026-rak3401-legion-072-controls.patch"
   ],
   "hardware_observation": {
     "observed_build": "2.8.3.Legion0.7.1",
@@ -42,9 +44,13 @@
     "fixed_position_notice_tested": true
   },
   "ota_hardware_observation": {
-    "observed_build": "2.8.3.LGN0.7.1rc2",
     "completion_confirmed": true,
     "method": "nRF Connect OTA",
     "confirmed_by": "Javier"
+  },
+  "new_features_hardware_observation": {
+    "observed_build": "2.8.3.Legion0.7.2",
+    "confirmed": false,
+    "scope": "Nightly migration, short-name selectors, daily and position queries, persistence report, listchannels, persistent arm and Drakarys await owner hardware testing."
   }
 }

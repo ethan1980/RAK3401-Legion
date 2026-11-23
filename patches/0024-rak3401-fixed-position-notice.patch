@@ -1,12 +1,11 @@
 diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index 1f271ce..ffbe953 100644
 --- a/src/modules/LegionControlModule.cpp
 +++ b/src/modules/LegionControlModule.cpp
-@@ -374,6 +374,27 @@
-     recoveryNoticeAttempted = true;
-     reply(control.index, message);
+@@ -376,6 +376,27 @@ void LegionControlModule::pollRecoveryNotice()
  #endif
-+}
-+
+ }
+ 
 +void LegionControlModule::pollPositionNotice(uint32_t now)
 +{
 +    if (!positionNotice.due(now) || controlBusy() || !legionPowerTxReady() || !router->getRadioIface())
@@ -26,10 +25,12 @@ diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModu
 +        positionNotice.queued(now);
 +    else
 +        positionNotice.deferred(now);
- }
- 
++}
++
  void LegionControlModule::report(const Pending &command, uint32_t now, bool zeroHop)
-@@ -1323,6 +1344,7 @@
+ {
+     auto &snapshot = zeroHop ? zeroHopReport : ignoreReport;
+@@ -1323,6 +1344,7 @@ int32_t LegionControlModule::runOnce()
  {
      const uint32_t now = Time::getMillis();
      const uint64_t uptime = Time::getMillisMonotonic();
@@ -37,7 +38,7 @@ diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModu
      cutDaily(uptime);
      pollTrace(now);
  #if RAK3401_LEGION_TRAFFIC
-@@ -1353,6 +1375,7 @@
+@@ -1353,6 +1375,7 @@ int32_t LegionControlModule::runOnce()
      if (!executeCommand) {
          pollRecoveryNotice();
          pollDaily(uptime);
@@ -46,9 +47,10 @@ diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModu
      return 1000;
  }
 diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index d0a51ea..904dabb 100644
 --- a/src/modules/LegionControlModule.h
 +++ b/src/modules/LegionControlModule.h
-@@ -85,6 +85,7 @@
+@@ -85,6 +85,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
      void cutDaily(uint64_t now);
      void pollDaily(uint64_t now);
      void pollRecoveryNotice();
@@ -56,7 +58,7 @@ diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule
  #if RAK3401_LEGION_TRAFFIC
      void guard(const Pending &command, uint32_t now);
      void setGuardMode(legion::GuardMode mode);
-@@ -107,6 +108,7 @@
+@@ -107,6 +108,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
      char dailyBase[128]{};
      Channel dailyChannel;
      bool recoveryNoticeAttempted = false;
@@ -65,13 +67,13 @@ diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule
      void pollTrace(uint32_t now);
      bool matchesTrace(const meshtastic_MeshPacket &packet) const;
 diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index b6dd8b7..129cef2 100644
 --- a/src/modules/LegionControlPolicy.h
 +++ b/src/modules/LegionControlPolicy.h
-@@ -15,6 +15,33 @@
- constexpr uint32_t TRACE_WAIT_MS = 90000;
+@@ -16,6 +16,33 @@ constexpr uint32_t TRACE_WAIT_MS = 90000;
  constexpr uint32_t TRACE_COOLDOWN_MS = 60000;
  constexpr uint32_t TRACE_REPLY_GAP_MS = 6000;
-+
+ 
 +class FixedPositionNotice
 +{
 +  public:
@@ -98,6 +100,7 @@ diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy
 +    uint32_t nextAt = 0;
 +    bool tracking = false;
 +};
- 
++
  enum class ControlCommand : uint8_t {
      None,
+     Message,

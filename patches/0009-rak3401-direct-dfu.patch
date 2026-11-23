@@ -1,5 +1,5 @@
 diff --git a/src/platform/nrf52/LegionDfu.cpp b/src/platform/nrf52/LegionDfu.cpp
-index e7da607b4e0924d30d4781e04c4c7be34b11144c..3acca1d2d8cbe5eed3f7841719af04f93817b05a 100644
+index e7da607..3acca1d 100644
 --- a/src/platform/nrf52/LegionDfu.cpp
 +++ b/src/platform/nrf52/LegionDfu.cpp
 @@ -31,11 +31,15 @@
@@ -221,7 +221,7 @@ index e7da607b4e0924d30d4781e04c4c7be34b11144c..3acca1d2d8cbe5eed3f7841719af04f9
  
  #endif
 diff --git a/src/platform/nrf52/LegionDfu.h b/src/platform/nrf52/LegionDfu.h
-index 0f1eb52f7709dfb46d5a6d1cee64e5a9d2796d4f..f8816553ae604548c2f3832baefd729d6571644d 100644
+index 0f1eb52..f881655 100644
 --- a/src/platform/nrf52/LegionDfu.h
 +++ b/src/platform/nrf52/LegionDfu.h
 @@ -3,3 +3,5 @@
@@ -231,7 +231,7 @@ index 0f1eb52f7709dfb46d5a6d1cee64e5a9d2796d4f..f8816553ae604548c2f3832baefd729d
 +extern "C" void legionDfuInstall(BLECharacteristic *characteristic);
 +extern "C" void legionDfuProcess();
 diff --git a/src/platform/nrf52/NRF52Bluetooth.cpp b/src/platform/nrf52/NRF52Bluetooth.cpp
-index 068c1429e3ef226c479278f5ef74ab18491e8d54..9d075450ad9b13b753dfcae0def622b2b8a3cf04 100644
+index 068c142..9d07545 100644
 --- a/src/platform/nrf52/NRF52Bluetooth.cpp
 +++ b/src/platform/nrf52/NRF52Bluetooth.cpp
 @@ -119,8 +119,13 @@ class QuiescingBLEDfu : public BLEDfu
@@ -249,7 +249,7 @@ index 068c1429e3ef226c479278f5ef74ab18491e8d54..9d075450ad9b13b753dfcae0def622b2
      }
  };
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index a00fe012524dc08579d17ab3944f8d1a3d572721..0bc5b98f28ee85ed091986f5f980b7e7ad6c893e 100644
+index a00fe01..0bc5b98 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
 @@ -1,5 +1,8 @@

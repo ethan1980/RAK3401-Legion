@@ -1,8 +1,8 @@
 diff --git a/src/mesh/MeshService.cpp b/src/mesh/MeshService.cpp
-index 6bad69c..f3f9d9d 100644
+index d3c0cba..6b16de9 100644
 --- a/src/mesh/MeshService.cpp
 +++ b/src/mesh/MeshService.cpp
-@@ -390,7 +390,8 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs,
+@@ -428,7 +428,8 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs,
  ErrorCode MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPhone)
  {
  #if RAK3401_LEGION_CONTROL
@@ -13,10 +13,10 @@ index 6bad69c..f3f9d9d 100644
          return ERRNO_DISABLED;
      }
 diff --git a/src/mesh/NodeDB.h b/src/mesh/NodeDB.h
-index d8dad84..f116ce1 100644
+index 31c496d..4b053a5 100644
 --- a/src/mesh/NodeDB.h
 +++ b/src/mesh/NodeDB.h
-@@ -376,6 +376,7 @@ class NodeDB
+@@ -385,6 +385,7 @@ class NodeDB
      /// Declare that config.lora holds a temporary radio switch - a beacon keying up on another preset.
      /// While set the committed slot is pinned, so neither the switch nor its restore reads as a move.
      void setLoraSlotTransient(bool transient) { loraSlotTransient = transient; }
@@ -25,7 +25,7 @@ index d8dad84..f116ce1 100644
      void addFromContact(const meshtastic_SharedContact);
  
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index 1f3fb64..562a2b1 100644
+index 4b32451..c8d8aa8 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
 @@ -3,6 +3,10 @@
@@ -39,7 +39,7 @@ index 1f3fb64..562a2b1 100644
  #include "MeshTypes.h"
  #include "NodeDB.h"
  #include "PowerMon.h"
-@@ -841,6 +845,10 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+@@ -897,6 +901,10 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
  #endif
  #if RAK3401_LEGION_TRAFFIC
      legionTrafficTxEnded(sendingPacket, true);
@@ -50,7 +50,7 @@ index 1f3fb64..562a2b1 100644
  #endif
      // Null if we forced the device into standby, which already completed the
      // send.
-@@ -1075,6 +1083,9 @@ void RadioLibInterface::handleReceiveInterrupt(const CapturedRxInfo *captured)
+@@ -1131,6 +1139,9 @@ void RadioLibInterface::handleReceiveInterrupt(const CapturedRxInfo *captured)
  
              airTime->logAirtime(RX_LOG, rxMsec);
  
@@ -60,7 +60,7 @@ index 1f3fb64..562a2b1 100644
              deliverToReceiver(mp);
          }
      }
-@@ -1564,14 +1575,17 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+@@ -1627,14 +1638,17 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
  
      /* NOTE: Minimize the actions before startTransmit() to keep the time between
               channel scan and actual transmit as low as possible to avoid collisions. */
@@ -108,10 +108,10 @@ index f2c71bb..1d01c4a 100644
                  // M3: an end-to-end ACK proves the directed route to the ACK's sender currently works,
                  // so clear its failure count and refresh freshness (keeps a good route pinned).
 diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
-index 5989be2..c19d6b8 100644
+index ccf129d..0c58e42 100644
 --- a/src/mesh/Router.cpp
 +++ b/src/mesh/Router.cpp
-@@ -485,7 +485,7 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
+@@ -489,7 +489,7 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
  ErrorCode Router::send(meshtastic_MeshPacket *p)
  {
  #if RAK3401_LEGION_CONTROL
@@ -120,7 +120,7 @@ index 5989be2..c19d6b8 100644
          packetPool.release(p);
          return ERRNO_DISABLED;
      }
-@@ -791,7 +791,7 @@ static bool legionDropsAuthenticated(const meshtastic_MeshPacket &packet)
+@@ -823,7 +823,7 @@ static bool legionDropsAuthenticated(const meshtastic_MeshPacket &packet)
  RoutingAuthVerdict passesRoutingAuthGate(meshtastic_MeshPacket *p)
  {
  #if RAK3401_LEGION_CONTROL
@@ -1103,10 +1103,10 @@ index 7e52360..cab0de3 100644
  
  struct LegionBootSnapshot {
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index 68814dd..1e4c6c4 100644
+index 2c4d5dc..413076c 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
-@@ -41,7 +41,10 @@
+@@ -43,7 +43,10 @@
  #include "power/RAK3401LegionPower.h"
  #endif
  #if RAK3401_LEGION_CONTROL
@@ -1117,7 +1117,7 @@ index 68814dd..1e4c6c4 100644
  #include "modules/LegionScramble.h"
  #ifdef USE_TINYUSB
  #include <Adafruit_TinyUSB.h>
-@@ -415,14 +418,27 @@ void nrf52Loop()
+@@ -479,14 +482,27 @@ void nrf52Loop()
      nrfx_wdt_channel_feed(&nrfx_wdt, nrfx_wdt_channel_id_nrf52_main);
  
  #if RAK3401_LEGION_CONTROL

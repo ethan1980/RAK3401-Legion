@@ -56,10 +56,10 @@ index 71a1a90..7e52360 100644
  struct LegionBootSnapshot {
      uint32_t reset = 0;
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index 7b1d4df..68814dd 100644
+index 8a2c353..2c4d5dc 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
-@@ -46,7 +46,7 @@
+@@ -48,7 +48,7 @@
  #ifdef USE_TINYUSB
  #include <Adafruit_TinyUSB.h>
  #endif
@@ -68,7 +68,7 @@ index 7b1d4df..68814dd 100644
  #endif
  
  #ifdef BQ25703A_ADDR
-@@ -415,8 +415,15 @@ void nrf52Loop()
+@@ -479,8 +479,15 @@ void nrf52Loop()
      nrfx_wdt_channel_feed(&nrfx_wdt, nrfx_wdt_channel_id_nrf52_main);
  
  #if RAK3401_LEGION_CONTROL
@@ -86,7 +86,7 @@ index 7b1d4df..68814dd 100644
  #endif
      checkSDEvents();
      reportLittleFSCorruptionOnce();
-@@ -521,7 +528,7 @@ void nrf52FlashQuiesce()
+@@ -588,7 +595,7 @@ void nrf52FlashQuiesce()
  }
  
  #if RAK3401_LEGION_CONTROL
@@ -95,7 +95,7 @@ index 7b1d4df..68814dd 100644
  {
      if (auto *radio = router->getRadioIface())
          radio->disable();
-@@ -544,8 +551,6 @@ void nrf52FlashQuiesce()
+@@ -611,8 +618,6 @@ void nrf52FlashQuiesce()
  #if SPI_INTERFACES_COUNT > 1
      SPI1.end();
  #endif

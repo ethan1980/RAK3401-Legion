@@ -1,5 +1,5 @@
 diff --git a/src/mesh/MeshPacketQueue.cpp b/src/mesh/MeshPacketQueue.cpp
-index 58e9cf0bf67646fb40eec8601b7d0dcfe610622c..d570b5044c0e160dfb784b8c9fe66a0307337cc3 100644
+index 58e9cf0..d570b50 100644
 --- a/src/mesh/MeshPacketQueue.cpp
 +++ b/src/mesh/MeshPacketQueue.cpp
 @@ -1,4 +1,7 @@
@@ -51,7 +51,7 @@ index 58e9cf0bf67646fb40eec8601b7d0dcfe610622c..d570b5044c0e160dfb784b8c9fe66a03
              // Insert the new packet in the correct order
              enqueue(p);
 diff --git a/src/mesh/NextHopRouter.cpp b/src/mesh/NextHopRouter.cpp
-index 1201685a2d67758bd0f2b6549bbce5fd90004262..a5727501a03d10a944c353ad5288758031d878b4 100644
+index 1201685..a572750 100644
 --- a/src/mesh/NextHopRouter.cpp
 +++ b/src/mesh/NextHopRouter.cpp
 @@ -1,4 +1,7 @@
@@ -74,7 +74,7 @@ index 1201685a2d67758bd0f2b6549bbce5fd90004262..a5727501a03d10a944c353ad52887580
      // Never relay coordinate-bearing packets on the event ("everyone") channel.
      // Closes the reliable-retransmit-dupe path that runs before handleReceived().
 diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
-index a0db094cf5944ec03bd24329035a261a0f99f686..7812560d13950fe839b614b8cdca7a99860c03df 100644
+index a0db094..7812560 100644
 --- a/src/mesh/RadioInterface.cpp
 +++ b/src/mesh/RadioInterface.cpp
 @@ -1519,8 +1519,13 @@ uint32_t RadioInterface::computeSlotTimeMsec()
@@ -102,7 +102,7 @@ index a0db094cf5944ec03bd24329035a261a0f99f686..7812560d13950fe839b614b8cdca7a99
  
  void RadioInterface::deliverToReceiver(meshtastic_MeshPacket *p)
 diff --git a/src/mesh/RadioInterface.h b/src/mesh/RadioInterface.h
-index dbaa91d58ba9d7c114a4a64ead9ba699cfa08429..d975844da29ad7aabcf41a0badb23484bad44ada 100644
+index dbaa91d..d975844 100644
 --- a/src/mesh/RadioInterface.h
 +++ b/src/mesh/RadioInterface.h
 @@ -330,6 +330,7 @@ class RadioInterface
@@ -114,7 +114,7 @@ index dbaa91d58ba9d7c114a4a64ead9ba699cfa08429..d975844da29ad7aabcf41a0badb23484
      /**
       * Save the frequency we selected for later reuse.
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b501bfcf185 100644
+index 3dde9dc..4b32451 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
 @@ -1,4 +1,8 @@
@@ -126,7 +126,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
  #include "MeshTypes.h"
  #include "NodeDB.h"
  #include "PowerMon.h"
-@@ -287,12 +291,18 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+@@ -299,12 +303,18 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
      if (config.lora.region != meshtastic_Config_LoRaConfig_RegionCode_UNSET) {
          if (disabled || !config.lora.tx_enabled) {
              LOG_WARN("send - !config.lora.tx_enabled");
@@ -145,7 +145,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
          packetPool.release(p);
          return ERRNO_DISABLED;
      }
-@@ -301,6 +311,9 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+@@ -313,6 +323,9 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
  
      if (disabled || !config.lora.tx_enabled) {
          LOG_WARN("send - !config.lora.tx_enabled");
@@ -155,7 +155,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
          packetPool.release(p);
          return ERRNO_DISABLED;
      }
-@@ -324,7 +337,11 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+@@ -336,7 +349,11 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
          txDrop++;
      }
  
@@ -168,7 +168,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
          packetPool.release(p);
          return res;
      }
-@@ -335,6 +352,9 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
+@@ -347,6 +364,9 @@ ErrorCode RadioLibInterface::send(meshtastic_MeshPacket *p)
  
      return res;
  #else
@@ -178,7 +178,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
      packetPool.release(p);
      return ERRNO_DISABLED;
  #endif
-@@ -378,6 +398,9 @@ bool RadioLibInterface::cancelSending(NodeNum from, PacketId id)
+@@ -390,6 +410,9 @@ bool RadioLibInterface::cancelSending(NodeNum from, PacketId id)
      auto p = txQueue.remove(from, id);
      if (p) {
          RadioTxHooks::packetReleased(this, p);
@@ -188,7 +188,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
          packetPool.release(p); // free the packet we just removed
      }
  
-@@ -642,13 +665,20 @@ void RadioLibInterface::onNotify(uint32_t notification)
+@@ -691,13 +714,20 @@ void RadioLibInterface::onNotify(uint32_t notification)
                  if (txp->tx_after && !Throttle::deadlinePassedAt(now, txp->tx_after)) {
                      // There's still some delay pending on this packet, so resume waiting for it to elapse
                      notifyLater(txp->tx_after - now, TRANSMIT_DELAY_COMPLETED, txTimerOverwrite);
@@ -210,7 +210,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
                      packetPool.release(bad);
                      setTransmitDelay();
                  } else if (action == RadioTxHook::PRETX_DEFER) {
-@@ -668,7 +698,15 @@ void RadioLibInterface::onNotify(uint32_t notification)
+@@ -717,7 +747,15 @@ void RadioLibInterface::onNotify(uint32_t notification)
                          // config, so skipping this only ever left the node deaf in standby.
                          rearmReceive();
                          setTransmitDelay();
@@ -227,7 +227,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
                          LOG_DEBUG_RADIO("CAD free");
                          if (peek)
                              LOG_DEBUG_RADIO("Preamble hold released, CAD clear %ums after the sighting",
-@@ -717,9 +755,9 @@ void RadioLibInterface::setTransmitDelay()
+@@ -766,9 +804,9 @@ void RadioLibInterface::setTransmitDelay()
              (uint32_t)min(max(p->tx_after + add_delay, now + add_delay), now + 2 * getTxDelayMsecWeightedWorst(p->rx_snr)));
          scheduleTransmitDelayCompleted(p->tx_after - now);
      } else if (p->rx_snr == 0 && p->rx_rssi == 0) {
@@ -240,7 +240,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
           */
          startTransmitTimer(true);
      } else {
-@@ -772,6 +810,9 @@ void RadioLibInterface::clampToLateRebroadcastWindow(NodeNum from, PacketId id)
+@@ -821,6 +859,9 @@ void RadioLibInterface::clampToLateRebroadcastWindow(NodeNum from, PacketId id)
          if (txQueue.enqueue(p, &dropped)) {
              LOG_TRACE("Move queued packet to late rebroadcast window %ums from now", (uint32_t)(p->tx_after - millis()));
          } else {
@@ -250,7 +250,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
              packetPool.release(p);
          }
          if (dropped) {
-@@ -781,7 +822,8 @@ void RadioLibInterface::clampToLateRebroadcastWindow(NodeNum from, PacketId id)
+@@ -830,7 +871,8 @@ void RadioLibInterface::clampToLateRebroadcastWindow(NodeNum from, PacketId id)
  }
  
  /**
@@ -260,7 +260,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
   * @return Whether a pending packet was removed
   */
  bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_t hop_limit_lt)
-@@ -790,6 +832,9 @@ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_
+@@ -839,6 +881,9 @@ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_
      if (p) {
          LOG_DEBUG_RADIO("Drop pending-TX packet 0x%08x, hop limit %d", p->id, p->hop_limit);
          RadioTxHooks::packetReleased(this, p);
@@ -270,7 +270,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
          packetPool.release(p);
          return true;
      }
-@@ -801,7 +846,11 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+@@ -850,7 +895,11 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
  #if RAK3401_LEGION_APC
      legionApcTxEnded(true);
  #endif
@@ -283,7 +283,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
      meshtastic_MeshPacket *sent = detachSentPacket();
      powerMon->clearState(meshtastic_PowerMon_State_Lora_TXOn); // But our transmitter is definitely off now
      return sent;
-@@ -811,6 +860,9 @@ void RadioLibInterface::completeSending()
+@@ -860,6 +909,9 @@ void RadioLibInterface::completeSending()
  {
  #if RAK3401_LEGION_APC
      legionApcTxEnded(false);
@@ -293,7 +293,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
  #endif
      finishSentPacket(detachSentPacket());
  }
-@@ -844,6 +896,9 @@ void RadioLibInterface::finishSentPacket(meshtastic_MeshPacket *p)
+@@ -893,6 +945,9 @@ void RadioLibInterface::finishSentPacket(meshtastic_MeshPacket *p)
      printPacket("Completed sending", p);
  
      // We are done sending that packet, release it
@@ -303,7 +303,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
      packetPool.release(p);
  }
  
-@@ -1534,6 +1589,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+@@ -1583,6 +1638,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
          LOG_WARN("Drop Tx packet: LoRa Tx disabled");
          // Never reaches completeSending(), so any per-packet radio state has to be released here.
          RadioTxHooks::packetReleased(this, txp);
@@ -313,7 +313,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
          packetPool.release(txp);
          // We got here through isChannelActive(), which left the chip in standby for a transmit that is
          // no longer happening. Without this the node stays deaf until something else re-arms it.
-@@ -1567,6 +1625,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+@@ -1616,6 +1674,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
              lastTxStart = Time::getMillis();
  #if RAK3401_LEGION_APC
              legionApcTxStarted(txp->from, txp->id, isFromUs(txp), getPacketTime(txp), lastTxStart);
@@ -324,7 +324,7 @@ index f8949c34733b42b8d3bbc6d35c859e8d54ee0187..5d772243d062a9e5773a51b4864c1b50
              printPacket("Started Tx", txp);
  #ifdef LED_LORA
 diff --git a/src/mesh/Router.cpp b/src/mesh/Router.cpp
-index da3a8cca1636f1ce5553461fe7de66407e533a39..322747704751bea36abe1f60c7d3593cef93dc88 100644
+index da3a8cc..3227477 100644
 --- a/src/mesh/Router.cpp
 +++ b/src/mesh/Router.cpp
 @@ -1,4 +1,7 @@
@@ -373,7 +373,7 @@ index da3a8cca1636f1ce5553461fe7de66407e533a39..322747704751bea36abe1f60c7d3593c
      // If this could be a spoofed packet, don't let the modules see it.
      if (!skipHandle) {
 diff --git a/src/mesh/SX126xInterface.cpp b/src/mesh/SX126xInterface.cpp
-index 8d2dc9a047d23decb7e3c7a0b7a684609157e1f7..28547b7989d8cd29589f6d6edbed4b88025d111f 100644
+index eeeecdc..6c3910b 100644
 --- a/src/mesh/SX126xInterface.cpp
 +++ b/src/mesh/SX126xInterface.cpp
 @@ -1,4 +1,7 @@
@@ -394,7 +394,7 @@ index 8d2dc9a047d23decb7e3c7a0b7a684609157e1f7..28547b7989d8cd29589f6d6edbed4b88
      // configure publicly accessible settings
      int16_t err = lora.setSpreadingFactor(sf);
      if (err != RADIOLIB_ERR_NONE) {
-@@ -683,6 +689,40 @@ template <typename T> bool SX126xInterface<T>::isChannelActive()
+@@ -686,6 +692,40 @@ template <typename T> bool SX126xInterface<T>::isChannelActive()
      setTransmitEnable(false);
      int16_t result = trySetStandby();
      if (result == RADIOLIB_ERR_NONE) {
@@ -436,7 +436,7 @@ index 8d2dc9a047d23decb7e3c7a0b7a684609157e1f7..28547b7989d8cd29589f6d6edbed4b88
          prestageTx();
  #endif
 diff --git a/src/mesh/SX126xInterface.h b/src/mesh/SX126xInterface.h
-index a9dd20dedf7964f18ba072debc72927f06968bf4..0bcf9f88bca9753581c6bc1e7cd307831aaf8aef 100644
+index a9dd20d..0bcf9f8 100644
 --- a/src/mesh/SX126xInterface.h
 +++ b/src/mesh/SX126xInterface.h
 @@ -9,11 +9,16 @@
@@ -458,7 +458,7 @@ index a9dd20dedf7964f18ba072debc72927f06968bf4..0bcf9f88bca9753581c6bc1e7cd30783
      SX126xInterface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
                      RADIOLIB_PIN_TYPE busy);
 diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
-index 9d5a66e524f2baa3f1ecbcb713558cc10d36d93a..f84759f9172a67c7eb978dfb392627a813ecf1c8 100644
+index 9d5a66e..f84759f 100644
 --- a/src/modules/LegionControlModule.cpp
 +++ b/src/modules/LegionControlModule.cpp
 @@ -357,6 +357,10 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
@@ -708,7 +708,7 @@ index 9d5a66e524f2baa3f1ecbcb713558cc10d36d93a..f84759f9172a67c7eb978dfb392627a8
      apcContext();
      if (apcReport.valid && Throttle::hasElapsed(apcReport.createdAt, legion::CONTROL_SNAPSHOT_MS))
 diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
-index 8f69dc1518994830a15a93024f12ef6d47c19261..80b249f51565eb998e2e091a8f58de739e3ead28 100644
+index 8f69dc1..80b249f 100644
 --- a/src/modules/LegionControlModule.h
 +++ b/src/modules/LegionControlModule.h
 @@ -8,6 +8,9 @@
@@ -750,7 +750,7 @@ index 8f69dc1518994830a15a93024f12ef6d47c19261..80b249f51565eb998e2e091a8f58de73
          uint32_t from = 0, createdAt = 0, uptime = 0, generation = 0;
          uint16_t capture = 0;
 diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
-index 1306fb949517d9371312da864c364ad387b015b3..5d32bab55d08560323f5e06e051e71013c8eafec 100644
+index 1306fb9..5d32bab 100644
 --- a/src/modules/LegionControlPolicy.h
 +++ b/src/modules/LegionControlPolicy.h
 @@ -28,7 +28,9 @@ enum class ControlCommand : uint8_t {
@@ -828,7 +828,7 @@ index 1306fb949517d9371312da864c364ad387b015b3..5d32bab55d08560323f5e06e051e7101
               result.command == ControlCommand::Unignore)
 diff --git a/src/modules/LegionGuardPolicy.h b/src/modules/LegionGuardPolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4c604b3539ebc193ba4e29da7b1e1b0aaf1a1193
+index 0000000..4c604b3
 --- /dev/null
 +++ b/src/modules/LegionGuardPolicy.h
 @@ -0,0 +1,253 @@
@@ -1087,7 +1087,7 @@ index 0000000000000000000000000000000000000000..4c604b3539ebc193ba4e29da7b1e1b0a
 +} // namespace legion
 diff --git a/src/modules/LegionRfPolicy.h b/src/modules/LegionRfPolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..691c65649ad1a50a37e4aaad7d7fd0fdf18c1836
+index 0000000..691c656
 --- /dev/null
 +++ b/src/modules/LegionRfPolicy.h
 @@ -0,0 +1,114 @@
@@ -1207,7 +1207,7 @@ index 0000000000000000000000000000000000000000..691c65649ad1a50a37e4aaad7d7fd0fd
 +} // namespace legion
 diff --git a/src/modules/LegionTraffic.cpp b/src/modules/LegionTraffic.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1e3b7d8e9050682e6e3fa80a1fffb9e91422b00
+index 0000000..a1e3b7d
 --- /dev/null
 +++ b/src/modules/LegionTraffic.cpp
 @@ -0,0 +1,300 @@
@@ -1513,7 +1513,7 @@ index 0000000000000000000000000000000000000000..a1e3b7d8e9050682e6e3fa80a1fffb9e
 +#endif
 diff --git a/src/modules/LegionTraffic.h b/src/modules/LegionTraffic.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee7649bf3c663c4e2186f3e9de9a214391292683
+index 0000000..ee7649b
 --- /dev/null
 +++ b/src/modules/LegionTraffic.h
 @@ -0,0 +1,44 @@

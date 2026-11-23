@@ -1,5 +1,5 @@
 diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
-index 7a84b89cd4c8ef35e788924c984d4a09567eb3f2..1afa73f4869670d570c7ef6e33fd2d8d04fc56be 100644
+index 7a84b89..1afa73f 100644
 --- a/src/mesh/RadioInterface.cpp
 +++ b/src/mesh/RadioInterface.cpp
 @@ -384,6 +384,8 @@ std::unique_ptr<RadioInterface> initLoRa()

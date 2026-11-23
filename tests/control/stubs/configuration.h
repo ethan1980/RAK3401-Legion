@@ -103,6 +103,8 @@ struct meshtastic_User {
     bool is_licensed = false;
 };
 struct ChannelSettings {
+    bool has_module_settings = false;
+    struct { uint32_t position_precision = 0; } module_settings;
     char name[12]{};
     struct {
         size_t size = 0;
@@ -134,6 +136,7 @@ class FakeChannels
 };
 extern FakeChannels channels;
 struct Owner {
+    char short_name[5] = "PSVR";
     bool is_licensed = false;
     struct {
         size_t size = 32;
@@ -157,3 +160,9 @@ inline long random(long low, long)
 
 inline bool isFromUs(const meshtastic_MeshPacket *p) { return getFrom(p) == ownNode; }
 inline bool isToUs(const meshtastic_MeshPacket *p) { return p->to == ownNode; }
+
+struct FakeLocalPosition { int32_t latitude_i = 0, longitude_i = 0; };
+inline FakeLocalPosition localPosition;
+inline struct FakeModuleConfig {
+    struct { bool enabled = false, map_reporting_enabled = false; } mqtt;
+} moduleConfig;

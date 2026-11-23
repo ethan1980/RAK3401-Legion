@@ -1,0 +1,812 @@
+diff --git a/src/mesh/LegionPersistence.cpp b/src/mesh/LegionPersistence.cpp
+index 41885ab17e28d699f1688f1338f8c2c10899b886..f75adab9e8d97e320d1363bfa84271c0cfb3b5ca 100644
+--- a/src/mesh/LegionPersistence.cpp
++++ b/src/mesh/LegionPersistence.cpp
+@@ -87,6 +87,11 @@ bool legionSaveProto(const char *filename, size_t protoSize, const pb_msgdesc_t
+ #endif
+ }
+ 
++LegionPersistenceStats legionPersistenceStats()
++{
++    return {checks.load(), unchanged.load(), saved.load(), failed.load()};
++}
++
+ void legionLogPersistenceStats()
+ {
+     LOG_INFO("Legion protobuf saves: checked=%u unchanged=%u saved=%u failed=%u", (unsigned)checks.load(),
+diff --git a/src/mesh/LegionPersistence.h b/src/mesh/LegionPersistence.h
+index 67914b163e643ddd61b94428909d65b195c2f300..7024ce32b7753a5a2b134f4d614ce7be380bf075 100644
+--- a/src/mesh/LegionPersistence.h
++++ b/src/mesh/LegionPersistence.h
+@@ -8,5 +8,9 @@
+ bool legionProtoMatchesFile(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source);
+ bool legionSaveProto(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *source, bool fullAtomic);
+ void legionRecordProtoSave(bool success);
++struct LegionPersistenceStats {
++    uint32_t checked, unchanged, saved, failed;
++};
++LegionPersistenceStats legionPersistenceStats();
+ void legionLogPersistenceStats();
+ #endif
+diff --git a/src/mesh/LegionRecoveryPolicy.h b/src/mesh/LegionRecoveryPolicy.h
+index e918d96e9828b664527adcc00c91cec47b4c9fe6..d490baad0fd5781f6549a33bc142f57948e819b7 100644
+--- a/src/mesh/LegionRecoveryPolicy.h
++++ b/src/mesh/LegionRecoveryPolicy.h
+@@ -1,12 +1,13 @@
+ #pragma once
+ 
++#include "modules/LegionNodeSelector.h"
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstring>
+ 
+ enum class LegionBackupCommand { None, Create, Status, Replace, Delete };
+ 
+-inline LegionBackupCommand legionParseBackup(const uint8_t *data, size_t size, uint32_t ownNode)
++inline LegionBackupCommand legionParseBackup(const uint8_t *data, size_t size, uint32_t ownNode, const char *ownShortName = nullptr)
+ {
+     const auto space = [](uint8_t c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+     if (!data || !ownNode)
+@@ -37,30 +38,14 @@ inline LegionBackupCommand legionParseBackup(const uint8_t *data, size_t size, u
+             command = LegionBackupCommand::Replace;
+         else if (token == 6 && !std::memcmp(data, "delete", 6))
+             command = LegionBackupCommand::Delete;
+-        else
+-            return LegionBackupCommand::None;
+-        data += token;
+-        size -= token;
++        if (command != LegionBackupCommand::Create) {
++            data += token;
++            size -= token;
++        }
+         while (size && space(*data)) {
+             ++data;
+             --size;
+         }
+     }
+-    if (size != 9 || *data != '!')
+-        return LegionBackupCommand::None;
+-    uint32_t node = 0;
+-    for (size_t i = 1; i < size; ++i) {
+-        const uint8_t c = data[i];
+-        uint8_t digit;
+-        if (c >= '0' && c <= '9')
+-            digit = c - '0';
+-        else if (c >= 'a' && c <= 'f')
+-            digit = c - 'a' + 10;
+-        else if (c >= 'A' && c <= 'F')
+-            digit = c - 'A' + 10;
+-        else
+-            return LegionBackupCommand::None;
+-        node = (node << 4) | digit;
+-    }
+-    return node == ownNode ? command : LegionBackupCommand::None;
++    return legion::matchesNodeSelector(data, size, ownNode, ownShortName) ? command : LegionBackupCommand::None;
+ }
+diff --git a/src/modules/LegionAutoArm.cpp b/src/modules/LegionAutoArm.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b36fd54e378e3aba9a5c518e3421127b1bedb653
+--- /dev/null
++++ b/src/modules/LegionAutoArm.cpp
+@@ -0,0 +1,52 @@
++#include "LegionAutoArm.h"
++
++#if RAK3401_LEGION_TRAFFIC
++#include "FSCommon.h"
++#include "SPILock.h"
++#include "SafeFile.h"
++#include "concurrency/LockGuard.h"
++#include "mesh/LegionRecovery.h"
++#include "power/RAK3401LegionPower.h"
++
++namespace
++{
++constexpr char filename[] = "/prefs/legionAutoArm.bin";
++constexpr uint32_t magic = 0x4c474152;
++constexpr uint32_t enabledValue = 0xa5a55a5a;
++constexpr uint32_t disabledValue = 0x5a5aa5a5;
++}
++
++LegionAutoArmState legionReadAutoArm()
++{
++    concurrency::LockGuard guard(spiLock);
++    auto file = FSCom.open(filename, FILE_O_READ);
++    if (!file)
++        return LegionAutoArmState::Missing;
++    uint32_t record[3]{};
++    const bool complete = static_cast<size_t>(file.read(reinterpret_cast<uint8_t *>(record), sizeof(record))) == sizeof(record) && file.read() < 0;
++    file.close();
++    if (!complete || record[0] != magic || record[1] != 1)
++        return LegionAutoArmState::Invalid;
++    if (record[2] == enabledValue)
++        return LegionAutoArmState::On;
++    return record[2] == disabledValue ? LegionAutoArmState::Off : LegionAutoArmState::Invalid;
++}
++
++bool legionWriteAutoArm(bool enabled)
++{
++    const auto wanted = enabled ? LegionAutoArmState::On : LegionAutoArmState::Off;
++    const auto current = legionReadAutoArm();
++    if (current == wanted || (!enabled && current == LegionAutoArmState::Missing))
++        return true;
++    if (!legionBatterySafeForFlash() || legionRecoveryIsBlocked())
++        return false;
++    const uint32_t record[3] = {magic, 1, enabled ? enabledValue : disabledValue};
++    SafeFile file(filename, true);
++    if (file.write(reinterpret_cast<const uint8_t *>(record), sizeof(record)) != sizeof(record)) {
++        file.abort();
++        return false;
++    }
++    file.close();
++    return legionReadAutoArm() == wanted;
++}
++#endif
+diff --git a/src/modules/LegionAutoArm.h b/src/modules/LegionAutoArm.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..825ba39ce3640e9813609810263f6f00a6ad9b52
+--- /dev/null
++++ b/src/modules/LegionAutoArm.h
+@@ -0,0 +1,9 @@
++#pragma once
++
++#include "configuration.h"
++
++#if RAK3401_LEGION_TRAFFIC
++enum class LegionAutoArmState { Missing, Invalid, Off, On };
++LegionAutoArmState legionReadAutoArm();
++bool legionWriteAutoArm(bool enabled);
++#endif
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc03cf6a7e 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -3,6 +3,8 @@
+ #if RAK3401_LEGION_CONTROL
+ #include "Channels.h"
+ #include "LegionScramble.h"
++#include "LegionAutoArm.h"
++#include "mesh/PositionPrecision.h"
+ #include "MeshService.h"
+ #include "NodeDB.h"
+ #include "PowerStatus.h"
+@@ -129,6 +131,20 @@ uint8_t LegionControlModule::findDestination(const char *name, Channel &result)
+     return count;
+ }
+ 
++uint8_t LegionControlModule::findPeer(const char *name, uint32_t &node) const
++{
++    uint8_t matches = 0;
++    for (size_t i = 0; i < nodeDB->getNumMeshNodes(); ++i) {
++        const auto *candidate = nodeDB->getMeshNodeByIndex(i);
++        if (candidate && legion::sameShortName(candidate->short_name, name)) {
++            node = candidate->num;
++            if (++matches == 2)
++                break;
++        }
++    }
++    return matches;
++}
++
+ bool LegionControlModule::findTraceDestination(uint32_t target, Channel &result) const
+ {
+     const auto node = nodeDB->getMeshNode(target);
+@@ -140,7 +156,7 @@ bool LegionControlModule::tryScramble(const meshtastic_MeshPacket &packet) const
+     if (packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
+         packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP || !isBroadcast(packet.to) ||
+         packet.decoded.payload.size > sizeof(packet.decoded.payload.bytes) ||
+-        !legion::isScrambleCommand(packet.decoded.payload.bytes, packet.decoded.payload.size, nodeDB->getNodeNum()))
++        !legion::isScrambleCommand(packet.decoded.payload.bytes, packet.decoded.payload.size, nodeDB->getNodeNum(), owner.short_name))
+         return false;
+     Channel control;
+     if (!findControlChannel(control) || control.index != packet.channel)
+@@ -163,7 +179,7 @@ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &
+     Channel control;
+     if (!findControlChannel(control) || control.index != packet.channel)
+         return ProcessMessage::CONTINUE;
+-    const auto request = legion::parseControl(packet.decoded.payload.bytes, packet.decoded.payload.size, nodeDB->getNodeNum());
++    const auto request = legion::parseControl(packet.decoded.payload.bytes, packet.decoded.payload.size, nodeDB->getNodeNum(), owner.short_name);
+     if (request.command == legion::ControlCommand::None)
+         return ProcessMessage::CONTINUE;
+     const uint32_t now = Time::getMillis();
+@@ -175,6 +191,8 @@ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &
+         pending.from = getFrom(&packet);
+         pending.acceptedAt = now;
+         pending.generation = radioGeneration;
++        if (request.valid && request.targetName[0])
++            pending.targetMatches = findPeer(request.targetName, pending.request.target);
+         if (request.valid && request.command == legion::ControlCommand::CreateChannel) {
+             for (uint8_t i = 1; i < channels.getNumChannels(); ++i)
+                 if (channels.getByIndex(i).role == meshtastic_Channel_Role_DISABLED) {
+@@ -193,7 +211,7 @@ ProcessMessage LegionControlModule::handleReceived(const meshtastic_MeshPacket &
+         if (request.valid && request.sendsChannelText())
+             pending.destinationMatches = findDestination(request.channel, pending.destination);
+         else if (request.valid && request.command == legion::ControlCommand::Trace)
+-            pending.destinationMatches = findTraceDestination(request.target, pending.destination) &&
++            pending.destinationMatches = findTraceDestination(pending.request.target, pending.destination) &&
+                                          readChannel(channels.getPrimaryIndex(), pending.primary);
+     }
+     return ProcessMessage::CONTINUE;
+@@ -593,9 +611,10 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+         }
+         const bool changed = setApcMode(mode, command.control, primary);
+         char output[150];
+-        std::snprintf(output, sizeof(output), "APC %s%s; %s; RAM only, boot OFF", legion::apcModeName(mode),
++        std::snprintf(output, sizeof(output), "APC %s%s; %s; AUTOARM:%s", legion::apcModeName(mode),
+                       changed ? " selected" : " unchanged",
+-                      mode == legion::ApcMode::On ? "S1+S2 armed after warmup" : "normal TX/relays");
++                      mode == legion::ApcMode::On ? "S1+S2 armed after warmup" : "normal TX/relays",
++                      autoArmEnabled ? "saved" : "OFF");
+         reply(command.control.index, output);
+         return;
+     }
+@@ -614,6 +633,7 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+         apcReport.from = command.from;
+         apcReport.createdAt = now;
+         apcReport.uptime = Time::getUptimeSecs();
++        apcReport.autoArm = autoArmEnabled;
+         apcReport.generation = radioGeneration;
+         if (!++apcReport.capture)
+             ++apcReport.capture;
+@@ -636,10 +656,11 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+             std::snprintf(filtered, sizeof(filtered), "%u", c.filtered);
+         n = std::snprintf(body, sizeof(body),
+                           "%s %s %s\nVBAT:%u/%smV\nnext:%s %lu/%lus\neligible:%lu would:%lu "
+-                          "skip:%lu\nRF:see page 7",
++                          "skip:%lu\nAUTOARM:%s RF:page 7",
+                           legion::apcModeName(c.mode), legion::apcStateName(c.state), legion::apcHoldName(c.hold), s.battery,
+                           filtered, legion::apcStateName(c.pending), (unsigned long)c.dwellSec, (unsigned long)c.requiredSec,
+-                          (unsigned long)c.eligible, (unsigned long)c.wouldSkip, (unsigned long)c.skipped);
++                          (unsigned long)c.eligible, (unsigned long)c.wouldSkip, (unsigned long)c.skipped,
++                          apcReport.autoArm ? "saved" : "OFF");
+     } else if (page == 2) {
+         const uint32_t elapsed = s.session ? (s.enabled ? apcReport.uptime : s.stopSec) - s.startSec : 0;
+         char batterySum[21];
+@@ -718,10 +739,28 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+ #if RAK3401_LEGION_TRAFFIC
+ void LegionControlModule::setGuardMode(legion::GuardMode mode)
+ {
++    autoArmPending = false;
+     legionTrafficSetGuard(mode);
+     spamReport.valid = false;
+ }
+ 
++void LegionControlModule::pollAutoArm()
++{
++    if (!autoArmLoaded) {
++        autoArmEnabled = legionReadAutoArm() == LegionAutoArmState::On;
++        autoArmLoaded = true;
++        autoArmPending = autoArmEnabled;
++    }
++    if (!autoArmPending || !legionPowerTxReady())
++        return;
++    Channel control, primary;
++    if (!findControlChannel(control) || !canArmApc(primary))
++        return;
++    setGuardMode(legion::GuardMode::On);
++    setApcMode(legion::ApcMode::On, control, primary);
++    autoArmPending = false;
++}
++
+ void LegionControlModule::arm(const Pending &command)
+ {
+     const bool enable = command.request.command == legion::ControlCommand::Arm;
+@@ -730,9 +769,19 @@ void LegionControlModule::arm(const Pending &command)
+         reply(command.control.index, "Arm requires CLIENT, stable configuration and no pending restart/transfer");
+         return;
+     }
++    const bool permanent = enable && command.request.permanent;
++    if (!legionWriteAutoArm(permanent)) {
++        reply(command.control.index, "AUTOARM save failed; retry when storage and supply are ready");
++        return;
++    }
++    autoArmEnabled = permanent;
++    autoArmLoaded = true;
++    autoArmPending = false;
+     setGuardMode(enable ? legion::GuardMode::On : legion::GuardMode::Off);
+     setApcMode(enable ? legion::ApcMode::On : legion::ApcMode::Off, command.control, primary);
+-    reply(command.control.index, enable ? "APC ON (S1+S2). SPAM ON." : "APC OFF. SPAM OFF.");
++    reply(command.control.index, permanent ? "APC ON (S1+S2). SPAM ON. AUTOARM saved."
++                                : enable  ? "APC ON (S1+S2). SPAM ON."
++                                          : "APC OFF. SPAM OFF.");
+ }
+ 
+ void LegionControlModule::guard(const Pending &command, uint32_t now)
+@@ -809,6 +858,21 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+ {
+     const auto &request = command.request;
+     const auto channel = command.control.index;
++    if (request.valid && request.targetName[0]) {
++        if (command.targetMatches != 1) {
++            reply(channel, command.targetMatches ? "Ambiguous node short name; use !nodeid" : "Node not found; use !nodeid");
++            return;
++        }
++        uint32_t current = 0;
++        if (findPeer(request.targetName, current) != 1 || current != request.target) {
++            reply(channel, "Node short name changed; request cancelled; use !nodeid");
++            return;
++        }
++        if (!legion::validPeer(current) || current == nodeDB->getNodeNum()) {
++            reply(channel, "Target must be another valid node");
++            return;
++        }
++    }
+     if (!request.valid) {
+         const char *usage = "Usage: /msg !nodeid <channel> <message>; text <=199 "
+                             "UTF-8 bytes, channel <=11 bytes";
+@@ -824,7 +888,7 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+             usage = "Usage: /spamlist !legionid [positive page]";
+             break;
+         case legion::ControlCommand::Arm:
+-            usage = "Usage: /arm !nodeid";
++            usage = "Usage: /arm [permanent] <nodeid|shortname>";
+             break;
+         case legion::ControlCommand::Disarm:
+             usage = "Usage: /disarm !nodeid";
+@@ -847,6 +911,15 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         case legion::ControlCommand::Boot:
+             usage = "Usage: /boot !legionid";
+             break;
++        case legion::ControlCommand::Daily:
++            usage = "Usage: /daily <nodeid|shortname>";
++            break;
++        case legion::ControlCommand::Position:
++            usage = "Usage: /position <nodeid|shortname>";
++            break;
++        case legion::ControlCommand::ListChannels:
++            usage = "Usage: /listchannels <nodeid|shortname>";
++            break;
+         case legion::ControlCommand::Components:
+             usage = "Usage: /components !legionid";
+             break;
+@@ -914,6 +987,18 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+         return;
+     }
+ #endif
++    if (request.command == legion::ControlCommand::Daily) {
++        queryDaily(channel);
++        return;
++    }
++    if (request.command == legion::ControlCommand::Position) {
++        queryPosition(channel);
++        return;
++    }
++    if (request.command == legion::ControlCommand::ListChannels) {
++        listChannels(channel);
++        return;
++    }
+     if (request.command == legion::ControlCommand::ZeroHop || request.command == legion::ControlCommand::IgnoreList) {
+         report(command, now, request.command == legion::ControlCommand::ZeroHop);
+         return;
+@@ -1076,6 +1161,75 @@ void LegionControlModule::editChannel(const Pending &command)
+     respond(text);
+ }
+ 
++void LegionControlModule::queryDaily(uint8_t channel)
++{
++    legion::MeshHealthTotals totals;
++    {
++        concurrency::LockGuard guard(&stateLock);
++        totals = dailyMeshHealth;
++    }
++    if (!dailySlot) {
++        reply(channel, "DAILY unavailable; first 24-hour period has not closed");
++        return;
++    }
++    char health[160];
++    totals.format(health, sizeof(health));
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    const auto age = Time::getMillisMonotonic() - dailySlot * legion::DailySchedule::DAY_MS;
++    const int length = std::snprintf(output, sizeof(output), "!%08lx DAILY age:%lus\n%s", (unsigned long)nodeDB->getNodeNum(),
++                                     (unsigned long)(age / 1000), health);
++    if (length > 0 && size_t(length) < sizeof(output))
++        sendText(channel, output);
++}
++
++void LegionControlModule::queryPosition(uint8_t channel)
++{
++    const auto position = localPosition;
++    const bool valid = position.latitude_i != 0 || position.longitude_i != 0;
++    uint8_t shareChannel = channels.getPrimaryIndex();
++    const bool sharing = findPositionChannel(shareChannel);
++    const uint32_t precision = sharing ? getPositionPrecisionForChannel(shareChannel) : 0;
++    const auto &settings = channels.getByIndex(shareChannel).settings;
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    const int length = std::snprintf(
++        output, sizeof(output),
++        "!%08lx POSITION %s valid:%u\nlat:%.7f lon:%.7f\nLoRa_cfg:%s ch:%u p:%lubits interval_cfg:%lus smart:%u\n"
++        "MQTT_cfg:%s uplink:%u map:%u",
++        (unsigned long)nodeDB->getNodeNum(), config.position.fixed_position ? "FIXED" : "LIVE", unsigned(valid),
++        position.latitude_i / 1e7, position.longitude_i / 1e7, config.lora.tx_enabled && sharing ? "ON" : "OFF",
++        unsigned(shareChannel + 1), (unsigned long)precision, (unsigned long)config.position.position_broadcast_secs,
++        unsigned(config.position.position_broadcast_smart_enabled), moduleConfig.mqtt.enabled ? "ON" : "OFF",
++        unsigned(settings.uplink_enabled), unsigned(moduleConfig.mqtt.map_reporting_enabled));
++    if (length > 0 && size_t(length) < sizeof(output))
++        sendText(channel, output);
++}
++
++void LegionControlModule::listChannels(uint8_t channel)
++{
++    char output[legion::CONTROL_TEXT_MAX + 1];
++    size_t used = std::snprintf(output, sizeof(output), "!%08lx:", (unsigned long)nodeDB->getNodeNum());
++    bool first = true;
++    for (uint8_t i = 0; i < channels.getNumChannels(); ++i) {
++        const auto &candidate = channels.getByIndex(i);
++        if (!candidate.has_settings || candidate.role == meshtastic_Channel_Role_DISABLED)
++            continue;
++        const char *name = channels.getName(i);
++        if (!name || !*name)
++            continue;
++        const int length = std::snprintf(output + used, sizeof(output) - used, "%s%u:%s", first ? " " : ", ", unsigned(i + 1), name);
++        if (length < 0 || size_t(length) >= sizeof(output) - used) {
++            reply(channel, "Channel list exceeds message limit");
++            return;
++        }
++        used += size_t(length);
++        first = false;
++    }
++    if (first)
++        reply(channel, "No configured channels");
++    else
++        sendText(channel, output);
++}
++
+ bool LegionControlModule::controlBusy() const
+ {
+     return rebootAtMsec || shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
+@@ -1394,6 +1548,7 @@ int32_t LegionControlModule::runOnce()
+     cutDaily(uptime);
+     pollTrace(now);
+ #if RAK3401_LEGION_TRAFFIC
++    pollAutoArm();
+     (void)legionTrafficGuardStatus(); // Disarm stale channel/role context even
+                                       // during radio silence.
+     if (spamReport.valid && Throttle::hasElapsed(spamReport.createdAt, legion::CONTROL_SNAPSHOT_MS))
+diff --git a/src/modules/LegionControlModule.h b/src/modules/LegionControlModule.h
+index 6b7b2703be466703a3fd85d45a65e726d81263d3..cfb653e3f73497ed772b9a8de87de0f536622910 100644
+--- a/src/modules/LegionControlModule.h
++++ b/src/modules/LegionControlModule.h
+@@ -51,7 +51,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+         legion::ControlRequest request;
+         Channel control, destination, primary;
+         uint32_t from = 0, acceptedAt = 0, generation = 0;
+-        uint8_t destinationMatches = 0;
++        uint8_t destinationMatches = 0, targetMatches = 0;
+         uint8_t channelSlot = 0xff;
+         meshtastic_Channel selectedChannel{};
+     };
+@@ -74,12 +74,16 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     bool findControlChannel(Channel &result) const;
+     uint8_t findDestination(const char *name, Channel &result) const;
+     bool findTraceDestination(uint32_t target, Channel &result) const;
++    uint8_t findPeer(const char *name, uint32_t &node) const;
+     static bool sameChannel(const Channel &a, const Channel &b);
+     bool sendText(uint8_t channel, const char *text, legion::ControlCommand command = legion::ControlCommand::None);
+     void reply(uint8_t channel, const char *text);
+     void execute(const Pending &command, uint32_t now);
+     void report(const Pending &command, uint32_t now, bool zeroHop);
+     void editChannel(const Pending &command);
++    void queryDaily(uint8_t channel);
++    void queryPosition(uint8_t channel);
++    void listChannels(uint8_t channel);
+     bool controlBusy() const;
+     void advanceMeshHealth();
+     void cutDaily(uint64_t now);
+@@ -87,6 +91,8 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+     void pollRecoveryNotice();
+     void pollPositionNotice(uint32_t now);
+ #if RAK3401_LEGION_TRAFFIC
++    bool autoArmLoaded = false, autoArmEnabled = false, autoArmPending = false;
++    void pollAutoArm();
+     uint8_t drakarysRepliesPending = 0;
+     void pollDrakarys();
+     void guard(const Pending &command, uint32_t now);
+@@ -135,7 +141,7 @@ class LegionControlModule : public SinglePortModule, private concurrency::OSThre
+         uint32_t from = 0, createdAt = 0, uptime = 0, generation = 0;
+         uint16_t capture = 0;
+         char radio[148]{};
+-        bool valid = false;
++        bool autoArm = false, valid = false;
+     } apcReport;
+ #endif
+ 
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+index 6251ea689b9e4c90a9bd988615838fccb6893686..f6d1212bffb2a3d71799800963fdea18ba7d2213 100644
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -59,6 +59,9 @@ enum class ControlCommand : uint8_t {
+     Boot,
+     Apc,
+     Components,
++    Daily,
++    Position,
++    ListChannels,
+     CreateChannel,
+     DeleteChannel,
+     Guard,
+@@ -78,6 +81,8 @@ struct ControlRequest {
+     char channel[12]{};
+     char text[CONTROL_TEXT_MAX + 1]{};
+     bool valid = false;
++    bool permanent = false;
++    char targetName[5]{};
+ 
+     bool sendsChannelText() const { return command == ControlCommand::Message || command == ControlCommand::Drakarys; }
+ };
+@@ -217,6 +222,22 @@ class ControlParser
+         size -= 9;
+         return true;
+     }
++    bool executor(uint32_t &value, uint32_t ownNode, const char *ownShortName)
++    {
++        if (node(value))
++            return value == ownNode;
++        char alias[5]{};
++        if (!name(alias, sizeof(alias)) || alias[0] == '!' || !sameShortName(alias, ownShortName))
++            return false;
++        value = ownNode;
++        return true;
++    }
++    bool peer(ControlRequest &request)
++    {
++        if (node(request.target))
++            return validPeer(request.target);
++        return name(request.targetName, sizeof(request.targetName)) && request.targetName[0] != '!';
++    }
+     bool page(uint16_t &value)
+     {
+         spaces();
+@@ -290,16 +311,16 @@ class ControlParser
+     size_t size;
+ };
+ 
+-inline bool isScrambleCommand(const uint8_t *data, size_t size, uint32_t ownNode)
++inline bool isScrambleCommand(const uint8_t *data, size_t size, uint32_t ownNode, const char *ownShortName = nullptr)
+ {
+     if (!data || !validPeer(ownNode) || size > CONTROL_TEXT_MAX)
+         return false;
+     ControlParser parser(data, size);
+     uint32_t node;
+-    return parser.token("/scramble") && parser.node(node) && node == ownNode && parser.end();
++    return parser.token("/scramble") && parser.executor(node, ownNode, ownShortName) && parser.end();
+ }
+ 
+-inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ownNode)
++inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ownNode, const char *ownShortName = nullptr)
+ {
+     ControlRequest result;
+     if (!data || !ownNode || size > 233)
+@@ -318,7 +339,7 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+             result.apcAction = 4;
+         else if (parser.token("on"))
+             result.apcAction = 5;
+-        if (!result.apcAction || !parser.node(result.node) || result.node != ownNode) {
++        if (!result.apcAction || !parser.executor(result.node, ownNode, ownShortName)) {
+             result.command = ControlCommand::None;
+             return result;
+         }
+@@ -339,13 +360,13 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+             result.guardAction = 4;
+         else if (parser.token("clear"))
+             result.guardAction = 5;
+-        if (!parser.node(result.node) || result.node != ownNode) {
++        if (!parser.executor(result.node, ownNode, ownShortName)) {
+             result.command = ControlCommand::None;
+             return result;
+         }
+         result.valid =
+             result.guardAction &&
+-            (result.guardAction != 5 || (parser.node(result.target) && validPeer(result.target) && result.target != ownNode)) &&
++            (result.guardAction != 5 || (parser.peer(result) && result.target != ownNode)) &&
+             parser.end();
+         return result;
+     }
+@@ -366,6 +387,12 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+     else if (parser.token("/components"))
+         result.command = ControlCommand::Components;
+ #endif
++    else if (parser.token("/daily"))
++        result.command = ControlCommand::Daily;
++    else if (parser.token("/position"))
++        result.command = ControlCommand::Position;
++    else if (parser.token("/listchannels"))
++        result.command = ControlCommand::ListChannels;
+     else if (parser.token("/createch"))
+         result.command = ControlCommand::CreateChannel;
+     else if (parser.token("/deletech"))
+@@ -390,7 +417,9 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+ #endif
+     else
+         return result;
+-    if (!parser.node(result.node) || result.node != ownNode) {
++    if (result.command == ControlCommand::Arm)
++        result.permanent = parser.token("permanent");
++    if (!parser.executor(result.node, ownNode, ownShortName)) {
+         result.command = ControlCommand::None;
+         return result;
+     }
+@@ -403,7 +432,7 @@ inline ControlRequest parseControl(const uint8_t *data, size_t size, uint32_t ow
+         result.valid = parser.name(result.text, IGNORE_NAME_BYTES) && parser.end();
+     else if (result.command == ControlCommand::Trace || result.command == ControlCommand::Ignore ||
+              result.command == ControlCommand::Unignore)
+-        result.valid = parser.node(result.target) && validPeer(result.target) && result.target != ownNode && parser.end();
++        result.valid = parser.peer(result) && result.target != ownNode && parser.end();
+     else if (result.command == ControlCommand::CreateChannel || result.command == ControlCommand::DeleteChannel)
+         result.valid = parser.name(result.channel, sizeof(result.channel)) && validChannelName(result.channel) &&
+                        (result.command == ControlCommand::CreateChannel ? parser.key(result) : parser.end());
+diff --git a/src/modules/LegionNodeSelector.h b/src/modules/LegionNodeSelector.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e1865be0b424a12fdfa9b21be749a0b7c2acd9ff
+--- /dev/null
++++ b/src/modules/LegionNodeSelector.h
+@@ -0,0 +1,56 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++namespace legion
++{
++inline bool sameShortName(const char *a, const char *b)
++{
++    if (!a || !b || !*a || !*b)
++        return false;
++    for (size_t i = 0; i < 5; ++i) {
++        const auto lower = [](uint8_t c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; };
++        if (lower(a[i]) != lower(b[i]))
++            return false;
++        if (!a[i])
++            return true;
++    }
++    return false;
++}
++
++inline bool matchesNodeSelector(const uint8_t *data, size_t size, uint32_t ownNode, const char *ownShortName)
++{
++    if (!data || !size)
++        return false;
++    if (data[0] == '!') {
++        if (size != 9)
++            return false;
++        uint32_t node = 0;
++        for (size_t i = 1; i < size; ++i) {
++            const uint8_t c = data[i];
++            uint8_t digit;
++            if (c >= '0' && c <= '9')
++                digit = c - '0';
++            else if (c >= 'a' && c <= 'f')
++                digit = c - 'a' + 10;
++            else if (c >= 'A' && c <= 'F')
++                digit = c - 'A' + 10;
++            else
++                return false;
++            node = (node << 4) | digit;
++        }
++        return node == ownNode;
++    }
++    if (size >= 2 && data[0] == '"' && data[size - 1] == '"') {
++        ++data;
++        size -= 2;
++    }
++    if (!size || size > 4 || !ownShortName || strnlen(ownShortName, 5) != size || std::memchr(data, 0, size))
++        return false;
++    char name[5]{};
++    std::memcpy(name, data, size);
++    return sameShortName(name, ownShortName);
++}
++} // namespace legion
+diff --git a/src/modules/LegionTelemetryModule.cpp b/src/modules/LegionTelemetryModule.cpp
+index 10b4a3997706e235fc1f6eb24c2227e2c3b3ea0e..5c3eaedab2138ee57a4f10ec053769bc493f67c3 100644
+--- a/src/modules/LegionTelemetryModule.cpp
++++ b/src/modules/LegionTelemetryModule.cpp
+@@ -67,9 +67,9 @@ ProcessMessage LegionTelemetryModule::handleReceived(const meshtastic_MeshPacket
+     if (!findChannel(channel) || mp.channel != channel.index)
+         return ProcessMessage::CONTINUE;
+     bool accepted =
+-        legion::parseTelemetryCommand(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum(), targeted);
++        legion::parseTelemetryCommand(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum(), targeted, owner.short_name);
+ #if RAK3401_LEGION_RECOVERY
+-    const auto backup = legionParseBackup(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum());
++    const auto backup = legionParseBackup(mp.decoded.payload.bytes, mp.decoded.payload.size, nodeDB->getNodeNum(), owner.short_name);
+     if (backup != LegionBackupCommand::None) {
+         accepted = true;
+         targeted = true;
+diff --git a/src/modules/LegionTelemetryPolicy.h b/src/modules/LegionTelemetryPolicy.h
+index d80b47efbff90a1a2094ed48251653a31fdf08cc..1be709f80b20ef818bee65e3d89cbbc70dfac906 100644
+--- a/src/modules/LegionTelemetryPolicy.h
++++ b/src/modules/LegionTelemetryPolicy.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "mesh/Throttle.h"
++#include "LegionNodeSelector.h"
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstring>
+@@ -17,7 +18,7 @@ inline bool commandSpace(uint8_t c)
+     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+ }
+ 
+-inline bool parseTelemetryCommand(const uint8_t *data, size_t size, uint32_t ownNode, bool &targeted)
++inline bool parseTelemetryCommand(const uint8_t *data, size_t size, uint32_t ownNode, bool &targeted, const char *ownShortName = nullptr)
+ {
+     targeted = false;
+     if (!data || !ownNode)
+@@ -42,24 +43,8 @@ inline bool parseTelemetryCommand(const uint8_t *data, size_t size, uint32_t own
+         ++data;
+         --size;
+     }
+-    if (size != 9 || data[0] != '!')
+-        return false;
+-    uint32_t node = 0;
+-    for (size_t i = 1; i < size; ++i) {
+-        uint8_t c = data[i];
+-        uint8_t digit;
+-        if (c >= '0' && c <= '9')
+-            digit = c - '0';
+-        else if (c >= 'a' && c <= 'f')
+-            digit = c - 'a' + 10;
+-        else if (c >= 'A' && c <= 'F')
+-            digit = c - 'A' + 10;
+-        else
+-            return false;
+-        node = (node << 4) | digit;
+-    }
+     targeted = true;
+-    return node == ownNode;
++    return matchesNodeSelector(data, size, ownNode, ownShortName);
+ }
+ 
+ class TelemetryRequestGate
+diff --git a/src/platform/nrf52/LegionComponents.cpp b/src/platform/nrf52/LegionComponents.cpp
+index 84b83f6d73fad267459d890285a73323ed07677f..d6c1840f21964ebb164d9c23703c3f1deec017e3 100644
+--- a/src/platform/nrf52/LegionComponents.cpp
++++ b/src/platform/nrf52/LegionComponents.cpp
+@@ -5,6 +5,7 @@
+ #error "Legion components require the RAK3401 + RAK13302 nRF52 profile"
+ #endif
+ #include "mesh/RadioLibInterface.h"
++#include "mesh/LegionPersistence.h"
+ #include <atomic>
+ #include <cstdio>
+ #include <nrf_soc.h>
+@@ -36,9 +37,15 @@ bool legionComponentsFormat(char *output, size_t size, uint32_t node)
+     char clock[24] = "NA";
+     if (spi)
+         std::snprintf(clock, sizeof(clock), "%luMHz", (unsigned long)(LEGION_RADIO_SPI_HZ / 1000000));
++    char persistence[90] = "";
++#if RAK3401_LEGION_FLASH
++    const auto flash = legionPersistenceStats();
++    std::snprintf(persistence, sizeof(persistence), "\nSAVE C:%lu U:%lu S:%lu F:%lu", (unsigned long)flash.checked,
++                  (unsigned long)flash.unchanged, (unsigned long)flash.saved, (unsigned long)flash.failed);
++#endif
+     const int used =
+-        std::snprintf(output, size, "!%08lx COMPONENTS\n%s\nSPI:%s %s BULK:%s\nDC/DC:%s REG1", (unsigned long)node, crypto,
+-                      spi ? "ON" : "OFF", clock, RADIO_SPI_BULK ? "ON" : "OFF", NRF_POWER->DCDCEN == 1 ? "ON" : "OFF");
++        std::snprintf(output, size, "!%08lx COMPONENTS\n%s\nSPI:%s %s BULK:%s\nDC/DC:%s REG1%s", (unsigned long)node, crypto,
++                      spi ? "ON" : "OFF", clock, RADIO_SPI_BULK ? "ON" : "OFF", NRF_POWER->DCDCEN == 1 ? "ON" : "OFF", persistence);
+     return used > 0 && static_cast<size_t>(used) < size && used <= 199;
+ }
+ #endif
+diff --git a/src/platform/nrf52/NRF52CryptoEngine.cpp b/src/platform/nrf52/NRF52CryptoEngine.cpp
+index 8f2cb89f629b7d948b983c1f7a56c4a76fcaa1ec..bba2b1886af1332e96c2f95eb395e63c9d6a8553 100644
+--- a/src/platform/nrf52/NRF52CryptoEngine.cpp
++++ b/src/platform/nrf52/NRF52CryptoEngine.cpp
+@@ -140,11 +140,15 @@ class NRF52CryptoEngine : public CryptoEngine
+ #if !(MESHTASTIC_EXCLUDE_XEDDSA)
+     bool cc310BaseMul(uint8_t *point, const uint8_t *scalar)
+     {
+-        if (!nRFCrypto.begin())
++        if (!nrf52CryptoBegin()) {
++#if RAK3401_LEGION_CC310
++            nrf52CryptoEnd();
++#endif
+             return false;
++        }
+         bool ok = cc310Ed25519.scalarMultBase(point, scalar);
+         uint32_t err = cc310Ed25519.lastError();
+-        nRFCrypto.end();
++        nrf52CryptoEnd();
+         if (!ok)
+             LOG_WARN("CC310 Ed25519 base point error 0x%08x, using software", (unsigned int)err);
+         return ok;

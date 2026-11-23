@@ -24,10 +24,10 @@ index 2c5ee8d..1201685 100644
                      if (!tosend)
                          return true;
 diff --git a/src/mesh/RadioInterface.cpp b/src/mesh/RadioInterface.cpp
-index d4f4fab..47c8d8a 100644
+index 1afa73f..a0db094 100644
 --- a/src/mesh/RadioInterface.cpp
 +++ b/src/mesh/RadioInterface.cpp
-@@ -1019,6 +1019,19 @@ float RadioInterface::getFreq()
+@@ -1024,6 +1024,19 @@ float RadioInterface::getFreq()
      return savedFreq;
  }
  
@@ -48,10 +48,10 @@ index d4f4fab..47c8d8a 100644
   * Save our channel for later reuse.
   */
 diff --git a/src/mesh/RadioInterface.h b/src/mesh/RadioInterface.h
-index b428f70..c12e058 100644
+index 124b750..dbaa91d 100644
 --- a/src/mesh/RadioInterface.h
 +++ b/src/mesh/RadioInterface.h
-@@ -263,6 +263,9 @@ class RadioInterface
+@@ -264,6 +264,9 @@ class RadioInterface
       * Get the frequency we saved.
       */
      [[nodiscard]] virtual float getFreq();
@@ -62,10 +62,10 @@ index b428f70..c12e058 100644
      /// Some boards (1st gen Pinetab Lora module) have broken IRQ wires, so we need to poll via i2c registers
      virtual bool isIRQPending() { return false; }
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index 8755e7c..de33d60 100644
+index 78b24fa..d2be7df 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
-@@ -13,6 +13,10 @@
+@@ -16,6 +16,10 @@
  #include <pb_decode.h>
  #include <pb_encode.h>
  
@@ -76,7 +76,7 @@ index 8755e7c..de33d60 100644
  #if RAK3401_LEGION_TELEMETRY
  #include "modules/LegionTelemetryModule.h"
  #endif
-@@ -117,6 +121,9 @@ void INTERRUPT_ATTR RadioLibInterface::isrRxLevel0()
+@@ -137,6 +141,9 @@ void INTERRUPT_ATTR RadioLibInterface::isrRxLevel0()
  
  void INTERRUPT_ATTR RadioLibInterface::isrTxLevel0()
  {
@@ -86,7 +86,7 @@ index 8755e7c..de33d60 100644
      // Before the notify: the handler that would otherwise re-arm RX can wait behind a main-loop hold.
      instance->rearmReceiveFromIsr();
      isrLevel0Common(ISR_TX);
-@@ -736,6 +743,9 @@ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_
+@@ -829,6 +836,9 @@ bool RadioLibInterface::removePendingTXPacket(NodeNum from, PacketId id, uint32_
  
  meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
  {
@@ -96,7 +96,7 @@ index 8755e7c..de33d60 100644
      // Null if we forced the device into standby, which already completed the send.
      meshtastic_MeshPacket *sent = detachSentPacket();
      powerMon->clearState(meshtastic_PowerMon_State_Lora_TXOn); // But our transmitter is definitely off now
-@@ -744,6 +754,9 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
+@@ -837,6 +847,9 @@ meshtastic_MeshPacket *RadioLibInterface::handleTransmitInterrupt()
  
  void RadioLibInterface::completeSending()
  {
@@ -106,7 +106,7 @@ index 8755e7c..de33d60 100644
      finishSentPacket(detachSentPacket());
  }
  
-@@ -1419,8 +1432,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+@@ -1569,8 +1582,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
  
          size_t numbytes = beginSending(txp);
  
@@ -121,7 +121,7 @@ index 8755e7c..de33d60 100644
              LOG_ERROR("startTransmit failed, error=%d", res);
              RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_RADIO_SPI_BUG);
  
-@@ -1434,6 +1453,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+@@ -1584,6 +1603,9 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
              enableInterrupt(isrTxLevel0);
              // unset-sentinel-ok: busyTx/sendingPacket is the armed flag, so 0 is a legal stamp
              lastTxStart = Time::getMillis();

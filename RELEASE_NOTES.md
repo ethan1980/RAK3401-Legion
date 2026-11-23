@@ -1,3 +1,49 @@
+# Legion 0.7.2
+
+Legion 0.7.2 uses Meshtastic nightly **2.8.3.d0f4096**, pinned to
+`d0f4096788545fb3c5e22d2a7e52ac6c268caac1`, and reports **`2.8.3.Legion0.7.2`**
+on the RAK3401 1W with RAK13302.
+
+- **Short-name selection.** All targeted commands accept `!nodeid` or the
+  node's short name, for example `/telemetry PSVR`. Existing ID syntax remains.
+  Trace, ignore/unignore and guard clear also resolve peer short names; use the
+  full ID when a name is missing or ambiguous. Duplicate executor names can
+  select more than one Legion on the same private channel.
+- **DAILY on demand.** `/daily PSVR` reads the last closed 24-hour MeshHealth
+  cut, including age, score/reference status and estimate markers. It does not
+  start a fresh cut or move the automatic reporting schedule.
+- **Position.** `/position PSVR` reports local coordinates, validity, fixed/live
+  mode, effective precision and configured LoRa/MQTT publication.
+- **Channel directory.** `/listchannels PSVR` lists enabled configured channels
+  with their real one-based positions, beside the existing create/delete tools.
+- **Component counters.** `/components PSVR` adds preference saves checked,
+  identical saves skipped, completed saves and failures since boot.
+- **Permanent arming.** `/arm permanent PSVR` saves verified automatic arming of
+  APC S1+S2 and antispam after restart. Ordinary `/arm` and `/disarm` clear that
+  preference. Runtime statistics and quarantines start fresh after boot.
+- **Command reference.** `/drakarys` is documented in
+  [Commands](COMMANDS.md#drakarys) and its own illustrated chapter in both manuals.
+- **New nightly.** Keeps upstream CC310 XEdDSA signing acceleration with Legion's
+  accelerator locking, improved LoRa-preset validation at startup and restart of
+  interrupted XModem transfers. Crypto dependencies follow the pinned nightly.
+
+**Pending HW:** the new base, short-name selection, new queries, SAVE fields,
+permanent arming and Drakarys. Existing Legion 0.7.1 functionality was tested on
+HW by the owner on 23 November 2026; that observation does not validate 0.7.2.
+RF output, range, consumption and energy savings have not been measured.
+
+Install the **OTA ZIP with nRF Connect** or the **UF2 over USB**. These are
+application-only packages: they preserve the rescue reserve and ordinary
+preferences, without a bootloader or SoftDevice update. Backups remain explicit.
+APC defaults to OFF and spam to OBSERVE unless saved permanent arming restores
+both after startup checks; APC always begins a fresh warmup and session.
+
+[Commands](COMMANDS.md) · [Automatic features](AUTOMATIC-FEATURES.md) ·
+[Manual en español](docs/Legion-Spanish-friendly-user-manual.pdf) ·
+[English manual](docs/Legion-English-friendly-user-manual.pdf)
+
+---
+
 # Legion 0.7.1
 
 Legion 0.7.1 uses Meshtastic v2.8.3.a8f6f58 and reports

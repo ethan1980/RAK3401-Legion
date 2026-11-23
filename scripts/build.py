@@ -56,6 +56,7 @@ def package(firmware, target, output):
         for command in (
             b"/components", b"/createch", b"/deletech", b"/guard", b"/spamlist",
             b"/unignorename", b"/scramble", b"/arm", b"/disarm",
+            b"/daily", b"/position", b"/listchannels", b"/drakarys",
         ):
             if command + b"\0" not in firmware_bytes:
                 raise RuntimeError(
@@ -124,6 +125,7 @@ def package(firmware, target, output):
             "APC.md",
             "ANTISPAM.md",
             "docs",
+            "assets",
         ):
             tar.add(ROOT / name, arcname=Path("legion") / name, filter=source_filter)
     manifest = {
@@ -160,6 +162,10 @@ def package(firmware, target, output):
                 "scramble",
                 "arm",
                 "disarm",
+                "daily",
+                "position",
+                "listchannels",
+                "drakarys",
             ]
             if target == "legion"
             else []
@@ -196,17 +202,17 @@ def package(firmware, target, output):
         "apc_candidate_stage": "S2" if target == "legion" else None,
         "apc_battery_conservation": target == "legion",
         "apc_modes": ["off", "observe", "shadow", "on"] if target == "legion" else [],
-        "apc_boot_mode": "off" if target == "legion" else None,
-        "apc_persistent_settings": False,
+        "apc_boot_mode": "saved-arm-or-off" if target == "legion" else None,
+        "apc_persistent_settings": target == "legion",
         "apc_adaptive_rf_power": target == "legion",
         "apc_rf_minimum_dbm": 21 if target == "legion" else None,
         "apc_rf_delta_conserve_db": 3 if target == "legion" else None,
         "apc_rf_delta_reserve_routine_db": 6 if target == "legion" else None,
         "antispam": target == "legion",
         "antispam_modes": ["off", "observe", "on"] if target == "legion" else [],
-        "antispam_boot_mode": "observe" if target == "legion" else None,
+        "antispam_boot_mode": "saved-arm-or-observe" if target == "legion" else None,
         "antispam_quarantine_seconds": 600 if target == "legion" else None,
-        "antispam_persistent_settings": False,
+        "antispam_persistent_settings": target == "legion",
         "antispam_hardware_tested": bool(target == "legion" and config.get("hardware_observation", {}).get("antispam_tested")),
         "daily_status_antispam": target == "legion",
         "name_ignore": target == "legion",
@@ -240,8 +246,17 @@ def package(firmware, target, output):
         "telemetry_automatic_reports": False,
         "hardware_tested": bool(
             target == "legion"
+            and config.get("hardware_observation", {}).get("observed_build") == advertised_version
             and config.get("hardware_observation", {}).get("commands_tested")
         ),
+        "short_name_selectors": target == "legion",
+        "daily_query": target == "legion",
+        "position_query": target == "legion",
+        "channel_list_query": target == "legion",
+        "persistent_arm": target == "legion",
+        "persistence_report": target == "legion",
+        "drakarys": target == "legion",
+        "new_features_hardware_tested": False,
         "ota_hardware_tested": bool(
             target == "legion"
             and config.get("ota_hardware_observation", {}).get("completion_confirmed")

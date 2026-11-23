@@ -1,8 +1,8 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index ee1152e..657f507 100644
+index 2b58bd1..e81c249 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -367,12 +367,19 @@ void printInfo()
+@@ -368,12 +368,19 @@ void printInfo()
      LOG_INFO("S:B:%d,%s,%s,%s", HW_VENDOR, optstr(APP_VERSION), optstr(APP_ENV), optstr(APP_REPO));
  }
  #ifndef PIO_UNIT_TESTING
@@ -23,10 +23,10 @@ index ee1152e..657f507 100644
      pinMode(LED_POWER, OUTPUT);
      digitalWrite(LED_POWER, LED_STATE_ON);
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index 19c2cae..4c3614a 100644
+index 3bbd9de..4470037 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
-@@ -13,6 +13,10 @@
+@@ -16,6 +16,10 @@
  #include <pb_decode.h>
  #include <pb_encode.h>
  
@@ -37,7 +37,7 @@ index 19c2cae..4c3614a 100644
  #if ARCH_PORTDUINO
  #include "PortduinoGlue.h"
  #include "meshUtils.h"
-@@ -161,7 +165,11 @@ bool RadioLibInterface::canSendImmediately()
+@@ -181,7 +185,11 @@ bool RadioLibInterface::canSendImmediately()
          }
          return false;
      } else
@@ -49,7 +49,7 @@ index 19c2cae..4c3614a 100644
  }
  
  uint32_t RadioLibInterface::maxRxFrameMsec()
-@@ -1469,7 +1477,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
+@@ -1533,7 +1541,14 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
  
      /* NOTE: Minimize the actions before startTransmit() to keep the time between
               channel scan and actual transmit as low as possible to avoid collisions. */
@@ -65,10 +65,10 @@ index 19c2cae..4c3614a 100644
          // Never reaches completeSending(), so any per-packet radio state has to be released here.
          RadioTxHooks::packetReleased(this, txp);
 diff --git a/src/platform/nrf52/main-nrf52.cpp b/src/platform/nrf52/main-nrf52.cpp
-index 3d2ccab..cb6a513 100644
+index 0cd1a52..a00fe01 100644
 --- a/src/platform/nrf52/main-nrf52.cpp
 +++ b/src/platform/nrf52/main-nrf52.cpp
-@@ -34,6 +34,10 @@
+@@ -36,6 +36,10 @@
  #include "flash/flash_nrf5x.h"
  #include <hal/nrf_lpcomp.h>
  
@@ -79,7 +79,7 @@ index 3d2ccab..cb6a513 100644
  #ifdef BQ25703A_ADDR
  #include "BQ25713.h"
  #endif
-@@ -120,7 +124,11 @@ bool powerHAL_isPowerLevelSafe()
+@@ -122,7 +126,11 @@ bool powerHAL_isPowerLevelSafe()
          }
      }
  
@@ -91,7 +91,7 @@ index 3d2ccab..cb6a513 100644
  }
  
  void powerHAL_platformInit()
-@@ -551,6 +559,9 @@ void cpuDeepSleep(uint32_t msecToWake)
+@@ -618,6 +626,9 @@ void cpuDeepSleep(uint32_t msecToWake)
          // FIXME, use non-init RAM per
          // https://devzone.nordicsemi.com/f/nordic-q-a/48919/ram-retention-settings-with-softdevice-enabled
  
@@ -101,7 +101,7 @@ index 3d2ccab..cb6a513 100644
  #ifdef BATTERY_LPCOMP_INPUT
          // Only enable LPCOMP wake if the variant allows it
          if (variant_enableBatteryLpcompWake()) {
-@@ -569,6 +580,7 @@ void cpuDeepSleep(uint32_t msecToWake)
+@@ -636,6 +647,7 @@ void cpuDeepSleep(uint32_t msecToWake)
              while (!nrf_lpcomp_event_check(NRF_LPCOMP, NRF_LPCOMP_EVENT_READY))
                  ;
          }

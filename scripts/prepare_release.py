@@ -146,6 +146,8 @@ def prepare_release(directory, commit):
             commands += ["unignorename", "scramble"]
         if level >= (0, 7, 0):
             commands += ["arm", "disarm"]
+        if level >= (0, 7, 2):
+            commands += ["daily", "position", "listchannels", "drakarys"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -181,11 +183,11 @@ def prepare_release(directory, commit):
             )
             and manifest.get("apc_candidate_stage") == ("S2" if level >= (0, 6, 5) else "S1")
             and manifest.get("apc_modes") == ["off", "observe", "shadow", "on"]
-            and manifest.get("apc_boot_mode") == "off"
+            and manifest.get("apc_boot_mode") == ("saved-arm-or-off" if level >= (0, 7, 2) else "off")
             and all(
                 manifest.get(name) is False
                 for name in (
-                    "apc_persistent_settings",
+                    *([] if level >= (0, 7, 2) else ["apc_persistent_settings"]),
                     "apc_adaptive_rf_power",
                     "apc_hardware_tested",
                     "boot_diagnostics_flash_writes",
@@ -228,7 +230,7 @@ def prepare_release(directory, commit):
             )
             and manifest.get("apc_candidate_stage") == ("S2" if level >= (0, 6, 5) else "S1")
             and manifest.get("apc_modes") == ["off", "observe", "shadow", "on"]
-            and manifest.get("apc_boot_mode") == "off"
+            and manifest.get("apc_boot_mode") == ("saved-arm-or-off" if level >= (0, 7, 2) else "off")
             and manifest.get("remote_channel_psk_format")
             == "canonical-base64-1-16-32-bytes"
             and manifest.get("daily_status_interval_seconds") == 86400
@@ -238,7 +240,7 @@ def prepare_release(directory, commit):
             and all(
                 manifest.get(name) is False
                 for name in (
-                    "apc_persistent_settings",
+                    *([] if level >= (0, 7, 2) else ["apc_persistent_settings"]),
                     *([] if level >= (0, 6, 5) else ["apc_adaptive_rf_power"]),
                     "boot_diagnostics_flash_writes",
                     "backup_freshness_flash_writes",
@@ -253,20 +255,30 @@ def prepare_release(directory, commit):
     if level >= (0, 6, 5):
         if not (
             manifest.get("commit") == (
-                "a8f6f580476f0884965bc24fc94e6c0f24867dcb"
+                "d0f4096788545fb3c5e22d2a7e52ac6c268caac1"
+                if level >= (0, 7, 2)
+                else "a8f6f580476f0884965bc24fc94e6c0f24867dcb"
                 if level >= (0, 7, 1)
                 else "d5f16191ca28b01b5024f590f04a67f25d66f1b1"
             )
             and manifest.get("apc_adaptive_rf_power") is True
             and manifest.get("apc_rf_minimum_dbm") == 21
             and manifest.get("antispam") is True
-            and manifest.get("antispam_boot_mode") == "observe"
+            and manifest.get("antispam_boot_mode") == ("saved-arm-or-observe" if level >= (0, 7, 2) else "observe")
             and manifest.get("antispam_modes") == ["off", "observe", "on"]
             and manifest.get("antispam_quarantine_seconds") == 600
-            and manifest.get("antispam_persistent_settings") is False
+            and manifest.get("antispam_persistent_settings") is (level >= (0, 7, 2))
             and manifest.get("daily_status_antispam") is True
         ):
-            raise ValueError(f"Legion {version} requires the approved base, S2, RAM-only antispam and daily status")
+            raise ValueError(f"Legion {version} requires the approved base, S2, antispam startup policy and daily status")
+    if level >= (0, 7, 2) and not (
+        manifest.get("apc_persistent_settings") is True
+        and all(manifest.get(key) is True for key in (
+            "short_name_selectors", "daily_query", "position_query", "channel_list_query",
+            "persistent_arm", "persistence_report", "drakarys",
+        ))
+    ):
+        raise ValueError("Legion 0.7.2 requires named selectors, read-only queries, persistent arm and Drakarys")
     if level == (0, 6, 5):
         if manifest.get("scramble") is not False:
             raise ValueError("Legion 0.6.5 defers Scramble")
@@ -498,7 +510,12 @@ def prepare_release(directory, commit):
         )
     if level >= (0, 7, 1):
         release_notes = (Path(__file__).resolve().parents[1] / "RELEASE_NOTES.md").read_text()
-        features = re.split(r"^---[ \t]*$", release_notes, flags=re.MULTILINE)[0].strip() + "\n\n"
+        sections = re.split(r"^---[ \t]*$", release_notes, flags=re.MULTILINE)
+        heading = rf"^# Legion {re.escape(version)}(?:\s|$)"
+        features = next(
+            (section.strip() for section in sections if re.match(heading, section.lstrip())),
+            sections[0].strip(),
+        ) + "\n\n"
         source = f"https://github.com/ethan1980/RAK3401-Legion/blob/{commit}/"
         features = re.sub(r"\]\((?!https?://)([^)]+)\)", lambda match: f"]({source}{match[1]})", features)
     prerelease = level < (0, 6, 1) or "-" in version

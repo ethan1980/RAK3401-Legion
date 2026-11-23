@@ -721,7 +721,7 @@ class ReleaseValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.prepare_release(self.directory, self.commit)
 
-    def test_v071_requires_pinned_base_and_the_planned_features(self):
+    def v071_manifest(self):
         self.traffic_manifest()
         self.manifest.update(
             legion_version="0.7.1",
@@ -742,6 +742,9 @@ class ReleaseValidationTests(unittest.TestCase):
             fixed_position_notice_repeat_seconds=43200,
         )
         self.manifest["control_commands"] += ["unignorename", "scramble", "arm", "disarm"]
+
+    def test_v071_requires_pinned_base_and_the_planned_features(self):
+        self.v071_manifest()
         self.write_manifest()
         result = release.prepare_release(self.directory, self.commit)
         self.assertEqual(result["tag"], "legion-v0.7.1-aaaaaaa")
@@ -755,6 +758,55 @@ class ReleaseValidationTests(unittest.TestCase):
             ("fixed_position_notice", False),
             ("fixed_position_notice_first_seconds", 0),
             ("fixed_position_notice_repeat_seconds", 60),
+        ):
+            original = self.manifest[field]
+            self.manifest[field] = invalid
+            self.write_manifest()
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                release.prepare_release(self.directory, self.commit)
+            self.manifest[field] = original
+
+    def test_v072_requires_new_base_commands_and_saved_arm_contract(self):
+        self.v071_manifest()
+        self.manifest.update(
+            legion_version="0.7.2",
+            advertised_firmware_version="2.8.3.Legion0.7.2",
+            commit="d0f4096788545fb3c5e22d2a7e52ac6c268caac1",
+            apc_boot_mode="saved-arm-or-off",
+            antispam_boot_mode="saved-arm-or-observe",
+            apc_persistent_settings=True,
+            antispam_persistent_settings=True,
+            short_name_selectors=True,
+            daily_query=True,
+            position_query=True,
+            channel_list_query=True,
+            persistent_arm=True,
+            persistence_report=True,
+            drakarys=True,
+            hardware_tested=False,
+            new_features_hardware_tested=False,
+        )
+        self.manifest["control_commands"] += ["daily", "position", "listchannels", "drakarys"]
+        self.write_manifest()
+        result = release.prepare_release(self.directory, self.commit)
+        self.assertEqual(result["tag"], "legion-v0.7.2-aaaaaaa")
+        self.assertFalse(result["prerelease"])
+        for term in ("d0f4096", "/arm permanent", "/listchannels", "/daily", "Pending HW"):
+            self.assertIn(term, result["notes"])
+        for field, invalid in (
+            ("commit", "a8f6f580476f0884965bc24fc94e6c0f24867dcb"),
+            ("short_name_selectors", False),
+            ("daily_query", False),
+            ("position_query", False),
+            ("channel_list_query", False),
+            ("persistent_arm", False),
+            ("persistence_report", False),
+            ("drakarys", False),
+            ("apc_boot_mode", "off"),
+            ("antispam_boot_mode", "observe"),
+            ("apc_persistent_settings", False),
+            ("antispam_persistent_settings", False),
+            ("control_commands", self.manifest["control_commands"][:-1]),
         ):
             original = self.manifest[field]
             self.manifest[field] = invalid

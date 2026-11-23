@@ -1,5 +1,5 @@
 diff --git a/src/mesh/CryptoEngine.cpp b/src/mesh/CryptoEngine.cpp
-index 26abd339af97b7e64ff9652ee8971e0274b6df69..2ab9b15ede426cbb2b024f4f114ac89ff0d7f370 100644
+index 6e52e92..2546ea2 100644
 --- a/src/mesh/CryptoEngine.cpp
 +++ b/src/mesh/CryptoEngine.cpp
 @@ -4,6 +4,7 @@
@@ -33,7 +33,7 @@ index 26abd339af97b7e64ff9652ee8971e0274b6df69..2ab9b15ede426cbb2b024f4f114ac89f
   * Create a public/private key pair with Curve25519.
   *
 diff --git a/src/mesh/CryptoEngine.h b/src/mesh/CryptoEngine.h
-index a278213918817357d964e3b50028cefda0d4ddb2..d84042eb966964bc0145271575425b6e94f68f0c 100644
+index 5d0a2a1..5971a8e 100644
 --- a/src/mesh/CryptoEngine.h
 +++ b/src/mesh/CryptoEngine.h
 @@ -179,6 +179,9 @@ class CryptoEngine
@@ -48,7 +48,7 @@ index a278213918817357d964e3b50028cefda0d4ddb2..d84042eb966964bc0145271575425b6e
  #endif
 diff --git a/src/mesh/LegionRecovery.cpp b/src/mesh/LegionRecovery.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c27c3778f0c71fa713ca86c02ac410e642bf9436
+index 0000000..c27c377
 --- /dev/null
 +++ b/src/mesh/LegionRecovery.cpp
 @@ -0,0 +1,483 @@
@@ -537,7 +537,7 @@ index 0000000000000000000000000000000000000000..c27c3778f0c71fa713ca86c02ac410e6
 +#endif
 diff --git a/src/mesh/LegionRecovery.h b/src/mesh/LegionRecovery.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..78ab80ae9aea1cc4696c591efe6c820962953be0
+index 0000000..78ab80a
 --- /dev/null
 +++ b/src/mesh/LegionRecovery.h
 @@ -0,0 +1,23 @@
@@ -566,7 +566,7 @@ index 0000000000000000000000000000000000000000..78ab80ae9aea1cc4696c591efe6c8209
 +#endif
 diff --git a/src/mesh/LegionRecoveryPolicy.h b/src/mesh/LegionRecoveryPolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e918d96e9828b664527adcc00c91cec47b4c9fe6
+index 0000000..e918d96
 --- /dev/null
 +++ b/src/mesh/LegionRecoveryPolicy.h
 @@ -0,0 +1,66 @@
@@ -638,7 +638,7 @@ index 0000000000000000000000000000000000000000..e918d96e9828b664527adcc00c91cec4
 +}
 diff --git a/src/mesh/LegionRecoveryRunner.h b/src/mesh/LegionRecoveryRunner.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cc49b16a7802a40a38156b31a37198c0c6f6763
+index 0000000..8cc49b1
 --- /dev/null
 +++ b/src/mesh/LegionRecoveryRunner.h
 @@ -0,0 +1,36 @@
@@ -680,7 +680,7 @@ index 0000000000000000000000000000000000000000..8cc49b16a7802a40a38156b31a37198c
 +} // namespace legion
 diff --git a/src/mesh/LegionRecoveryStore.h b/src/mesh/LegionRecoveryStore.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..25abfcbf88fe4c914dd955eba202e2f01c074af4
+index 0000000..25abfcb
 --- /dev/null
 +++ b/src/mesh/LegionRecoveryStore.h
 @@ -0,0 +1,139 @@
@@ -824,7 +824,7 @@ index 0000000000000000000000000000000000000000..25abfcbf88fe4c914dd955eba202e2f0
 +};
 +} // namespace legion
 diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
-index a019625b669621fd57d2a33d3fb6065b53c63825..68d74ee92327b64e5cd597619489aa5deb0f22ff 100644
+index e0d2db8..b429907 100644
 --- a/src/mesh/NodeDB.cpp
 +++ b/src/mesh/NodeDB.cpp
 @@ -53,6 +53,9 @@
@@ -905,7 +905,7 @@ index a019625b669621fd57d2a33d3fb6065b53c63825..68d74ee92327b64e5cd597619489aa5d
      LOG_INFO("Factory reset");
      // first, remove the "/prefs" (this removes most prefs)
      spiLock->lock();
-@@ -3303,6 +3353,10 @@ bool NodeDB::disableLockdownToPlaintext()
+@@ -3311,6 +3361,10 @@ bool NodeDB::disableLockdownToPlaintext()
  bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_t *fields, const void *dest_struct,
                         bool fullAtomic)
  {
@@ -916,7 +916,7 @@ index a019625b669621fd57d2a33d3fb6065b53c63825..68d74ee92327b64e5cd597619489aa5d
  
      // Only the radio profile is at risk from an unverified config load, so only defer those writes.
      // Devicestate/nodedb/module writes must still land, otherwise boot-time recovery (e.g. loadFromDisk()
-@@ -3623,6 +3677,10 @@ static bool filesystemStillReadable()
+@@ -3631,6 +3685,10 @@ static bool filesystemStillReadable()
  
  bool NodeDB::saveToDisk(int saveWhat)
  {
@@ -927,7 +927,7 @@ index a019625b669621fd57d2a33d3fb6065b53c63825..68d74ee92327b64e5cd597619489aa5d
      LOG_DEBUG("Save to disk %d", saveWhat);
  
      // do not try to save anything if power level is not safe. In many cases flash will be lock-protected
-@@ -4960,6 +5018,16 @@ bool NodeDB::generateCryptoKeyPair(const uint8_t *privateKey)
+@@ -4968,6 +5026,16 @@ bool NodeDB::generateCryptoKeyPair(const uint8_t *privateKey)
  
      // Update sizes and copy to owner if successful
      if (keygenSuccess) {
@@ -945,7 +945,7 @@ index a019625b669621fd57d2a33d3fb6065b53c63825..68d74ee92327b64e5cd597619489aa5d
          memcpy(owner.public_key.bytes, config.security.public_key.bytes, 32);
  
 diff --git a/src/modules/AdminModule.cpp b/src/modules/AdminModule.cpp
-index 497876190e6fad4f6a235cfdf165c0ca065b44e8..c609d8384ddb2fc246a09ed6f063da00f206cdb5 100644
+index 639095a..d99c400 100644
 --- a/src/modules/AdminModule.cpp
 +++ b/src/modules/AdminModule.cpp
 @@ -22,6 +22,9 @@
@@ -1004,7 +1004,7 @@ index 497876190e6fad4f6a235cfdf165c0ca065b44e8..c609d8384ddb2fc246a09ed6f063da00
  
      // The call sign is the station ID the whole licensed mode is built around, so it is required;
 diff --git a/src/modules/AdminModule.h b/src/modules/AdminModule.h
-index aa860d382e162174a9b69a0943375fbb01ed7a1d..bf01cfac744664a626c73f91b27d4142b3d62481 100644
+index aa860d3..bf01cfa 100644
 --- a/src/modules/AdminModule.h
 +++ b/src/modules/AdminModule.h
 @@ -31,6 +31,8 @@ class AdminModule : public ProtobufModule<meshtastic_AdminMessage>, public Obser
@@ -1017,7 +1017,7 @@ index aa860d382e162174a9b69a0943375fbb01ed7a1d..bf01cfac744664a626c73f91b27d4142
      /** Called to handle a particular incoming message
  
 diff --git a/src/modules/LegionTelemetryModule.cpp b/src/modules/LegionTelemetryModule.cpp
-index c1a44f557c7ae030ed623bf7cc45cce78b508381..54d73e82e8173cf6815aa3bffbd21039e6d0b8b7 100644
+index c1a44f5..54d73e8 100644
 --- a/src/modules/LegionTelemetryModule.cpp
 +++ b/src/modules/LegionTelemetryModule.cpp
 @@ -10,6 +10,9 @@
@@ -1167,7 +1167,7 @@ index c1a44f557c7ae030ed623bf7cc45cce78b508381..54d73e82e8173cf6815aa3bffbd21039
  }
  #endif
 diff --git a/src/modules/LegionTelemetryModule.h b/src/modules/LegionTelemetryModule.h
-index a012bcf5bc726bd6917b63e674e429b9673e50b4..00c34c346309807c47467576e0294cb72e793467 100644
+index a012bcf..00c34c3 100644
 --- a/src/modules/LegionTelemetryModule.h
 +++ b/src/modules/LegionTelemetryModule.h
 @@ -7,6 +7,9 @@
@@ -1201,7 +1201,7 @@ index a012bcf5bc726bd6917b63e674e429b9673e50b4..00c34c346309807c47467576e0294cb7
  
  extern LegionTelemetryModule *legionTelemetryModule;
 diff --git a/src/platform/nrf52/nrf52840_s140_v6.ld b/src/platform/nrf52/nrf52840_s140_v6.ld
-index a956c6583f9b935299730ffdbbe0d82420e5c3d3..89f1c5c1f306533188ba9c05fdda36452b397bb1 100644
+index a956c65..89f1c5c 100644
 --- a/src/platform/nrf52/nrf52840_s140_v6.ld
 +++ b/src/platform/nrf52/nrf52840_s140_v6.ld
 @@ -13,7 +13,7 @@ MEMORY

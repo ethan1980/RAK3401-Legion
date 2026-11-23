@@ -7,6 +7,7 @@
 #include "Arduino.h"
 #include "CryptoEngine.h"
 #include "mesh/HardwareRNG.h"
+#include "mesh/LegionPersistence.h"
 #include "platform/nrf52/LegionBoot.h"
 #include "platform/nrf52/LegionComponents.h"
 #include "platform/nrf52/LegionCrypto.h"
@@ -26,6 +27,10 @@
 #include <vector>
 
 Adafruit_nRFCrypto nRFCrypto;
+LegionPersistenceStats legionPersistenceStats()
+{
+    return {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+}
 FakePower powerRegisters;
 bool softDevice = false, failPowerApi = false;
 uint32_t cachedResetReason = 0;
@@ -287,6 +292,8 @@ void testBoot(const std::string &scenario)
     assert(std::string(output).find("CC310 SHA:0 MAC:0 SW:0") != std::string::npos);
     assert(std::string(output).find("SPI:ON 8MHz BULK:ON") != std::string::npos);
     assert(std::string(output).find("DC/DC:ON REG1") != std::string::npos);
+    assert(std::string(output).find("SAVE C:4294967295 U:4294967295 S:4294967295 F:4294967295") != std::string::npos);
+    assert(std::strlen(output) <= 199);
     const auto after = legionCryptoStats();
     assert(before.sha == after.sha && before.hmac == after.hmac && before.fallback == after.fallback);
     assert(!legionComponentsFormat(output, 12, 0xabcdef01) && !legionComponentsFormat(nullptr, 0, 0xabcdef01));

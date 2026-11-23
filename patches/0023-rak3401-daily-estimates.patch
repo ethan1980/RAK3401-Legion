@@ -1,4 +1,18 @@
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+index 58b42ce..1f271ce 100644
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -1084,7 +1084,7 @@ void LegionControlModule::pollDaily(uint64_t now)
+             return;
+         }
+     }
+-    char health[128];
++    char health[160];
+     dailyMeshHealth.format(health, sizeof(health));
+     char output[legion::CONTROL_TEXT_MAX + 1];
+     const auto id = (unsigned long)nodeDB->getNodeNum();
 diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
+index c29d291..9792a4b 100644
 --- a/src/modules/LegionDailyPolicy.h
 +++ b/src/modules/LegionDailyPolicy.h
 @@ -2,6 +2,7 @@
@@ -9,7 +23,7 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
  #include <cstdint>
  #include <cstdio>
  
-@@ -82,20 +83,59 @@
+@@ -82,22 +83,61 @@ struct MeshHealthTotals {
      uint16_t heard = 0, direct = 0, distant = 0, sources = 0, targets = 0, confirmed = 0;
      uint32_t relayed = 0;
      int16_t score = -1;
@@ -29,13 +43,12 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
 -                      "MeshHealth %s\nHeard:%u Direct:%u 2+ hops:%u\nRelayed:%lu Sources:%u\nDM targets:%u Confirmed:%u", grade,
 -                      unsigned(heard), unsigned(direct), unsigned(distant), (unsigned long)relayed, unsigned(sources),
 -                      unsigned(targets), unsigned(confirmed));
--    }
 +                      "MeshHealth %s\nHeard:%s%u Direct:%s%u 2+ hops:%s%u\nRelayed:%lu Sources:%s%u\nDM targets:%s%u Confirmed:%s%u",
 +                      grade, prefix, unsigned(heard), prefix, unsigned(direct), prefix, unsigned(distant),
 +                      (unsigned long)relayed, prefix, unsigned(sources), prefix, unsigned(targets), prefix, unsigned(confirmed));
-+    }
-+};
-+
+     }
+ };
+ 
 +class UniqueEstimate
 +{
 +  public:
@@ -72,10 +85,12 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
 +
 +  private:
 +    std::array<uint8_t, 256> registers{};
- };
- 
++};
++
  class MeshHealth
-@@ -121,7 +161,11 @@
+ {
+   public:
+@@ -121,7 +161,11 @@ class MeshHealth
              closed.partial = true;
          if (!closed.partial) {
              closed.score = score(closed);
@@ -87,7 +102,7 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
              historyNext = (historyNext + 1) % history.size();
              if (historySize < history.size())
                  ++historySize;
-@@ -130,15 +174,29 @@
+@@ -130,15 +174,29 @@ class MeshHealth
          nodes.fill(0);
          facts.fill(0);
          outstanding.fill({});
@@ -117,7 +132,7 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
          if (auto *fact = find(node, true)) {
              *fact |= HEARD;
              const auto best = *fact & HOP_MASK;
-@@ -151,18 +209,24 @@
+@@ -151,18 +209,24 @@ class MeshHealth
      {
          if (relayed != UINT32_MAX)
              ++relayed;
@@ -130,15 +145,15 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
  
      void directTx(uint32_t target, uint32_t packet)
      {
-+        if (target < 4 || target == UINT32_MAX)
-+            return;
-+        estimates[TARGETS_ESTIMATE].add(UniqueEstimate::hash(target));
-         auto *fact = find(target, true);
+-        auto *fact = find(target, true);
 -        if (!fact)
 -            return;
 -        *fact |= TARGETED;
 -        if (*fact & CONFIRMED)
--            return;
++        if (target < 4 || target == UINT32_MAX)
+             return;
++        estimates[TARGETS_ESTIMATE].add(UniqueEstimate::hash(target));
++        auto *fact = find(target, true);
 +        if (fact) {
 +            *fact |= TARGETED;
 +            if (*fact & CONFIRMED)
@@ -147,7 +162,7 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
          PendingAck *free = nullptr;
          for (auto &pending : outstanding) {
              if (pending.packet == packet && pending.target == target)
-@@ -182,6 +246,7 @@
+@@ -182,6 +246,7 @@ class MeshHealth
                                          [=](const PendingAck &ack) { return ack.target == target && ack.packet == packet; });
          if (match == outstanding.end())
              return;
@@ -155,7 +170,7 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
          if (auto *fact = find(target, false))
              *fact |= CONFIRMED;
          for (auto &pending : outstanding)
-@@ -192,6 +257,10 @@
+@@ -192,6 +257,10 @@ class MeshHealth
    private:
      static constexpr uint8_t HOP_MASK = 0x0f, HEARD = 0x10, RELAYED = 0x20, TARGETED = 0x40, CONFIRMED = 0x80;
      static constexpr size_t CAPACITY = 1024, MAX_TRACKED = 768;
@@ -166,7 +181,7 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
      struct PendingAck {
          uint32_t target = 0, packet = 0;
      };
-@@ -208,7 +277,7 @@
+@@ -208,7 +277,7 @@ class MeshHealth
              if (!insert)
                  return nullptr;
              if (nodeCount == MAX_TRACKED) {
@@ -175,11 +190,10 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
                  return nullptr;
              }
              nodes[slot] = node;
-@@ -230,6 +299,19 @@
-             total.sources += (fact & RELAYED) != 0;
+@@ -231,6 +300,19 @@ class MeshHealth
              total.targets += (fact & TARGETED) != 0;
              total.confirmed += (fact & CONFIRMED) != 0;
-+        }
+         }
 +        if (estimated) {
 +            total.heard = std::max(total.heard, estimates[HEARD_ESTIMATE].count());
 +            total.direct = std::min(total.heard, std::max(total.direct, estimates[DIRECT_ESTIMATE].count()));
@@ -192,10 +206,11 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
 +            total.targets = std::max(total.targets, estimates[TARGETS_ESTIMATE].count());
 +            total.confirmed = std::min(total.targets, std::max(total.confirmed, estimates[CONFIRMED_ESTIMATE].count()));
 +            total.estimated = true;
-         }
++        }
          return total;
      }
-@@ -258,15 +340,17 @@
+ 
+@@ -258,15 +340,17 @@ class MeshHealth
  
      std::array<uint32_t, CAPACITY> nodes{};
      std::array<uint8_t, CAPACITY> facts{};
@@ -215,15 +230,3 @@ diff --git a/src/modules/LegionDailyPolicy.h b/src/modules/LegionDailyPolicy.h
 -static_assert(sizeof(MeshHealth) <= 6144, "MeshHealth RAM budget exceeded");
 +static_assert(sizeof(MeshHealth) <= 8192, "MeshHealth RAM budget exceeded");
  } // namespace legion
-diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
---- a/src/modules/LegionControlModule.cpp
-+++ b/src/modules/LegionControlModule.cpp
-@@ -1084,7 +1084,7 @@
-             return;
-         }
-     }
--    char health[128];
-+    char health[160];
-     dailyMeshHealth.format(health, sizeof(health));
-     char output[legion::CONTROL_TEXT_MAX + 1];
-     const auto id = (unsigned long)nodeDB->getNodeNum();

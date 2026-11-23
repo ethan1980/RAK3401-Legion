@@ -1,5 +1,5 @@
 diff --git a/src/mesh/CryptoEngine.cpp b/src/mesh/CryptoEngine.cpp
-index d7da5a0..487a7e6 100644
+index 2546ea2..6d213fe 100644
 --- a/src/mesh/CryptoEngine.cpp
 +++ b/src/mesh/CryptoEngine.cpp
 @@ -3,8 +3,8 @@
@@ -60,10 +60,10 @@ index d7da5a0..487a7e6 100644
  // so they must stay outside the PKI guard or MESHTASTIC_EXCLUDE_PKI=1 fails to link.
  void CryptoEngine::aesSetKey(const uint8_t *key_bytes, size_t key_len)
 diff --git a/src/mesh/CryptoEngine.h b/src/mesh/CryptoEngine.h
-index d51e6f2..f15e5b1 100644
+index 5971a8e..0e234d0 100644
 --- a/src/mesh/CryptoEngine.h
 +++ b/src/mesh/CryptoEngine.h
-@@ -190,6 +190,10 @@ class CryptoEngine
+@@ -187,6 +187,10 @@ class CryptoEngine
  #endif
      /** Our per packet nonce */
      uint8_t nonce[16] = {0};
@@ -74,7 +74,7 @@ index d51e6f2..f15e5b1 100644
      CryptoKey key = {};
  #if !(MESHTASTIC_EXCLUDE_PKI)
      uint8_t shared_key[32] = {0};
-@@ -237,4 +241,4 @@ class CryptoEngine
+@@ -238,4 +242,4 @@ class CryptoEngine
      void initNonce(uint32_t fromNode, uint64_t packetId, uint32_t extraNonce = 0);
  };
  
@@ -82,7 +82,7 @@ index d51e6f2..f15e5b1 100644
 \ No newline at end of file
 +extern CryptoEngine *crypto;
 diff --git a/src/mesh/HardwareRNG.cpp b/src/mesh/HardwareRNG.cpp
-index 451b8d8..38a9308 100644
+index 80792eb..464637c 100644
 --- a/src/mesh/HardwareRNG.cpp
 +++ b/src/mesh/HardwareRNG.cpp
 @@ -13,6 +13,7 @@
@@ -93,7 +93,7 @@ index 451b8d8..38a9308 100644
  #include <Adafruit_nRFCrypto.h>
  extern Adafruit_nRFCrypto nRFCrypto;
  #elif defined(ARCH_ESP32)
-@@ -116,9 +117,9 @@ bool fill(uint8_t *buffer, size_t length, bool useRadioEntropy)
+@@ -152,9 +153,9 @@ bool fill(uint8_t *buffer, size_t length, bool useRadioEntropy)
      nRF54Crypto.end();
  #elif defined(ARCH_NRF52)
      // The Nordic SDK RNG provides cryptographic-quality randomness backed by hardware.
@@ -297,7 +297,7 @@ index 0000000..7422f26
 +                     uint8_t *output);
 +#endif
 diff --git a/src/platform/nrf52/NRF52CryptoEngine.cpp b/src/platform/nrf52/NRF52CryptoEngine.cpp
-index e90172b..4f59224 100644
+index 13008cf..8f2cb89 100644
 --- a/src/platform/nrf52/NRF52CryptoEngine.cpp
 +++ b/src/platform/nrf52/NRF52CryptoEngine.cpp
 @@ -1,4 +1,5 @@
@@ -351,7 +351,7 @@ index e90172b..4f59224 100644
 +
  #if !(MESHTASTIC_EXCLUDE_PKI)
    protected:
-     // CC310 X25519 (~5x faster, no ~3 KB eval stack frame). The CC310 clamps and eval doesn't, so only
+     // CC310 X25519, about 5x faster than software. The CC310 clamps and eval doesn't, so only
 @@ -40,11 +59,15 @@ class NRF52CryptoEngine : public CryptoEngine
              return CryptoEngine::x25519(out, scalar, point);
          if (point && !isCanonical(point))

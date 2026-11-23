@@ -1,5 +1,5 @@
 diff --git a/src/configuration.h b/src/configuration.h
-index 5da3c7c..02fb701 100644
+index 5d4aa7d..701c379 100644
 --- a/src/configuration.h
 +++ b/src/configuration.h
 @@ -78,6 +78,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -15,10 +15,10 @@ index 5da3c7c..02fb701 100644
  // system.
  #ifndef HW_VERSION
 diff --git a/src/main.cpp b/src/main.cpp
-index bcf3d07..5932243 100644
+index e81c249..af2e985 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -1316,6 +1316,9 @@ bool runASAP;
+@@ -1322,6 +1322,9 @@ bool runASAP;
  extern meshtastic_DeviceMetadata getDeviceMetadata()
  {
      meshtastic_DeviceMetadata deviceMetadata = meshtastic_DeviceMetadata_init_default;
@@ -29,10 +29,10 @@ index bcf3d07..5932243 100644
      deviceMetadata.device_state_version = DEVICESTATE_CUR_VER;
  #if defined(ARCH_STM32WL) && HAS_CPU_SHUTDOWN
 diff --git a/src/mqtt/MQTT.cpp b/src/mqtt/MQTT.cpp
-index 1454467..592b6b3 100644
+index ea1d5dd..ceb2dde 100644
 --- a/src/mqtt/MQTT.cpp
 +++ b/src/mqtt/MQTT.cpp
-@@ -880,6 +880,9 @@ void MQTT::perhapsReportToMap()
+@@ -883,6 +883,9 @@ void MQTT::perhapsReportToMap()
      memcpy(mapReport.short_name, owner.short_name, sizeof(owner.short_name));
      mapReport.role = config.device.role;
      mapReport.hw_model = owner.hw_model;

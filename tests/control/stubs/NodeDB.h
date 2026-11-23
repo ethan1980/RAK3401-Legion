@@ -43,7 +43,10 @@ struct Config {
         int role = meshtastic_Config_DeviceConfig_Role_CLIENT;
     } device;
     meshtastic_Config_LoRaConfig lora;
-    struct { bool fixed_position = false; } position;
+    struct {
+        bool fixed_position = false, position_broadcast_smart_enabled = false;
+        uint32_t position_broadcast_secs = 86400;
+    } position;
 };
 extern Config config;
 class NodeDB

@@ -2,17 +2,16 @@
 
 [Overview](README.md) · [Commands](COMMANDS.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md)
 
-**APC means Adaptive Power Control.** Legion 0.6.5 combines the existing **S1**
+**APC means Adaptive Power Control.** Legion combines the existing **S1**
 optional-relay budget with **S2** per-packet RF selection. Reception remains active.
 
-**Hardware status:** The 0.6.5 candidate was installed and the new commands
-were checked on hardware. S2 radio-power targets have not been measured with RF
+**Hardware status:** Existing mode commands have been tested on HW. Permanent arming in 0.7.2 is pending HW. S2 radio-power targets have not been measured with RF
 test equipment; savings, range and autonomy remain unmeasured.
 
 ## Modes and commands
 
 Send channel messages on the private secondary **LegionRF** channel. Replace
-`!abcdef01` with the full ID of the Legion to control. S1/S2 require **CLIENT** role.
+`!abcdef01` with the full ID or short name of the Legion to control (for example `PSVR`). S1/S2 require **CLIENT** role.
 
 | Command | Effect |
 | --- | --- |
@@ -20,13 +19,18 @@ Send channel messages on the private secondary **LegionRF** channel. Replace
 | `/apc shadow !abcdef01` | Models battery states and relay budgets while forwarding normally. |
 | `/apc on !abcdef01` | Applies S1 relay budgets and S2 RF selection after warmup and state persistence. |
 | `/apc off !abcdef01` | Stops APC and restores normal optional-relay admission immediately. |
-| `/arm !abcdef01` / `/disarm !abcdef01` | Switches APC and antispam together with one reply. |
+| `/arm !abcdef01` / `/disarm !abcdef01` | Switches both together and clears any saved permanent arming. |
+| `/arm permanent PSVR` | Saves automatic arming of APC S1+S2 and antispam across restarts. |
 | `/apc status !abcdef01` | Returns page 1 and freezes a fresh seven-page report. |
 | `/apc status !abcdef01 2` | Returns page 2 of that report; pages 2–7 are available. |
 
 Allow at least six seconds after a reply before another control command.
-**Every boot starts OFF.** Modes and statistics are RAM-only, without automatic
-settings writes. Detailed reports are on demand; Legion separately sends the
+**Boot defaults to OFF.** `/arm permanent PSVR` stores a verified preference to
+restore APC and antispam after startup checks are ready. A fresh APC session
+and warmup follow each restart. Ordinary `/arm` and `/disarm` clear that preference;
+individual `/apc` and `/guard` mode changes affect the current run only.
+Statistics and voltage evidence remain in RAM. No automatic mode transition saves
+settings. See [arming behavior](COMMANDS.md#arm-and-disarm). Detailed reports are on demand; Legion separately sends the
 [DAILY](COMMANDS.md#daily) with its current APC mode and state.
 Repeating a mode keeps its current session. OFF
 retains stopped results; the next activation starts a new session. Switching
@@ -111,7 +115,7 @@ it. Session/report IDs identify which replies belong together.
 
 | Page | Contents |
 | --- | --- |
-| 1 | Mode/state, inhibition reason, raw/decision-filtered VBAT and decision counters. |
+| 1 | Mode/state, saved AUTOARM flag, inhibition reason, raw/decision-filtered VBAT and decision counters. |
 | 2 | Uptime, session duration, samples, USB samples, VBAT raw/min/max/mean/EMA, sum and VDD current/minimum. |
 | 3 | Own/relay TX starts, completions, aborts and estimated airtime. |
 | 4 | IRQ timing, bounded repeat-ID evidence, start failures, open TXs, sample gaps and configuration changes. |

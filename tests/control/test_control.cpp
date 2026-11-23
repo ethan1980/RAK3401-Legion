@@ -19,6 +19,7 @@
 #include "platform/nrf52/LegionBoot.h"
 #include "modules/AdminModule.h"
 #include "modules/LegionControlModule.h"
+#include "modules/LegionAutoArm.h"
 #include "modules/LegionScramble.h"
 #include "xmodem.h"
 #include <cassert>
@@ -81,6 +82,10 @@ void channel(unsigned index, const char *name)
 }
 void reset()
 {
+    autoArmFile.clear();
+    autoArmSaveFails = false;
+    localPosition = {};
+    moduleConfig = {};
     batteryStatus = {};
     batteryMv = 4010;
     bootSnapshot = {};
@@ -194,6 +199,197 @@ void test_message_queue_channel_and_duplicates()
     assert(last().find("queue rejected") != std::string::npos);
     for (size_t i = 2; i < meshService.sent.size(); ++i)
         assert(text(i).find("Message queued") == std::string::npos);
+}
+
+// Only the requested packet uses 30 dBm and seven hops. Completion produces one
+// LegionRF reply, including when the node normally transmits at EU_868 power.
+void test_drakarys_command_and_rf_isolation()
+{
+    reset();
+    TestModule module;
+    const std::string cry = "Dracarys! Pōntes valar! - Dracarys!, flame them all!";
+    const auto parse = [](const std::string &text) {
+        return legion::parseControl(reinterpret_cast<const uint8_t *>(text.data()), text.size(), ownNode);
+    };
+    assert(parse("/drakarys !abcdef01 SFNarrow one").valid);
+    assert(parse("/drakaris !abcdef01 SFNarrow one").command == legion::ControlCommand::None);
+    assert(!parse("/drakarys !abcdef01 SFNarrow").valid);
+    config.lora.tx_power = 27;
+    std::vector<int> targets;
+    meshService.onSend = [&](const meshtastic_MeshPacket &p) {
+        legionTrafficTagOutgoing(&p);
+        assert(legionTrafficAllowQueued(&p));
+        targets.push_back(legionTrafficTxPower(&p, 27));
+        assert(legionTrafficTxPlanCurrent(&p, 27));
+        legionTrafficTxStarted(&p);
+        legionTrafficTxEnded(&p, false);
+        legionTrafficTxEnded(&p, true);
+        legionTrafficForget(&p);
+    };
+    deliver(module, "/drakarys !abcdef01 SFNarrow one", 2);
+    assert(meshService.sent.size() == 1 && text(0) == "one");
+    assert(meshService.sent[0].packet.hop_limit == HOP_MAX);
+    next();
+    module.runOnce();
+    assert(meshService.sent.size() == 2 && last().find(cry) != std::string::npos);
+    assert(meshService.sent[1].packet.channel == 2 && meshService.sent[1].packet.hop_limit == 3);
+    assert((targets == std::vector<int>{30, 27}));
+    next();
+    module.runOnce();
+    assert(meshService.sent.size() == 2);
+    deliver(module, "/drakarys !abcdef01 SFNarrow one", 2);
+    assert(meshService.sent.size() == 2);
+    next();
+    deliver(module, "/msg !abcdef01 SFNarrow two", 3);
+    assert((targets == std::vector<int>{30, 27, 27, 27}) && meshService.sent[2].packet.hop_limit == 3);
+    assert(config.lora.tx_power == 27 && config.lora.hop_limit == 3);
+
+    auto marked = packet("one", 501, ownNode);
+    auto ordinary = packet("two", 502, ownNode);
+    assert(legionTrafficMarkDrakarys(&marked));
+    legionTrafficTagOutgoing(&marked);
+    legionTrafficTagOutgoing(&ordinary);
+    assert(legionTrafficIsDrakarys(&marked) && !legionTrafficIsDrakarys(&ordinary));
+    assert(legionTrafficTxPower(&marked, 27) == 30);
+    assert(!legionTrafficTxPlanCurrent(&ordinary, 27));
+    legionTrafficForget(&marked, 500);
+    assert(legionTrafficTxPower(&marked, 27) == 30);
+    ++radioGeneration;
+    assert(!legionTrafficAllowQueued(&marked));
+    legionTrafficForget(&marked);
+    ++marked.id;
+    assert(legionTrafficTxPower(&marked, 27) == 27);
+    assert(legionTrafficMarkDrakarys(&marked));
+    assert(legionTrafficTxPower(&marked, 27) == 30);
+    legionTrafficPowerProgrammed(0, false);
+    legionTrafficPowerFallback(&marked, 27);
+    assert(!legionTrafficAllowQueued(&marked) && !legionTrafficTxPlanCurrent(&marked, 27));
+    legionTrafficTxEnded(&marked, false);
+    next();
+    module.runOnce();
+    assert(meshService.sent.size() == 4);
+    assert(legionTrafficTxPower(&ordinary, 27) == 27);
+    legionTrafficForget(&marked);
+    legionTrafficForget(&ordinary);
+}
+
+void test_072_aliases_queries_and_peer_revalidation()
+{
+    reset();
+    TestModule module;
+    const auto parse = [](const std::string &text) {
+        return legion::parseControl(reinterpret_cast<const uint8_t *>(text.data()), text.size(), ownNode, "PSVR");
+    };
+    for (const auto &command : {"/daily", "/position", "/listchannels", "/components", "/boot", "/reboot", "/arm", "/disarm", "/scramble"}) {
+        if (std::string(command) == "/scramble")
+            continue;
+        assert(parse(std::string(command) + " psvr").valid);
+        assert(parse(std::string(command) + " OTHER").command == legion::ControlCommand::None);
+    }
+    assert(parse("/arm permanent PSVR").permanent);
+    assert(parse("/guard clear PSVR NEXU").valid);
+    assert(parse("/trace PSVR NEXU").valid);
+    const std::string telemetry = "/telemetry psvr";
+    bool targeted = false;
+    assert(legion::parseTelemetryCommand(reinterpret_cast<const uint8_t *>(telemetry.data()), telemetry.size(), ownNode, targeted, "PSVR") && targeted);
+    const std::string backup = "/backup status PSVR";
+    assert(legionParseBackup(reinterpret_cast<const uint8_t *>(backup.data()), backup.size(), ownNode, "PSVR") == LegionBackupCommand::Status);
+    const std::string createBackup = "/backup psvr";
+    assert(legionParseBackup(reinterpret_cast<const uint8_t *>(createBackup.data()), createBackup.size(), ownNode, "PSVR") == LegionBackupCommand::Create);
+    const std::string scramble = "/scramble psvr";
+    assert(legion::isScrambleCommand(reinterpret_cast<const uint8_t *>(scramble.data()), scramble.size(), ownNode, "PSVR"));
+
+    channel(1, "Iberia");
+    channel(4, "Madrid");
+    deliver(module, "/listchannels psvr");
+    assert(last() == "!abcdef01: 1:SFNarrow, 2:Iberia, 3:LegionRF, 5:Madrid");
+    next();
+    config.position.fixed_position = true;
+    localPosition.latitude_i = 404167750;
+    localPosition.longitude_i = -37037900;
+    channels.entries[0].settings.module_settings.position_precision = 13;
+    deliver(module, "/position PSVR", 2);
+    assert(last().find("POSITION FIXED valid:1") != std::string::npos);
+    assert(last().find("lat:40.4167750 lon:-3.7037900") != std::string::npos);
+    assert(last().find("LoRa_cfg:ON ch:1 p:13bits") != std::string::npos);
+    assert(last().find("MQTT_cfg:OFF") != std::string::npos && last().size() <= 199);
+    next();
+    deliver(module, "/daily PSVR", 3);
+    assert(last().find("first 24-hour period") != std::string::npos);
+    Time::monotonic = legion::DailySchedule::DAY_MS + 1000;
+    next();
+    deliver(module, "/daily PSVR", 4);
+    assert(last().find("DAILY age:") != std::string::npos && last().find("MeshHealth ") != std::string::npos);
+
+    meshtastic_NodeInfoLite peer{};
+    peer.num = 0x12345678;
+    std::strcpy(peer.short_name, "NEXU");
+    database.nodes.push_back(peer);
+    next();
+    deliver(module, "/ignore PSVR nexu", 5);
+    assert(database.nodes[0].bitfield & NODEINFO_BITFIELD_IS_IGNORED_MASK);
+    peer.num = 0x12345679;
+    database.nodes.push_back(peer);
+    next();
+    deliver(module, "/unignore PSVR NEXU", 6);
+    assert(last().find("Ambiguous node short name") != std::string::npos);
+    assert(database.nodes[0].bitfield & NODEINFO_BITFIELD_IS_IGNORED_MASK);
+    database.nodes.pop_back();
+    next();
+    module.handleReceived(packet("/unignore PSVR NEXU", 7));
+    std::strcpy(database.nodes[0].short_name, "NEW");
+    Time::now += 10000;
+    module.runOnce();
+    assert(last().find("short name changed") != std::string::npos);
+    next();
+    deliver(module, "/unignore PSVR !12345678", 8);
+    assert(!(database.nodes[0].bitfield & NODEINFO_BITFIELD_IS_IGNORED_MASK));
+}
+
+void test_072_permanent_arm_restart_and_save_failures()
+{
+    reset();
+    {
+        TestModule module;
+        deliver(module, "/arm permanent PSVR");
+        assert(last().find("AUTOARM saved") != std::string::npos);
+        assert(legionReadAutoArm() == LegionAutoArmState::On);
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+        assert(legionTrafficGuardStatus().mode == legion::GuardMode::On);
+    }
+    const auto stored = autoArmFile;
+    reset();
+    autoArmFile = stored;
+    {
+        TestModule module;
+        module.runOnce();
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+        assert(legionTrafficGuardStatus().mode == legion::GuardMode::On);
+        next();
+        deliver(module, "/disarm PSVR", 2);
+        assert(legionReadAutoArm() == LegionAutoArmState::Off);
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+        autoArmSaveFails = true;
+        next();
+        deliver(module, "/arm permanent PSVR", 3);
+        assert(last().find("save failed") != std::string::npos);
+        assert(legionReadAutoArm() == LegionAutoArmState::Off);
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+        autoArmSaveFails = false;
+        next();
+        deliver(module, "/arm permanent PSVR", 4);
+        next();
+        deliver(module, "/arm PSVR", 5);
+        assert(legionReadAutoArm() == LegionAutoArmState::Off);
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
+    }
+    reset();
+    autoArmFile = stored;
+    autoArmFile[0] ^= 1;
+    TestModule module;
+    module.runOnce();
+    assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+    assert(legionReadAutoArm() == LegionAutoArmState::Invalid);
 }
 
 void test_changed_keys_and_pending_destination()
@@ -1803,6 +1999,9 @@ int main()
     std::cout << #test << " passed\n"
     RUN(test_parser_targets_and_utf8);
     RUN(test_message_queue_channel_and_duplicates);
+    RUN(test_drakarys_command_and_rf_isolation);
+    RUN(test_072_aliases_queries_and_peer_revalidation);
+    RUN(test_072_permanent_arm_restart_and_save_failures);
     RUN(test_changed_keys_and_pending_destination);
     RUN(test_control_authorization_and_power);
     RUN(test_reboot_deadline_rollover_and_failure);

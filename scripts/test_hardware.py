@@ -30,6 +30,7 @@ def run_hardware_tests(firmware, compiler, *, leak_check=True):
         "platform/nrf52/LegionComponents.h",
         "mesh/HardwareRNG.cpp",
         "mesh/HardwareRNG.h",
+        "mesh/LegionPersistence.h",
     )
     with tempfile.TemporaryDirectory(prefix="legion-hardware-") as folder:
         work = Path(folder)

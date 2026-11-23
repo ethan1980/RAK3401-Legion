@@ -1,5 +1,5 @@
 diff --git a/src/SafeFile.cpp b/src/SafeFile.cpp
-index 04919627d6aa0778e7dfd75059a83305a5192600..8684305711a5cf26329e433f2458e6b9480cbcb3 100644
+index 0491962..8684305 100644
 --- a/src/SafeFile.cpp
 +++ b/src/SafeFile.cpp
 @@ -1,5 +1,10 @@
@@ -174,7 +174,7 @@ index 04919627d6aa0778e7dfd75059a83305a5192600..8684305711a5cf26329e433f2458e6b9
 \ No newline at end of file
 +#endif
 diff --git a/src/SafeFile.h b/src/SafeFile.h
-index 3d0f81cad270a96613d8489adbfb1faab5d8793e..799ce95953e7bdcbac578116aa2ab24256018657 100644
+index 3d0f81c..799ce95 100644
 --- a/src/SafeFile.h
 +++ b/src/SafeFile.h
 @@ -13,7 +13,7 @@
@@ -216,7 +216,7 @@ index 3d0f81cad270a96613d8489adbfb1faab5d8793e..799ce95953e7bdcbac578116aa2ab242
 +#endif
 diff --git a/src/mesh/LegionCrc32.h b/src/mesh/LegionCrc32.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..d510e05b57bf368a6f68939f2ba7a80e56d99032
+index 0000000..d510e05
 --- /dev/null
 +++ b/src/mesh/LegionCrc32.h
 @@ -0,0 +1,11 @@
@@ -233,7 +233,7 @@ index 0000000000000000000000000000000000000000..d510e05b57bf368a6f68939f2ba7a80e
 +}
 diff --git a/src/mesh/LegionPersistence.cpp b/src/mesh/LegionPersistence.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..41885ab17e28d699f1688f1338f8c2c10899b886
+index 0000000..41885ab
 --- /dev/null
 +++ b/src/mesh/LegionPersistence.cpp
 @@ -0,0 +1,95 @@
@@ -334,7 +334,7 @@ index 0000000000000000000000000000000000000000..41885ab17e28d699f1688f1338f8c2c1
 +#endif
 diff --git a/src/mesh/LegionPersistence.h b/src/mesh/LegionPersistence.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..67914b163e643ddd61b94428909d65b195c2f300
+index 0000000..67914b1
 --- /dev/null
 +++ b/src/mesh/LegionPersistence.h
 @@ -0,0 +1,12 @@
@@ -351,10 +351,10 @@ index 0000000000000000000000000000000000000000..67914b163e643ddd61b94428909d65b1
 +void legionLogPersistenceStats();
 +#endif
 diff --git a/src/mesh/NodeDB.cpp b/src/mesh/NodeDB.cpp
-index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..5e77f7c74509ff61e722a363f82479d4a808b17a 100644
+index e0647a1..e0d2db8 100644
 --- a/src/mesh/NodeDB.cpp
 +++ b/src/mesh/NodeDB.cpp
-@@ -46,6 +46,10 @@
+@@ -49,6 +49,10 @@
  #include <pb_decode.h>
  #include <pb_encode.h>
  #include <power/PowerHAL.h>
@@ -365,7 +365,7 @@ index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..5e77f7c74509ff61e722a363f82479d4
  #include <vector>
  
  #ifdef MESHTASTIC_ENCRYPTED_STORAGE
-@@ -3168,6 +3172,9 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
+@@ -3356,6 +3360,9 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
      }
  #endif
  
@@ -375,7 +375,7 @@ index 4ba3e8fd1401ab00ff8e65b746e77f9b2a5090bf..5e77f7c74509ff61e722a363f82479d4
      bool okay = false;
  #ifdef FSCom
      auto f = SafeFile(filename, fullAtomic);
-@@ -3191,6 +3198,7 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
+@@ -3379,6 +3386,7 @@ bool NodeDB::saveProto(const char *filename, size_t protoSize, const pb_msgdesc_
      LOG_ERROR("Filesystem not implemented");
  #endif
      return okay;

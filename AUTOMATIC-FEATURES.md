@@ -3,12 +3,13 @@
 [Overview](README.md) · [Commands](COMMANDS.md) · [Rescue backup](RECOVERY.md) · [Energy recovery](ENERGY-RECOVERY.md) · [APC](APC.md)
 
 CC310 hashing, bulk radio SPI, flash persistence and REG1 DC/DC are included in
-the **Legion 0.7.1** firmware profile for the **RAK3401 1W with RAK13302**.
+the **Legion 0.7.2** firmware profile for the **RAK3401 1W with RAK13302**.
 They work automatically in their normal firmware paths and need no separate
 activation command or app setting. A private LegionRF channel is only needed
 to request the component report described below.
 
-These features operate independently of APC, which starts OFF after every boot.
+These features operate independently of APC. APC defaults to OFF at boot unless
+the user has saved [permanent arming](COMMANDS.md#arm-and-disarm).
 
 ## CC310 hashing
 
@@ -24,6 +25,12 @@ compatibility.
 The component report's `SHA` and `MAC` counters record successful hardware
 operations since boot. `SW` counts attempts that fell back to software.
 A zero `MAC` count can be normal when no ACK-proof HMAC operation has occurred.
+
+The 0.7.2 nightly base also accelerates the Ed25519 base-point multiplication
+used by XEdDSA signing on CC310 and avoids repeating expensive RNG setup.
+Legion preserves its accelerator-session locking and the upstream self-test
+and software fallback. `SHA`/`MAC` do not count signing operations. This new
+upstream path is pending HW verification; no battery gain has been measured.
 
 ## Bulk radio SPI at 8 MHz
 
@@ -61,6 +68,11 @@ Critical configuration files use the staged replacement path. The large
 Unsaved RAM state can still be lost if power disappears during operation.
 The [energy policy](ENERGY-RECOVERY.md#thresholds-and-timing) also guards saves
 when the supply is weak.
+
+`/components` now includes `SAVE C:n U:n S:n F:n`: preference saves checked,
+identical saves skipped, completed saves and failed attempts since boot.
+Reading the counters does not save settings. These counts cover the protobuf
+preference-save path; they are not a count of every filesystem write.
 
 For an explicit restorable configuration snapshot, use the
 [manual rescue backup](RECOVERY.md). Flash persistence applies to ordinary
@@ -117,6 +129,7 @@ To query a Legion node, send this as a channel message on the private
 
 ```text
 /components !abcdef01
+/components PSVR
 ```
 
 Illustrative reply:
@@ -126,11 +139,11 @@ Illustrative reply:
 CC310 SHA:1357 MAC:2 SW:0
 SPI:ON 8MHz BULK:ON
 DC/DC:ON REG1
+SAVE C:20 U:14 S:6 F:0
 ```
 
 `/components` reads existing counters and component state. It does not activate
-these features, reinitialize hardware or write settings to flash. Flash
-persistence has no field in this report. See the
+these features, reinitialize hardware or write settings to flash. See the
 [component field reference](COMMANDS.md#component-fields) for all field meanings.
 
 ## Validation status
@@ -139,4 +152,5 @@ The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026.
 This includes failed-save temporary cleanup and the fixed-position warning,
 alongside the commands, DAILY score and previously verified components.
 Automated tests cover the save failure paths and voltage guards.
+The 0.7.2 base migration, signing path and new SAVE report fields are pending HW.
 Current consumption and battery-life gains have not been measured.

@@ -2,13 +2,13 @@
 
 [Commands](COMMANDS.md) · [APC](APC.md)
 
-Boot mode is **OBSERVE**. This models decisions and simulated quarantines while
-allowing traffic. **ON** must be selected explicitly and enforces the same
+Boot defaults to **OBSERVE** unless saved permanent arming restores ON after startup checks. This models decisions and simulated quarantines while
+allowing traffic. **ON** enforces the same
 policy. **OFF** bypasses detection. Mode changes clear evidence, not counters;
-selecting the current mode again preserves evidence. Everything is RAM-only.
+selecting the current mode again preserves evidence. Evidence, counters and quarantines are RAM-only. The separate permanent-arm preference persists.
 
 Send these commands as broadcasts on your existing private secondary **LegionRF**
-channel, replacing `!abcdef01` with the full ID of the executing Legion:
+channel, replacing `!abcdef01` with the full ID or short name of the executing Legion:
 
 | Command | Result |
 | --- | --- |
@@ -16,7 +16,8 @@ channel, replacing `!abcdef01` with the full ID of the executing Legion:
 | `/guard observe !abcdef01` | Model the detector without blocking. |
 | `/guard on !abcdef01` | Enforce detection and quarantine. |
 | `/guard off !abcdef01` | Stop detection and clear temporary evidence. |
-| `/arm !abcdef01` / `/disarm !abcdef01` | Enable or disable antispam together with APC. |
+| `/arm !abcdef01` / `/disarm !abcdef01` | Enable or disable both and clear saved permanent arming. |
+| `/arm permanent PSVR` | Enable both and save automatic arming across restarts. |
 | `/guard clear !abcdef01 !12345678` | Clear temporary evidence for that peer in both identity domains. Manual ignore remains unchanged. |
 | `/spamlist !abcdef01 [page]` | Snapshot of quarantines, signed/unsigned identity, cause and seconds remaining. Request page 1 first. |
 
@@ -44,8 +45,8 @@ change clears evidence and disarms the detector to OFF.
 
 The receive gate precedes chat/module/MQTT dispatch. Duplicate forwarding and
 already encrypted queued packets also check quarantine; queued metadata is
-removed on release. No persistent settings, NodeDB ignore flag or backup is
-written by this feature.
+removed on release. The detector writes no NodeDB ignore flag or backup. Only explicit permanent
+arming writes the separate startup preference; see [arming](COMMANDS.md#arm-and-disarm).
 
 [DAILY](COMMANDS.md#daily) reports antispam alongside the other 24-hour fields. For example:
 
@@ -59,6 +60,7 @@ BACKUP:UP TO DATE
 OBSERVE uses `SPAM:OBSERVE simQ:1` so a modeled quarantine is never presented as
 an enforced block. Status and DAILY do not reset evidence or APC report captures.
 
-The owner confirmed commands and modes tested on HW with Legion 0.7.1 rc.2,
+The owner confirmed commands and modes tested on HW with Legion 0.7.1,
 including the action-first `/guard` syntax.
+Permanent arming and short-name selectors are pending HW in 0.7.2.
 RF range, consumption and measured energy savings remain unverified.

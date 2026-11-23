@@ -1,8 +1,8 @@
 diff --git a/src/mesh/RadioLibInterface.cpp b/src/mesh/RadioLibInterface.cpp
-index f890fcd..8755e7c 100644
+index 4470037..78b24fa 100644
 --- a/src/mesh/RadioLibInterface.cpp
 +++ b/src/mesh/RadioLibInterface.cpp
-@@ -13,6 +13,10 @@
+@@ -16,6 +16,10 @@
  #include <pb_decode.h>
  #include <pb_encode.h>
  
@@ -13,12 +13,12 @@ index f890fcd..8755e7c 100644
  #if RAK3401_LEGION_POWER
  #include "power/RAK3401LegionPower.h"
  #endif
-@@ -362,6 +366,9 @@ void RadioLibInterface::updateNoiseFloor()
-     }
+@@ -447,6 +451,9 @@ void RadioLibInterface::updateNoiseFloor()
  
-     noiseFloorSamples[currentSampleIndex] = (int32_t)rssi;
+     const int32_t sample = rssiAtAntenna(rssi);
+     noiseFloorSamples[currentSampleIndex] = sample;
 +#if RAK3401_LEGION_TELEMETRY
-+    legionTelemetryObserveNoise(rssi);
++    legionTelemetryObserveNoise(sample);
 +#endif
      currentSampleIndex++;
  
@@ -425,7 +425,7 @@ index 0000000..d80b47e
 +};
 +} // namespace legion
 diff --git a/src/modules/Modules.cpp b/src/modules/Modules.cpp
-index dec52ae..3599fea 100644
+index 47d2913..78ccf39 100644
 --- a/src/modules/Modules.cpp
 +++ b/src/modules/Modules.cpp
 @@ -1,4 +1,7 @@
@@ -436,7 +436,7 @@ index dec52ae..3599fea 100644
  #if !MESHTASTIC_EXCLUDE_INPUTBROKER
  #include "buzz/BuzzerFeedbackThread.h"
  #include "modules/SystemCommandsModule.h"
-@@ -131,6 +134,9 @@
+@@ -156,6 +159,9 @@ static void warnUnreadCommandSensors()
   */
  void setupModules()
  {

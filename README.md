@@ -9,9 +9,9 @@
 </p>
 
 Meshtastic firmware for the **RAK3401 1W with RAK13302**.
-Current release: **Legion 0.7.1**, based on Meshtastic **v2.8.3.a8f6f58**
-at [`a8f6f58`](https://github.com/meshtastic/firmware/commit/a8f6f580476f0884965bc24fc94e6c0f24867dcb).
-The node reports **`2.8.3.Legion0.7.1`**.
+Current release: **Legion 0.7.2**, based on Meshtastic **v2.8.3.d0f4096**
+at [`d0f4096`](https://github.com/meshtastic/firmware/commit/d0f4096788545fb3c5e22d2a7e52ac6c268caac1).
+The node reports **`2.8.3.Legion0.7.2`**.
 
 Legion focuses on this kit's radio operation, energy resilience and private
 remote tools. Current consumption and battery-life gains have not been measured.
@@ -21,17 +21,20 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | Feature | What it does | Hardware status |
 | --- | --- | --- |
 | [Remote node tools](COMMANDS.md#command-reference) | Provides private telemetry, remote traceroute, text messages, scheduled restarts, direct RF peer lists, ignore-list management and secondary-channel editing. | Command operation confirmed on hardware. |
+| [Node selection](COMMANDS.md#node-selection) | Accepts a full node ID or the node's short name in all targeted commands. | Pending HW. |
+| [Position query](COMMANDS.md#position-query) | Reports local coordinates, validity, fixed mode and configured LoRa/MQTT publication. | Pending HW. |
+| [Channel list](COMMANDS.md#secondary-channels) | Lists configured channel names and their one-based positions. | Pending HW. |
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
 | [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on HW. |
 | [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | Command operation confirmed on hardware. |
-| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together with one confirmation. | Tested on HW in rc.2. |
-| [DAILY](COMMANDS.md#daily) | Includes the 24-hour battery balance, MeshHealth and LoRa activity. Estimates beyond 768 tracked nodes carry `~`. | Tested on HW in rc.2, including the score. |
-| [CPU thermal hibernation](AUTOMATIC-FEATURES.md#cpu-thermal-hibernation) | Sleeps at sustained high chip temperature and restarts after cooling. | Tested on HW in rc.2. |
-| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. Reports hibernation entry and exit on LegionRF. | Command and notices tested on HW in rc.2. |
-| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Recovery and notices tested on HW in rc.2. |
-| [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hardware use and component queries confirmed. |
+| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together. `/arm permanent` saves automatic arming across restarts. | Temporary modes tested on HW. Permanent arming pending HW. |
+| [DAILY](COMMANDS.md#daily) | Includes the 24-hour battery balance, MeshHealth and LoRa activity. `/daily` queries the last closed MeshHealth cut. Estimates carry `~`. | Automatic report tested on HW. Manual query pending HW. |
+| [CPU thermal hibernation](AUTOMATIC-FEATURES.md#cpu-thermal-hibernation) | Sleeps at sustained high chip temperature and restarts after cooling. | Tested on HW. |
+| [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. Reports hibernation entry and exit on LegionRF. | Command and notices tested on HW. |
+| [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Recovery and notices tested on HW. |
+| [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hashing tested on HW. New XEdDSA signing acceleration and persistence counters pending HW. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
 | [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves, verifies temporary writes and removes failed staging files when supply permits. | Tested on HW in Legion 0.7.1, including failed-save cleanup. |
 | [Fixed-position warning](AUTOMATIC-FEATURES.md#fixed-position-warning) | Warns on LegionRF after 5 minutes with fixed position enabled and coordinates `0,0`, then every 12 hours until corrected. | Tested on HW in Legion 0.7.1. |
@@ -39,6 +42,10 @@ remote tools. Current consumption and battery-life gains have not been measured.
 
 “Tested” describes observed operation, not complete validation of every condition.
 The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026.
+
+The 0.7.2 migration adds upstream CC310 signing acceleration, improved startup
+LoRa validation and recovery of interrupted XModem file transfers. The new base,
+short-name selection and new command capabilities are pending HW testing.
 
 CC310, bulk SPI, flash persistence, REG1 DC/DC, CPU thermal hibernation and the fixed-position warning are
 [automatic features](AUTOMATIC-FEATURES.md): no activation command or app setting
@@ -56,12 +63,16 @@ Previous releases remain available for rollback.
 For remote tools, configure one private **SECONDARY** channel named exactly
 **LegionRF**, with your own random **16- or 32-byte PSK**, and share it with trusted
 requesting nodes. Send commands as channel messages, including when connected
-directly to the Legion node. Replace the example ID with the target's full ID:
+directly to the Legion node. Select the target by full ID or short name, for
+example `/telemetry !abcdef01` or `/telemetry PSVR`.
 
 ```text
 /telemetry !abcdef01
 /boot !abcdef01
-/components !abcdef01
+/components PSVR
+/daily PSVR
+/position PSVR
+/listchannels PSVR
 /apc status !abcdef01
 /guard status !abcdef01
 /spamlist !abcdef01
@@ -74,11 +85,12 @@ directly to the Legion node. Replace the example ID with the target's full ID:
 - [APC](APC.md): Adaptive Power Control modes, battery policy and RF diagnostics.
 - [Antispam](ANTISPAM.md): spam detection, control commands and quarantine rules.
 
-**APC starts OFF after every boot.** Its settings and counters remain in RAM.
-APC combines S1 relay admission with S2 RF selection.
-Antispam starts OBSERVE. Use `/arm !nodeid` to enable both APC and antispam
-and `/disarm !nodeid` to turn both off. The [DAILY](COMMANDS.md#daily) now
-includes the battery balance and MeshHealth alongside APC, antispam and backup.
+APC defaults to OFF and antispam to OBSERVE at boot. Use `/arm PSVR` for the
+current run, `/arm permanent PSVR` to save arming across restarts, and
+`/disarm PSVR` to turn both off and clear the saved preference. APC combines S1
+relay admission with S2 RF selection and retains its startup checks and warmup.
+The [DAILY](COMMANDS.md#daily) includes battery balance and MeshHealth alongside
+APC, antispam and backup.
 
 Use `/ignore name !abcdef01 "Long name"` to save a name rule on a selected Legion.
 `/scramble !abcdef01` silences the selected node for 60 minutes. It can send a

@@ -2,7 +2,7 @@
 """Integrate 0.7.2 into the existing illustrated manuals (requires PyMuPDF).
 
 The committed 0.7.1 editions are the reproducible source. Reuse their cover and
-chapter illustrations; insert Drakarys after /msg, before channel management.
+chapter illustrations; insert Dracarys after /msg, before channel management.
 Do not use the older append-only 0.6.5 maintenance scripts for this edition.
 """
 from pathlib import Path
@@ -223,10 +223,10 @@ def build(lang):
             c.para('Sustituye !nodeid o nombrecorto por los datos reales de tu nodo. La barra | significa «o»; no se escribe. PSVR y AZTH son solo nombres cortos de ejemplo.',
                    'Replace !nodeid or shortname with your actual node details. The | bar means “or”; do not type it. PSVR and AZTH are only example short names.')
             c.example('/telemetry PSVR\n/telemetry AZTH',size=9)
-            c.table([('Quiero…','Página'),('Preparar LegionRF y elegir nodo','3–4'),('Consultar telemetría, posición, arranque y componentes','5–7'),('Enviar texto o invocar Drakarys','8–9'),('Gestionar canales y reiniciar','10–11'),('Explorar rutas, ignorar y filtrar spam','12–15'),('Guardar y recuperar ajustes','16–17'),('Usar APC, incluido armado permanente','18–20'),('Entender voltajes y recuperación','21–22'),('Actualizar y consultar DAILY','23–24'),('Recetas, dudas, chuletas y créditos','25–29')],
-                    [('I want to…','Page'),('Set up LegionRF and select a node','3–4'),('Query telemetry, position, boot and components','5–7'),('Send text or invoke Drakarys','8–9'),('Manage channels and restart','10–11'),('Explore routes, ignore nodes and filter spam','12–15'),('Save and restore settings','16–17'),('Use APC, including permanent arming','18–20'),('Understand voltage and energy recovery','21–22'),('Update and query DAILY','23–24'),('Recipes, questions, cheat sheets and credits','25–29')],widths=[444,67],size=9)
-            c.callout('ESTADO EN HW','HW STATUS','Funciones heredadas de 0.7.1: probadas en HW. Base y novedades de 0.7.2: pendientes de HW. Véase la ficha final.',
-                      'Inherited 0.7.1 functions: tested on HW. The 0.7.2 base and new capabilities: pending HW. See the final edition page.')
+            c.table([('Quiero…','Página'),('Preparar LegionRF y elegir nodo','3–4'),('Consultar telemetría, posición, arranque y componentes','5–7'),('Enviar texto o invocar Dracarys','8–9'),('Gestionar canales y reiniciar','10–11'),('Explorar rutas, ignorar y filtrar spam','12–15'),('Guardar y recuperar ajustes','16–17'),('Usar APC, incluido armado permanente','18–20'),('Entender voltajes y recuperación','21–22'),('Actualizar y consultar DAILY','23–24'),('Recetas, dudas, chuletas y créditos','25–29')],
+                    [('I want to…','Page'),('Set up LegionRF and select a node','3–4'),('Query telemetry, position, boot and components','5–7'),('Send text or invoke Dracarys','8–9'),('Manage channels and restart','10–11'),('Explore routes, ignore nodes and filter spam','12–15'),('Save and restore settings','16–17'),('Use APC, including permanent arming','18–20'),('Understand voltage and energy recovery','21–22'),('Update and query DAILY','23–24'),('Recipes, questions, cheat sheets and credits','25–29')],widths=[444,67],size=9)
+            c.callout('ESTADO EN HW','HW STATUS','Funciones y comandos nuevos: probados en HW. La base y las firmas nuevas conservan verificación pendiente. Véase la ficha final.',
+                      'Inherited functions and new commands: tested on HW. The base and new signing path retain pending verification. See the final edition page.')
         elif old == 3:
             c=chapter(old,'PREPARACIÓN','SETUP','La puerta de entrada:\nLegionRF.','The gateway:\nLegionRF.',
                       'Un canal privado compartido con los nodos desde los que quieras manejar tu Legion.','A private channel shared with the nodes you use to control your Legion.')
@@ -420,8 +420,8 @@ def build(lang):
                     [('Command','Reply / duration'),('/arm PSVR','APC ON (S1+S2). SPAM ON. This run only; clears prior permanent arming.'),('/arm permanent PSVR','APC ON (S1+S2). SPAM ON. AUTOARM saved. Saves and verifies flash for restoration after reboot.'),('/disarm PSVR','APC OFF. SPAM OFF. Clears permanent arming.')],widths=[185,326],size=9)
             c.para('Todas admiten también !nodeid. Si no puede armar o guardar, responde un error y conserva los modos. Sin preferencia válida arranca APC OFF y spam OBSERVE; con permanencia restaura ambos tras las comprobaciones de configuración y activación. Cada arranque abre sesión y calentamiento nuevos. Contadores y cuarentenas no se guardan.',
                    'All also accept !nodeid. If arming or saving fails, an error is returned and modes remain unchanged. Without a valid preference, boot uses APC OFF and spam OBSERVE; saved arming restores both after configuration and activation checks. Each boot starts a fresh session and warmup. Counters and quarantines are not saved.',size=9.1)
-            c.para('Los cambios individuales /apc y /guard afectan a esta ejecución; no borran AUTOARM. Repetir modo conserva sesión. Modos heredados: probados en HW. Permanencia: pendiente de HW.',
-                   'Individual /apc and /guard changes affect this run; they do not clear AUTOARM. Repeating a mode preserves the session. Inherited modes: tested on HW. Permanent arming: pending HW.',size=9)
+            c.para('Los cambios individuales /apc y /guard afectan a esta ejecución; no borran AUTOARM. Repetir modo conserva sesión. Modos heredados y armado permanente: probados en HW.',
+                   'Individual /apc and /guard changes affect this run; they do not clear AUTOARM. Repeating a mode preserves the session. Inherited modes and permanent arming: tested on HW.',size=9)
         elif old == 19:
             c=chapter(old,'APC · /apc status','APC · /apc status','El informe,\npágina a página.','The report,\npage by page.',
                       'Siete páginas de una captura; S2 en la séptima y AUTOARM en la primera.','Seven pages in one snapshot; S2 on page seven and AUTOARM on page one.')
@@ -461,8 +461,8 @@ def build(lang):
                    'Use UF2 over USB or the OTA ZIP with nRF Connect. These are application packages; they do not update the bootloader/SoftDevice and preserve the rescue reserve. A normal update does not require a factory reset. Keep an external settings export.')
             c.para('Tras arrancar consulta /telemetry PSVR, /components PSVR y /backup status PSVR respetando las pausas. El backup no se refresca solo. El armado permanente, si existe, restaura ambos modos con comprobaciones y un calentamiento nuevo.',
                    'After boot, query /telemetry PSVR, /components PSVR and /backup status PSVR with their cooldowns. The backup does not refresh itself. Saved permanent arming restores both modes with checks and a fresh warmup.')
-            c.callout('PENDIENTE DE HW EN 0.7.2','PENDING HW IN 0.7.2','Base, firmas aceleradas y capacidades nuevas pendientes de pruebas en placa. Las funciones heredadas de 0.7.1 fueron probadas en HW. Consumo, autonomía y potencia RF real no medidos.',
-                      'The base, accelerated signing and new capabilities await board tests. Inherited 0.7.1 functions were tested on HW. Consumption, battery life and actual RF output are unmeasured.')
+            c.callout('PENDIENTE DE HW EN 0.7.2','PENDING HW IN 0.7.2','Comandos nuevos y funciones heredadas: probados en HW. Base y firmas aceleradas conservan verificación pendiente. Consumo, autonomía y potencia RF real no medidos.',
+                      'New commands and inherited functions: tested on HW. The base and accelerated signing retain pending verification. Consumption, battery life and actual RF output are unmeasured.')
         elif old == 23:
             c=chapter(old,'DAILY · AVISO Y CONSULTA','DAILY · REMINDER AND QUERY','Un corte al día.\nTambién a petición.','One cut a day.\nAlso on request.',
                       'El informe automático y /daily comparten el último corte cerrado de MeshHealth.','The automatic report and /daily share the latest closed MeshHealth cut.')
@@ -492,10 +492,10 @@ def build(lang):
             c.heading('Estado, posición y último DAILY','Status, position and last DAILY')
             c.code('/telemetry PSVR\n/boot PSVR\n/components PSVR\n/position PSVR\n/daily PSVR',size=9)
             c.heading('Mensajes, canales y reinicio','Messages, channels and restart')
-            c.code('/msg PSVR SFNarrow Hola desde Legion\n/drakarys PSVR SFNarrow Hola desde Legion\n/listchannels PSVR\n/createch PSVR "Mi canal" PSK_BASE64\n/deletech PSVR "Mi canal"\n/reboot PSVR',
-                   '/msg PSVR SFNarrow Hello from Legion\n/drakarys PSVR SFNarrow Hello from Legion\n/listchannels PSVR\n/createch PSVR "My channel" PSK_BASE64\n/deletech PSVR "My channel"\n/reboot PSVR',size=9)
-            c.para('Drakarys envía a la máxima potencia disponible y 7 saltos: evalúa su legalidad en tu región y úsalo bajo tu responsabilidad. Detalles en la página 9.',
-                   'Drakarys sends at maximum available power and seven hops: assess legality in your region and use it under your responsibility. Details on page 9.',size=9)
+            c.code('/msg PSVR SFNarrow Hola desde Legion\n/dracarys PSVR SFNarrow Hola desde Legion\n/listchannels PSVR\n/createch PSVR "Mi canal" PSK_BASE64\n/deletech PSVR "Mi canal"\n/reboot PSVR',
+                   '/msg PSVR SFNarrow Hello from Legion\n/dracarys PSVR SFNarrow Hello from Legion\n/listchannels PSVR\n/createch PSVR "My channel" PSK_BASE64\n/deletech PSVR "My channel"\n/reboot PSVR',size=9)
+            c.para('Dracarys envía a la máxima potencia disponible y 7 saltos: evalúa su legalidad en tu región y úsalo bajo tu responsabilidad. Detalles en la página 9.',
+                   'Dracarys sends at maximum available power and seven hops: assess legality in your region and use it under your responsibility. Details on page 9.',size=9)
             c.heading('Vecinos, rutas e ignorados','Neighbours, routes and ignored nodes')
             c.code('/zerohop PSVR [página]\n/trace PSVR RLY1\n/ignore PSVR !12345678\n/unignore PSVR RLY1\n/ignorelist PSVR [página]',
                    '/zerohop PSVR [page]\n/trace PSVR RLY1\n/ignore PSVR !12345678\n/unignore PSVR RLY1\n/ignorelist PSVR [page]',size=9)
@@ -525,21 +525,21 @@ def build(lang):
             c.heading('Probado en HW / pendiente de HW','Tested on HW / pending HW')
             c.para('Javier confirmó las funciones de Legion 0.7.1 probadas en HW el 23/11/2026, incluidos comandos, DAILY, limpieza de temporales y aviso de posición fija. Esta observación pertenece a la versión anterior.',
                    'Javier confirmed Legion 0.7.1 functions tested on HW on 23 November 2026, including commands, DAILY, temporary cleanup and fixed-position warning. This observation belongs to the previous version.',size=9.2)
-            c.para('Pendientes en 0.7.2: migración de base y firmas CC310, nombres cortos, /daily, /position, /listchannels, contadores SAVE, armado permanente y Drakarys. La compilación y pruebas de software no equivalen a pruebas físicas. Potencia RF, alcance y ahorro no medidos.',
-                   'Pending in 0.7.2: base migration and CC310 signing, short names, /daily, /position, /listchannels, SAVE counters, permanent arming and Drakarys. Compilation and software tests are not physical tests. RF output, range and savings remain unmeasured.',size=9.2)
+            c.para('Javier confirma los nuevos comandos de la 0.7.2, nombres cortos, contadores SAVE y armado permanente probados en HW. Se corrige la activación a /dracarys. La base y las firmas CC310 conservan verificación pendiente. Potencia RF, alcance y ahorro no medidos.',
+                   'Javier confirms the new 0.7.2 commands, short names, SAVE counters and permanent arming tested on HW. Activation spelling is corrected to /dracarys. The base and CC310 signing retain pending verification. RF output, range and savings remain unmeasured.',size=9.2)
             c.heading('Proyecto y fuentes','Project and sources')
-            c.para('Legion es el proyecto de Ethan (Javier), basado en Meshtastic y su comunidad; conserva GPL-3.0. Reconoce la inspiración de NavaTastic en resiliencia y de Nexus/Jentastic en comandos. Se conservan el logo y los demonios originales, con una ilustración nueva para Drakarys.',
-                   'Legion is Ethan (Javier)’s project, based on Meshtastic and its community, retaining GPL-3.0. It acknowledges NavaTastic for resilience inspiration and Nexus/Jentastic for commands. The original logo and demons remain, with a new Drakarys illustration.',size=9.2)
+            c.para('Legion es el proyecto de Ethan (Javier), basado en Meshtastic y su comunidad; conserva GPL-3.0. Reconoce la inspiración de NavaTastic en resiliencia y de Nexus/Jentastic en comandos. Se conservan el logo y los demonios originales, con una ilustración nueva para Dracarys.',
+                   'Legion is Ethan (Javier)’s project, based on Meshtastic and its community, retaining GPL-3.0. It acknowledges NavaTastic for resilience inspiration and Nexus/Jentastic for commands. The original logo and demons remain, with a new Dracarys illustration.',size=9.2)
             c.code('github.com/ethan1980/RAK3401-Legion\nCOMMANDS.md · APC.md · ANTISPAM.md\nRECOVERY.md · ENERGY-RECOVERY.md\nAUTOMATIC-FEATURES.md · CHANGELOG.md',size=8.6)
             c.para('Unleash your demons.','Unleash your demons.')
         else:
             copy_page(out,source,old,len(out)+1,lang)
         if old == 8:
-            c=Chapter(out,source,old,len(out)+1,lang,T('ACTUAR · /drakarys','ACT · /drakarys'),
-                      T('Drakarys.\nUn mensaje de fuego.','Drakarys.\nA message of fire.'),
+            c=Chapter(out,source,old,len(out)+1,lang,T('ACTUAR · /dracarys','ACT · /dracarys'),
+                      T('Dracarys.\nUn mensaje de fuego.','Dracarys.\nA message of fire.'),
                       T('Envía a la máxima potencia disponible y a 7 saltos.','Sends at the maximum available power and seven hops.'),new_art=True)
-            c.code('/drakarys !abcdef01 SFNarrow Mensaje\n/drakarys PSVR SFNarrow Mensaje',
-                   '/drakarys !abcdef01 SFNarrow Message\n/drakarys PSVR SFNarrow Message',size=9.2)
+            c.code('/dracarys !abcdef01 SFNarrow Mensaje\n/dracarys PSVR SFNarrow Mensaje',
+                   '/dracarys !abcdef01 SFNarrow Message\n/dracarys PSVR SFNarrow Message',size=9.2)
             c.para('Envía la orden por LegionRF. El nodo publica el texto por el canal indicado a la máxima potencia disponible y a 7 saltos. Puedes usar el ID o el nombre corto del ejecutor.',
                    'Send the command in LegionRF. The node publishes the text on the selected channel at the maximum available power and seven hops. Select the executor by ID or short name.')
             c.para('Es un envío puntual: después se usan los ajustes normales. No guarda otra configuración de potencia o saltos. Como en /msg, el canal debe estar habilitado, el nombre admite comillas y hasta 11 bytes UTF-8, y toda la orden debe caber en 199 bytes.',
@@ -551,7 +551,7 @@ def build(lang):
             c.callout('RESPONSABILIDAD DEL USUARIO','USER RESPONSIBILITY',
                       'Usar este comando bajo responsabilidad del usuario. Es el usuario el que debe evaluar si la máxima potencia disponible es legal en su región y si puede o no usar el comando.',
                       'Use this command under the user’s responsibility. The user must assess whether the maximum available power is legal in their region and whether they may use the command.')
-            c.para('Funcionamiento pendiente de pruebas en HW en Legion 0.7.2.','Operation pending HW tests in Legion 0.7.2.',size=9)
+            c.para('Funcionamiento del comando probado en HW; activación corregida a /dracarys.','Command operation tested on HW; activation spelling corrected to /dracarys.',size=9)
     assert len(out)==29
     full='\n'.join(p.get_text() for p in out)
     for required in ('2.8.3.Legion0.7.2','/daily','/position','/listchannels','/arm permanent','SAVE C:','Pōntes valar!','d0f4096'):

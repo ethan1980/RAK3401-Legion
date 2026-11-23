@@ -5,7 +5,7 @@
 **APC means Adaptive Power Control.** Legion combines the existing **S1**
 optional-relay budget with **S2** per-packet RF selection. Reception remains active.
 
-**Hardware status:** Existing mode commands have been tested on HW. Permanent arming in 0.7.2 is pending HW. S2 radio-power targets have not been measured with RF
+**Hardware status:** Existing mode commands have been tested on HW. Permanent arming in 0.7.2 has also been tested on HW. S2 radio-power targets have not been measured with RF
 test equipment; savings, range and autonomy remain unmeasured.
 
 ## Modes and commands

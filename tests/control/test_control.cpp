@@ -211,9 +211,12 @@ void test_drakarys_command_and_rf_isolation()
     const auto parse = [](const std::string &text) {
         return legion::parseControl(reinterpret_cast<const uint8_t *>(text.data()), text.size(), ownNode);
     };
-    assert(parse("/drakarys !abcdef01 SFNarrow one").valid);
+    assert(parse("/dracarys !abcdef01 SFNarrow one").valid);
+    assert(parse("/drakarys !abcdef01 SFNarrow one").command == legion::ControlCommand::None);
+    const std::string namedCommand = "/dracarys PSVR SFNarrow one";
+    assert(legion::parseControl(reinterpret_cast<const uint8_t *>(namedCommand.data()), namedCommand.size(), ownNode, owner.short_name).valid);
     assert(parse("/drakaris !abcdef01 SFNarrow one").command == legion::ControlCommand::None);
-    assert(!parse("/drakarys !abcdef01 SFNarrow").valid);
+    assert(!parse("/dracarys !abcdef01 SFNarrow").valid);
     config.lora.tx_power = 27;
     std::vector<int> targets;
     meshService.onSend = [&](const meshtastic_MeshPacket &p) {
@@ -226,7 +229,7 @@ void test_drakarys_command_and_rf_isolation()
         legionTrafficTxEnded(&p, true);
         legionTrafficForget(&p);
     };
-    deliver(module, "/drakarys !abcdef01 SFNarrow one", 2);
+    deliver(module, "/dracarys !abcdef01 SFNarrow one", 2);
     assert(meshService.sent.size() == 1 && text(0) == "one");
     assert(meshService.sent[0].packet.hop_limit == HOP_MAX);
     next();
@@ -237,7 +240,7 @@ void test_drakarys_command_and_rf_isolation()
     next();
     module.runOnce();
     assert(meshService.sent.size() == 2);
-    deliver(module, "/drakarys !abcdef01 SFNarrow one", 2);
+    deliver(module, "/dracarys !abcdef01 SFNarrow one", 2);
     assert(meshService.sent.size() == 2);
     next();
     deliver(module, "/msg !abcdef01 SFNarrow two", 3);

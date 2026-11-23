@@ -147,7 +147,7 @@ def prepare_release(directory, commit):
         if level >= (0, 7, 0):
             commands += ["arm", "disarm"]
         if level >= (0, 7, 2):
-            commands += ["daily", "position", "listchannels", "drakarys"]
+            commands += ["daily", "position", "listchannels", "dracarys"]
         dcdc = manifest.get("dcdc_validation") or {}
         if not (
             manifest.get("remote_control") is True
@@ -520,7 +520,10 @@ def prepare_release(directory, commit):
         features = re.sub(r"\]\((?!https?://)([^)]+)\)", lambda match: f"]({source}{match[1]})", features)
     prerelease = level < (0, 6, 1) or "-" in version
     downloads = (
-        "- Firmware packages: see the release assets.\n\n"
+        f"- **[OTA ZIP - nRF Connect](https://github.com/ethan1980/RAK3401-Legion/releases/download/legion-v{version}-{commit[:7]}/{ota[0]})**\n"
+        f"- **[UF2 - USB](https://github.com/ethan1980/RAK3401-Legion/releases/download/legion-v{version}-{commit[:7]}/{uf2[0]})**\n\n"
+        if level >= (0, 7, 2)
+        else "- Firmware packages: see the release assets.\n\n"
         if level >= (0, 4, 2)
         else f"- USB firmware: `{uf2[0]}`\n- Wireless firmware: `{ota[0]}`\n\n"
     )

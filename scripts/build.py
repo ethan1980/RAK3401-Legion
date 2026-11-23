@@ -56,7 +56,7 @@ def package(firmware, target, output):
         for command in (
             b"/components", b"/createch", b"/deletech", b"/guard", b"/spamlist",
             b"/unignorename", b"/scramble", b"/arm", b"/disarm",
-            b"/daily", b"/position", b"/listchannels", b"/drakarys",
+            b"/daily", b"/position", b"/listchannels", b"/dracarys",
         ):
             if command + b"\0" not in firmware_bytes:
                 raise RuntimeError(
@@ -165,7 +165,7 @@ def package(firmware, target, output):
                 "daily",
                 "position",
                 "listchannels",
-                "drakarys",
+                "dracarys",
             ]
             if target == "legion"
             else []

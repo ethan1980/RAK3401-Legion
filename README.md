@@ -20,18 +20,18 @@ remote tools. Current consumption and battery-life gains have not been measured.
 
 | Feature | What it does | Hardware status |
 | --- | --- | --- |
-| [Remote node tools](COMMANDS.md#command-reference) | Provides private telemetry, remote traceroute, text messages, scheduled restarts, direct RF peer lists, ignore-list management and secondary-channel editing. | Command operation confirmed on hardware. |
+| [Remote node tools](COMMANDS.md#command-reference) | Provides private telemetry, remote traceroute, text messages, scheduled restarts, direct RF peer lists, ignore-list management and secondary-channel editing. | Commands, including the 0.7.2 additions and short-name selection, tested on HW. |
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
 | [Antispam](ANTISPAM.md) | Detects primary-channel broadcast-text bursts and temporarily quarantines abusive origins; default OBSERVE. | Commands and modes tested on HW. |
 | [Ignore by name](COMMANDS.md#ignore-by-name) | Filters exact advertised long names, including nodes that keep changing their NodeID. Rules persist across restarts. | Command operation confirmed on hardware. |
-| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together. `/arm permanent` saves automatic arming across restarts. | Temporary modes tested on HW. Permanent arming pending HW. |
-| [DAILY](COMMANDS.md#daily) | Includes the 24-hour battery balance, MeshHealth and LoRa activity. `/daily` queries the last closed MeshHealth cut. Estimates carry `~`. | Automatic report tested on HW. Manual query pending HW. |
+| [Arm and disarm](COMMANDS.md#arm-and-disarm) | Switches APC and antispam together. `/arm permanent` saves automatic arming across restarts. | Temporary and permanent arming commands tested on HW. |
+| [DAILY](COMMANDS.md#daily) | Includes the 24-hour battery balance, MeshHealth and LoRa activity. `/daily` queries the last closed MeshHealth cut. Estimates carry `~`. | Automatic report and manual query tested on HW. |
 | [CPU thermal hibernation](AUTOMATIC-FEATURES.md#cpu-thermal-hibernation) | Sleeps at sustained high chip temperature and restarts after cooling. | Tested on HW. |
 | [Scramble](COMMANDS.md#scramble) | Silences the selected Legion's LoRa, Bluetooth and USB data for 60 minutes, then restarts it. Reports hibernation entry and exit on LegionRF. | Command and notices tested on HW. |
 | [Energy recovery and resilience](ENERGY-RECOVERY.md) | Protects boot, TX and saves at low supply voltage; sleeps and wakes as energy returns. Reports low supply and recovery on LegionRF. | Recovery and notices tested on HW. |
-| [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hashing tested on HW. New XEdDSA signing acceleration and persistence counters pending HW. |
+| [CC310 hashing](AUTOMATIC-FEATURES.md#cc310-hashing) | Accelerates packet SHA-256 and ACK-proof HMAC-SHA256, with software fallback. | Hashing and persistence counters tested on HW. New XEdDSA signing acceleration pending HW. |
 | [Bulk radio SPI at 8 MHz](AUTOMATIC-FEATURES.md#bulk-radio-spi-at-8-mhz) | Transfers SX1262 buffers in blocks through the nRF52 SPI/EasyDMA path. | Active with 8 MHz bulk transfers. |
 | [Flash persistence](AUTOMATIC-FEATURES.md#flash-persistence) | Skips identical saves, verifies temporary writes and removes failed staging files when supply permits. | Tested on HW in Legion 0.7.1, including failed-save cleanup. |
 | [Fixed-position warning](AUTOMATIC-FEATURES.md#fixed-position-warning) | Warns on LegionRF after 5 minutes with fixed position enabled and coordinates `0,0`, then every 12 hours until corrected. | Tested on HW in Legion 0.7.1. |
@@ -41,8 +41,10 @@ remote tools. Current consumption and battery-life gains have not been measured.
 The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026.
 
 The 0.7.2 migration adds upstream CC310 signing acceleration, improved startup
-LoRa validation and recovery of interrupted XModem file transfers. The new base,
-short-name selection and new command capabilities are pending HW testing.
+LoRa validation and recovery of interrupted XModem file transfers. The owner confirmed
+the new commands, including `/dracarys`, short-name selection, permanent arming and
+persistence counters tested on HW on 23 November 2026. The base migration and new
+signing path retain separate pending verification.
 
 CC310, bulk SPI, flash persistence, REG1 DC/DC, CPU thermal hibernation and the fixed-position warning are
 [automatic features](AUTOMATIC-FEATURES.md): no activation command or app setting

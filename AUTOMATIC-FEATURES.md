@@ -151,5 +151,6 @@ The owner confirmed all Legion 0.7.1 functions tested on HW on 23 November 2026.
 This includes failed-save temporary cleanup and the fixed-position warning,
 alongside the commands, DAILY score and previously verified components.
 Automated tests cover the save failure paths and voltage guards.
-The 0.7.2 base migration, signing path and new SAVE report fields are pending HW.
+The 0.7.2 SAVE report fields are tested on HW. The base migration and new signing
+path retain separate pending verification.
 Current consumption and battery-life gains have not been measured.

@@ -62,5 +62,5 @@ an enforced block. Status and DAILY do not reset evidence or APC report captures
 
 The owner confirmed commands and modes tested on HW with Legion 0.7.1,
 including the action-first `/guard` syntax.
-Permanent arming and short-name selectors are pending HW in 0.7.2.
+Permanent arming and short-name selectors in 0.7.2 are tested on HW.
 RF range, consumption and measured energy savings remain unverified.

@@ -1,0 +1,24 @@
+diff --git a/src/modules/LegionControlPolicy.h b/src/modules/LegionControlPolicy.h
+--- a/src/modules/LegionControlPolicy.h
++++ b/src/modules/LegionControlPolicy.h
+@@ -406,7 +406,7 @@
+     else if (parser.token("/ignorelist"))
+         result.command = parser.token("names") ? ControlCommand::IgnoreNameList : ControlCommand::IgnoreList;
+ #if RAK3401_LEGION_TRAFFIC
+-    else if (parser.token("/drakarys"))
++    else if (parser.token("/dracarys"))
+         result.command = ControlCommand::Drakarys;
+     else if (parser.token("/spamlist"))
+         result.command = ControlCommand::SpamList;
+diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
+--- a/src/modules/LegionControlModule.cpp
++++ b/src/modules/LegionControlModule.cpp
+@@ -884,7 +884,7 @@
+         switch (request.command) {
+ #if RAK3401_LEGION_TRAFFIC
+         case legion::ControlCommand::Drakarys:
+-            usage = "Usage: /drakarys !nodeid <channel> <message>";
++            usage = "Usage: /dracarys !nodeid <channel> <message>";
+             break;
+         case legion::ControlCommand::Guard:
+             usage = "Usage: /guard status|observe|on|off !legionid; /guard clear !legionid !peerid";

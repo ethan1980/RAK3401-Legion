@@ -29,7 +29,8 @@
     "patches/0023-rak3401-daily-estimates.patch",
     "patches/0024-rak3401-fixed-position-notice.patch",
     "patches/0025-rak3401-drakarys.patch",
-    "patches/0026-rak3401-legion-072-controls.patch"
+    "patches/0026-rak3401-legion-072-controls.patch",
+    "patches/0027-rak3401-dracarys-command-spelling.patch"
   ],
   "hardware_observation": {
     "observed_build": "2.8.3.Legion0.7.1",
@@ -51,6 +52,9 @@
   "new_features_hardware_observation": {
     "observed_build": "2.8.3.Legion0.7.2",
     "confirmed": false,
-    "scope": "Nightly migration, short-name selectors, daily and position queries, persistence report, listchannels, persistent arm and Drakarys await owner hardware testing."
+    "scope": "Owner confirmed the new 0.7.2 commands, short-name selection, persistent arm and persistence report tested on hardware. Base migration and upstream signing acceleration retain separate pending verification.",
+    "commands_tested": true,
+    "confirmed_by": "Javier",
+    "confirmed_at": "2026-11-23"
   }
 }

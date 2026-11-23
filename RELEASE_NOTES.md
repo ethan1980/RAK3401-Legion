@@ -25,15 +25,16 @@ manuals use the same notation (Spanish: `!nodeid | nombrecorto`).
 - **Permanent arming.** `/arm permanent !nodeid | shortname` saves verified automatic arming of
   APC S1+S2 and antispam after restart. Ordinary `/arm` and `/disarm` clear that
   preference. Runtime statistics and quarantines start fresh after boot.
-- **Command reference.** `/drakarys` is documented in
-  [Commands](COMMANDS.md#drakarys) and its own illustrated chapter in both manuals.
+- **Command reference.** `/dracarys` is documented in
+  [Commands](COMMANDS.md#dracarys) and its own illustrated chapter in both manuals.
 - **New nightly.** Keeps upstream CC310 XEdDSA signing acceleration with Legion's
   accelerator locking, improved LoRa-preset validation at startup and restart of
   interrupted XModem transfers. Crypto dependencies follow the pinned nightly.
 
-**Pending HW:** the new base, short-name selection, new queries, SAVE fields,
-permanent arming and Drakarys. Existing Legion 0.7.1 functionality was tested on
-HW by the owner on 23 November 2026; that observation does not validate 0.7.2.
+**Tested on HW:** the owner confirmed the new 0.7.2 commands, short-name
+selection, SAVE fields and permanent arming on 23 November 2026.
+The activation spelling is corrected to `/dracarys` in this build.
+**Pending HW:** separate validation of the base migration and new signing path.
 RF output, range, consumption and energy savings have not been measured.
 
 Install the **OTA ZIP with nRF Connect** or the **UF2 over USB**. These are

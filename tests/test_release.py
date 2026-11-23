@@ -786,7 +786,7 @@ class ReleaseValidationTests(unittest.TestCase):
             hardware_tested=False,
             new_features_hardware_tested=False,
         )
-        self.manifest["control_commands"] += ["daily", "position", "listchannels", "drakarys"]
+        self.manifest["control_commands"] += ["daily", "position", "listchannels", "dracarys"]
         self.write_manifest()
         result = release.prepare_release(self.directory, self.commit)
         self.assertEqual(result["tag"], "legion-v0.7.2-aaaaaaa")

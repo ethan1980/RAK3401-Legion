@@ -67,7 +67,7 @@ it is separate from these node selectors.
 | `/telemetry` | Reachable Legion nodes report telemetry. |
 | `/telemetry !nodeid \| shortname` | Only the selected Legion reports telemetry. |
 | `/msg (!nodeid \| shortname) <channel> <message>` | The selected Legion broadcasts text on its named channel. |
-| [`/drakarys (!nodeid \| shortname) <channel> <message>`](#drakarys) | Sends the message on the selected channel at maximum available power and 7 hops. Use is under the user's responsibility; the user must assess legality in their region. |
+| [`/dracarys (!nodeid \| shortname) <channel> <message>`](#dracarys) | Sends the message on the selected channel at maximum available power and 7 hops. Use is under the user's responsibility; the user must assess legality in their region. |
 | `/reboot !nodeid \| shortname` | Schedules a normal restart 20 seconds after acceptance. |
 | `/zerohop (!nodeid \| shortname) [page]` | Lists direct RF peers, short names and SNR. |
 | `/ignore (!nodeid \| shortname) (!peerid \| shortname)` | The selected Legion ignores the second node. |
@@ -222,9 +222,9 @@ containing spaces, for example `/msg (!nodeid | shortname) "My channel" Hello`. 
 command must fit the normal 199-byte text limit; channel names are limited to
 11 bytes. There is no fallback to another channel or automatic command resend.
 
-### Drakarys
+### Dracarys
 
-Send `/drakarys (!nodeid | shortname) <channel> <message>`
+Send `/dracarys (!nodeid | shortname) <channel> <message>`
 in LegionRF. The syntax, channel selection and text limits are the same as
 for `/msg`.
 

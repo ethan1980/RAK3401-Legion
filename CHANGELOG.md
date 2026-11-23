@@ -10,9 +10,9 @@
 - Add `/listchannels` beside channel creation/deletion, preserving real one-based positions.
 - Extend `/components` with since-boot preference-save counters.
 - Add verified `/arm permanent` startup persistence; ordinary `/arm` and `/disarm` clear it.
-- Document `/drakarys` in the command reference and a new illustrated chapter in both manuals.
+- Document `/dracarys` in the command reference and a new illustrated chapter in both manuals.
 - Update both illustrated manuals and distinguish inherited HW observations from pending 0.7.2 tests.
-- New base and capabilities are pending HW; software and cross-compilation checks accompany the release.
+- New commands are tested on HW; the base migration and new signing path retain pending verification. Software and cross-compilation checks accompany the release.
 
 
 ## 0.7.1 - 2026-11-20

@@ -205,11 +205,31 @@ jobs:
           set -euo pipefail
           gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" > release-before.json
           python3 - <<'PYCODE'
+          import json
           import os
           import re
           from pathlib import Path
           source = f"https://github.com/{os.environ['GH_REPO']}/blob/{os.environ['GITHUB_SHA']}/"
-          notes = Path("RELEASE_NOTES.md").read_text()
+          version = json.loads(Path("upstream.json").read_text())["legion_version"]
+          release = json.loads(Path("release-before.json").read_text())
+          sections = re.split(r"^---[ \t]*$", Path("RELEASE_NOTES.md").read_text(), flags=re.MULTILINE)
+          heading = rf"^# Legion {re.escape(version)}(?:\s|$)"
+          notes = next((section.strip() for section in sections if re.match(heading, section.lstrip())), None)
+          if notes is None:
+              raise SystemExit(f"No release notes for Legion {version}")
+          def asset_link(suffix):
+              matches = [asset for asset in release["assets"] if asset["name"].endswith(suffix)]
+              if len(matches) != 1:
+                  raise SystemExit(f"Expected one downloadable {suffix} asset")
+              return matches[0]["browser_download_url"]
+          downloads = (
+              "## Download firmware\n\n"
+              f"- **[OTA ZIP - nRF Connect]({asset_link('-ota.zip')})**\n"
+              f"- **[UF2 - USB]({asset_link('.uf2')})**\n\n"
+              "Source, debug files and checksums are available under **Assets** below.\n\n"
+          )
+          title, body = notes.split("\n", 1)
+          notes = title + "\n\n" + downloads + body.lstrip()
           notes = re.sub(r"\]\((?!https?://)([^)]+)\)", lambda match: f"]({source}{match[1]})", notes)
           Path("release-documentation.md").write_text(notes)
           PYCODE

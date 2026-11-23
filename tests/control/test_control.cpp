@@ -383,6 +383,23 @@ void test_072_permanent_arm_restart_and_save_failures()
         assert(legionReadAutoArm() == LegionAutoArmState::Off);
         assert(legionApcControlSnapshot().mode == legion::ApcMode::On);
     }
+    // A manual OFF while startup restoration is delayed must remain OFF even
+    // when the blocking transfer ends. The next-boot preference stays saved.
+    reset();
+    autoArmFile = stored;
+    {
+        TestModule delayed;
+        xModem.busy = true;
+        delayed.runOnce();
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+        deliver(delayed, "/apc off PSVR");
+        assert(last().find("APC OFF") != std::string::npos);
+        xModem.busy = false;
+        delayed.runOnce();
+        assert(legionApcControlSnapshot().mode == legion::ApcMode::Off);
+        assert(legionTrafficGuardStatus().mode == legion::GuardMode::Observe);
+        assert(legionReadAutoArm() == LegionAutoArmState::On);
+    }
     reset();
     autoArmFile = stored;
     autoArmFile[0] ^= 1;

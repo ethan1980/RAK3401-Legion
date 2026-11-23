@@ -157,7 +157,7 @@ index 0000000000000000000000000000000000000000..825ba39ce3640e9813609810263f6f00
 +bool legionWriteAutoArm(bool enabled);
 +#endif
 diff --git a/src/modules/LegionControlModule.cpp b/src/modules/LegionControlModule.cpp
-index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc03cf6a7e 100644
+index aa1f452669b14fe2498095cf0339b04dfe48be19..242eedb43b57a25049801d010c7b759e5ce53262 100644
 --- a/src/modules/LegionControlModule.cpp
 +++ b/src/modules/LegionControlModule.cpp
 @@ -3,6 +3,8 @@
@@ -226,8 +226,15 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
                                           readChannel(channels.getPrimaryIndex(), pending.primary);
      }
      return ProcessMessage::CONTINUE;
-@@ -593,9 +611,10 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+@@ -591,11 +609,17 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+                                          "and no pending restart/transfer");
+             return;
          }
++#if RAK3401_LEGION_TRAFFIC
++        // An explicit mode choice wins over a deferred boot restore for this run.
++        // Keep the saved preference for the next boot.
++        autoArmPending = false;
++#endif
          const bool changed = setApcMode(mode, command.control, primary);
          char output[150];
 -        std::snprintf(output, sizeof(output), "APC %s%s; %s; RAM only, boot OFF", legion::apcModeName(mode),
@@ -239,7 +246,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
          reply(command.control.index, output);
          return;
      }
-@@ -614,6 +633,7 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+@@ -614,6 +638,7 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
          apcReport.from = command.from;
          apcReport.createdAt = now;
          apcReport.uptime = Time::getUptimeSecs();
@@ -247,7 +254,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
          apcReport.generation = radioGeneration;
          if (!++apcReport.capture)
              ++apcReport.capture;
-@@ -636,10 +656,11 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+@@ -636,10 +661,11 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
              std::snprintf(filtered, sizeof(filtered), "%u", c.filtered);
          n = std::snprintf(body, sizeof(body),
                            "%s %s %s\nVBAT:%u/%smV\nnext:%s %lu/%lus\neligible:%lu would:%lu "
@@ -261,7 +268,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
      } else if (page == 2) {
          const uint32_t elapsed = s.session ? (s.enabled ? apcReport.uptime : s.stopSec) - s.startSec : 0;
          char batterySum[21];
-@@ -718,10 +739,28 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
+@@ -718,10 +744,28 @@ void LegionControlModule::apc(const Pending &command, uint32_t now)
  #if RAK3401_LEGION_TRAFFIC
  void LegionControlModule::setGuardMode(legion::GuardMode mode)
  {
@@ -290,7 +297,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
  void LegionControlModule::arm(const Pending &command)
  {
      const bool enable = command.request.command == legion::ControlCommand::Arm;
-@@ -730,9 +769,19 @@ void LegionControlModule::arm(const Pending &command)
+@@ -730,9 +774,19 @@ void LegionControlModule::arm(const Pending &command)
          reply(command.control.index, "Arm requires CLIENT, stable configuration and no pending restart/transfer");
          return;
      }
@@ -311,7 +318,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
  }
  
  void LegionControlModule::guard(const Pending &command, uint32_t now)
-@@ -809,6 +858,21 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+@@ -809,6 +863,21 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
  {
      const auto &request = command.request;
      const auto channel = command.control.index;
@@ -333,7 +340,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
      if (!request.valid) {
          const char *usage = "Usage: /msg !nodeid <channel> <message>; text <=199 "
                              "UTF-8 bytes, channel <=11 bytes";
-@@ -824,7 +888,7 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+@@ -824,7 +893,7 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
              usage = "Usage: /spamlist !legionid [positive page]";
              break;
          case legion::ControlCommand::Arm:
@@ -342,7 +349,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
              break;
          case legion::ControlCommand::Disarm:
              usage = "Usage: /disarm !nodeid";
-@@ -847,6 +911,15 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+@@ -847,6 +916,15 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
          case legion::ControlCommand::Boot:
              usage = "Usage: /boot !legionid";
              break;
@@ -358,7 +365,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
          case legion::ControlCommand::Components:
              usage = "Usage: /components !legionid";
              break;
-@@ -914,6 +987,18 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
+@@ -914,6 +992,18 @@ void LegionControlModule::execute(const Pending &command, uint32_t now)
          return;
      }
  #endif
@@ -377,7 +384,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
      if (request.command == legion::ControlCommand::ZeroHop || request.command == legion::ControlCommand::IgnoreList) {
          report(command, now, request.command == legion::ControlCommand::ZeroHop);
          return;
-@@ -1076,6 +1161,75 @@ void LegionControlModule::editChannel(const Pending &command)
+@@ -1076,6 +1166,75 @@ void LegionControlModule::editChannel(const Pending &command)
      respond(text);
  }
  
@@ -453,7 +460,7 @@ index aa1f452669b14fe2498095cf0339b04dfe48be19..50812f7ef8f2ac6a46e40e9dd90db6bc
  bool LegionControlModule::controlBusy() const
  {
      return rebootAtMsec || shutdownAtMsec || legionRecoveryIsBlocked() || xModem.isBusy()
-@@ -1394,6 +1548,7 @@ int32_t LegionControlModule::runOnce()
+@@ -1394,6 +1553,7 @@ int32_t LegionControlModule::runOnce()
      cutDaily(uptime);
      pollTrace(now);
  #if RAK3401_LEGION_TRAFFIC

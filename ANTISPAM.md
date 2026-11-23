@@ -12,14 +12,14 @@ channel, replacing `!abcdef01` with the full ID or short name of the executing L
 
 | Command | Result |
 | --- | --- |
-| `/guard status !abcdef01` | Mode, active or simulated quarantines, and counters. Read-only. |
-| `/guard observe !abcdef01` | Model the detector without blocking. |
-| `/guard on !abcdef01` | Enforce detection and quarantine. |
-| `/guard off !abcdef01` | Stop detection and clear temporary evidence. |
-| `/arm !abcdef01` / `/disarm !abcdef01` | Enable or disable both and clear saved permanent arming. |
-| `/arm permanent PSVR` | Enable both and save automatic arming across restarts. |
-| `/guard clear !abcdef01 !12345678` | Clear temporary evidence for that peer in both identity domains. Manual ignore remains unchanged. |
-| `/spamlist !abcdef01 [page]` | Snapshot of quarantines, signed/unsigned identity, cause and seconds remaining. Request page 1 first. |
+| `/guard status !nodeid \| shortname` | Mode, active or simulated quarantines, and counters. Read-only. |
+| `/guard observe !nodeid \| shortname` | Model the detector without blocking. |
+| `/guard on !nodeid \| shortname` | Enforce detection and quarantine. |
+| `/guard off !nodeid \| shortname` | Stop detection and clear temporary evidence. |
+| `/arm !nodeid \| shortname` / `/disarm !nodeid \| shortname` | Enable or disable both and clear saved permanent arming. |
+| `/arm permanent !nodeid \| shortname` | Enable both and save automatic arming across restarts. |
+| `/guard clear (!nodeid \| shortname) (!peerid \| shortname)` | Clear temporary evidence for that peer in both identity domains. Manual ignore remains unchanged. |
+| `/spamlist (!nodeid \| shortname) [page]` | Snapshot of quarantines, signed/unsigned identity, cause and seconds remaining. Request page 1 first. |
 
 These commands share the existing five-second remote-control cooldown and channel
 validation. They do not create a second control key or modify `/ignore` lists.

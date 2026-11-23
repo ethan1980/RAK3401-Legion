@@ -7,20 +7,21 @@ of essential preferences. **Backup creation and replacement are always explicit.
 Installing firmware, restarting or changing settings never refreshes it.
 
 All targeted backup commands accept the full node ID or the node's short name,
-for example `/backup status PSVR`. See [node selection](COMMANDS.md#node-selection).
+using `/backup status !nodeid | shortname`. See [node selection](COMMANDS.md#node-selection).
 The separately saved permanent-arm preference is not part of the rescue snapshot.
 
 ## Commands
 
 Send these channel messages on the configured private **LegionRF** channel.
-Replace the example with the destination's full node ID; only that Legion acts.
+Replace `!nodeid | shortname` with the destination's full ID or actual short name.
+Do not type the bar or placeholders; use the full ID if a name is shared.
 
 | Message | Result |
 | --- | --- |
-| `/backup !abcdef01` | Creates a rescue point if absent. |
-| `/backup status !abcdef01` | Reports validity and whether the saved settings are current. |
-| `/backup replace !abcdef01` | Replaces the rescue point with current settings. |
-| `/backup delete !abcdef01` | Persistently disables recovery from that rescue point. |
+| `/backup !nodeid \| shortname` | Creates a rescue point if absent. |
+| `/backup status !nodeid \| shortname` | Reports validity and whether the saved settings are current. |
+| `/backup replace !nodeid \| shortname` | Replaces the rescue point with current settings. |
+| `/backup delete !nodeid \| shortname` | Persistently disables recovery from that rescue point. |
 
 Telemetry and backup share a **60-second cooldown**. Wait for **`saved and
 verified; recovery armed`** or **`deleted; recovery disabled`**: a delivery icon
@@ -75,7 +76,7 @@ incomplete recovery holds the radio silent and has a bounded retry limit.
 Intentional identity-key rotation or licensed mode disables the old rescue point.
 
 **Factory reset restores an armed rescue point.** To deliberately return to blank
-settings, send `/backup delete !abcdef01`, wait for its deletion confirmation,
+settings, send `/backup delete !nodeid | shortname`, wait for its deletion confirmation,
 then request factory reset.
 
 After successful recovery, Legion queues this notice on the restored private

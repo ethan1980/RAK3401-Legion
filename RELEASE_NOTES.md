@@ -4,21 +4,25 @@ Legion 0.7.2 uses Meshtastic nightly **2.8.3.d0f4096**, pinned to
 `d0f4096788545fb3c5e22d2a7e52ac6c268caac1`, and reports **`2.8.3.Legion0.7.2`**
 on the RAK3401 1W with RAK13302.
 
+Command references use `!nodeid | shortname`: select the full ID or the node's
+actual short name. PSVR and other names in examples are illustrative. The PDF
+manuals use the same notation (Spanish: `!nodeid | nombrecorto`).
+
 - **Short-name selection.** All targeted commands accept `!nodeid` or the
   node's short name, for example `/telemetry PSVR`. Existing ID syntax remains.
   Trace, ignore/unignore and guard clear also resolve peer short names; use the
   full ID when a name is missing or ambiguous. Duplicate executor names can
   select more than one Legion on the same private channel.
-- **DAILY on demand.** `/daily PSVR` reads the last closed 24-hour MeshHealth
+- **DAILY on demand.** `/daily !nodeid | shortname` reads the last closed 24-hour MeshHealth
   cut, including age, score/reference status and estimate markers. It does not
   start a fresh cut or move the automatic reporting schedule.
-- **Position.** `/position PSVR` reports local coordinates, validity, fixed/live
+- **Position.** `/position !nodeid | shortname` reports local coordinates, validity, fixed/live
   mode, effective precision and configured LoRa/MQTT publication.
-- **Channel directory.** `/listchannels PSVR` lists enabled configured channels
+- **Channel directory.** `/listchannels !nodeid | shortname` lists enabled configured channels
   with their real one-based positions, beside the existing create/delete tools.
-- **Component counters.** `/components PSVR` adds preference saves checked,
+- **Component counters.** `/components !nodeid | shortname` adds preference saves checked,
   identical saves skipped, completed saves and failures since boot.
-- **Permanent arming.** `/arm permanent PSVR` saves verified automatic arming of
+- **Permanent arming.** `/arm permanent !nodeid | shortname` saves verified automatic arming of
   APC S1+S2 and antispam after restart. Ordinary `/arm` and `/disarm` clear that
   preference. Runtime statistics and quarantines start fresh after boot.
 - **Command reference.** `/drakarys` is documented in

@@ -21,9 +21,6 @@ remote tools. Current consumption and battery-life gains have not been measured.
 | Feature | What it does | Hardware status |
 | --- | --- | --- |
 | [Remote node tools](COMMANDS.md#command-reference) | Provides private telemetry, remote traceroute, text messages, scheduled restarts, direct RF peer lists, ignore-list management and secondary-channel editing. | Command operation confirmed on hardware. |
-| [Node selection](COMMANDS.md#node-selection) | Accepts a full node ID or the node's short name in all targeted commands. | Pending HW. |
-| [Position query](COMMANDS.md#position-query) | Reports local coordinates, validity, fixed mode and configured LoRa/MQTT publication. | Pending HW. |
-| [Channel list](COMMANDS.md#secondary-channels) | Lists configured channel names and their one-based positions. | Pending HW. |
 | [Boot diagnostics](COMMANDS.md#boot-fields) | Reports reset evidence and first boot voltages. | Boot queries confirmed on hardware. |
 | [Manual rescue backup](RECOVERY.md) | Saves configuration explicitly and restores it after confirmed essential preference loss; reports whether the backup is current. | Backup commands and manual restoration observed. |
 | [APC — Adaptive Power Control](APC.md) | Combines S1 relay budgeting with S2 per-packet RF reductions for eligible third-party relays. | Mode commands checked on hardware; S2 RF output and savings unmeasured. |
@@ -63,20 +60,26 @@ Previous releases remain available for rollback.
 For remote tools, configure one private **SECONDARY** channel named exactly
 **LegionRF**, with your own random **16- or 32-byte PSK**, and share it with trusted
 requesting nodes. Send commands as channel messages, including when connected
-directly to the Legion node. Select the target by full ID or short name, for
-example `/telemetry !abcdef01` or `/telemetry PSVR`.
+directly to the Legion node.
+
+**Command notation:** `!nodeid | shortname` means choose the target's full node
+ID **or its actual short name**. Replace those placeholders; do not type `|` or
+parentheses. A name such as PSVR is only an example, never part of the command.
 
 ```text
-/telemetry !abcdef01
-/boot !abcdef01
-/components PSVR
-/daily PSVR
-/position PSVR
-/listchannels PSVR
-/apc status !abcdef01
-/guard status !abcdef01
-/spamlist !abcdef01
+/telemetry !nodeid | shortname
+/boot !nodeid | shortname
+/components !nodeid | shortname
+/daily !nodeid | shortname
+/position !nodeid | shortname
+/listchannels !nodeid | shortname
+/apc status !nodeid | shortname
+/guard status !nodeid | shortname
+/spamlist !nodeid | shortname
 ```
+
+For example, `/telemetry AZTH` queries a Legion whose short name is AZTH.
+See [Commands](COMMANDS.md#node-selection) for complete syntax and examples.
 
 - [Commands](COMMANDS.md): channel setup, command syntax and report fields.
 - [Automatic features](AUTOMATIC-FEATURES.md): what CC310, bulk SPI, flash persistence and REG1 DC/DC do, and how to check their status.
@@ -85,15 +88,15 @@ example `/telemetry !abcdef01` or `/telemetry PSVR`.
 - [APC](APC.md): Adaptive Power Control modes, battery policy and RF diagnostics.
 - [Antispam](ANTISPAM.md): spam detection, control commands and quarantine rules.
 
-APC defaults to OFF and antispam to OBSERVE at boot. Use `/arm PSVR` for the
-current run, `/arm permanent PSVR` to save arming across restarts, and
-`/disarm PSVR` to turn both off and clear the saved preference. APC combines S1
+APC defaults to OFF and antispam to OBSERVE at boot. Use `/arm !nodeid | shortname` for the
+current run, `/arm permanent !nodeid | shortname` to save arming across restarts, and
+`/disarm !nodeid | shortname` to turn both off and clear the saved preference. APC combines S1
 relay admission with S2 RF selection and retains its startup checks and warmup.
 The [DAILY](COMMANDS.md#daily) includes battery balance and MeshHealth alongside
 APC, antispam and backup.
 
-Use `/ignore name !abcdef01 "Long name"` to save a name rule on a selected Legion.
-`/scramble !abcdef01` silences the selected node for 60 minutes. It can send a
+Use `/ignore name (!nodeid | shortname) "Long name"` to save a name rule on a selected Legion.
+`/scramble !nodeid | shortname` silences the selected node for 60 minutes. It can send a
 brief entry notice on LegionRF before shutting down the radio and a recovery
 notice when it returns.
 

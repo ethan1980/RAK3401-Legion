@@ -11,21 +11,21 @@ test equipment; savings, range and autonomy remain unmeasured.
 ## Modes and commands
 
 Send channel messages on the private secondary **LegionRF** channel. Replace
-`!abcdef01` with the full ID or short name of the Legion to control (for example `PSVR`). S1/S2 require **CLIENT** role.
+the `!nodeid | shortname` placeholder with the full ID or actual short name of the Legion to control. S1/S2 require **CLIENT** role.
 
 | Command | Effect |
 | --- | --- |
-| `/apc observe !abcdef01` | Collects passive voltage/TX statistics; normal forwarding continues. |
-| `/apc shadow !abcdef01` | Models battery states and relay budgets while forwarding normally. |
-| `/apc on !abcdef01` | Applies S1 relay budgets and S2 RF selection after warmup and state persistence. |
-| `/apc off !abcdef01` | Stops APC and restores normal optional-relay admission immediately. |
-| `/arm !abcdef01` / `/disarm !abcdef01` | Switches both together and clears any saved permanent arming. |
-| `/arm permanent PSVR` | Saves automatic arming of APC S1+S2 and antispam across restarts. |
-| `/apc status !abcdef01` | Returns page 1 and freezes a fresh seven-page report. |
-| `/apc status !abcdef01 2` | Returns page 2 of that report; pages 2–7 are available. |
+| `/apc observe !nodeid \| shortname` | Collects passive voltage/TX statistics; normal forwarding continues. |
+| `/apc shadow !nodeid \| shortname` | Models battery states and relay budgets while forwarding normally. |
+| `/apc on !nodeid \| shortname` | Applies S1 relay budgets and S2 RF selection after warmup and state persistence. |
+| `/apc off !nodeid \| shortname` | Stops APC and restores normal optional-relay admission immediately. |
+| `/arm !nodeid \| shortname` / `/disarm !nodeid \| shortname` | Switches both together and clears any saved permanent arming. |
+| `/arm permanent !nodeid \| shortname` | Saves automatic arming of APC S1+S2 and antispam across restarts. |
+| `/apc status !nodeid \| shortname` | Returns page 1 and freezes a fresh seven-page report. |
+| `/apc status (!nodeid \| shortname) 2` | Returns page 2 of that report; pages 2–7 are available. |
 
 Allow at least six seconds after a reply before another control command.
-**Boot defaults to OFF.** `/arm permanent PSVR` stores a verified preference to
+**Boot defaults to OFF.** `/arm permanent !nodeid | shortname` stores a verified preference to
 restore APC and antispam after startup checks are ready. A fresh APC session
 and warmup follow each restart. Ordinary `/arm` and `/disarm` clear that preference;
 individual `/apc` and `/guard` mode changes affect the current run only.

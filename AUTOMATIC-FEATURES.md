@@ -125,11 +125,10 @@ its state stays in RAM.
 ## Checking component status
 
 To query a Legion node, send this as a channel message on the private
-[LegionRF channel](COMMANDS.md#private-channel), replacing the example ID:
+[LegionRF channel](COMMANDS.md#private-channel), choosing the actual node ID or short name (do not type `|`):
 
 ```text
-/components !abcdef01
-/components PSVR
+/components !nodeid | shortname
 ```
 
 Illustrative reply:

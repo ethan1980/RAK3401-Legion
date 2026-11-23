@@ -23,6 +23,31 @@ PALE = (0.974, 0.947, 0.953)
 WHITE = (1, 1, 1)
 
 
+def command_syntax(value, lang):
+    """Use placeholders in syntax; concrete names belong to labelled examples."""
+    short = 'nombrecorto' if lang == 'es' else 'shortname'
+    value = re.sub(r'\b(observe\|shadow\|on\|off|status\|observe\|on\|off)\b',
+                   lambda match: '(' + match[0].replace('|', ' | ') + ')', value)
+    matches = list(re.finditer(r'!abcdef01\b|!12345678\b|\bPSVR\b|\bRLY1\b', value))
+    for match in reversed(matches):
+        node = '!peerid' if match[0] in ('!12345678', 'RLY1') else '!nodeid'
+        selector = f'{node} | {short}'
+        if value[match.end():].strip() or len(matches) > 1 or '|' in value[:match.start()]:
+            selector = '(' + selector + ')'
+        value = value[:match.start()] + selector + value[match.end():]
+    channel = '<canal>' if lang == 'es' else '<channel>'
+    message = '<mensaje>' if lang == 'es' else '<message>'
+    for sample in ('SFNarrow Hola, prueba desde Legion', 'SFNarrow Hola desde Legion',
+                   'SFNarrow Hello from Legion', 'SFNarrow Mensaje', 'SFNarrow Message'):
+        value = value.replace(sample, channel + ' ' + message)
+    for sample in ('"Mi canal"', '"My channel"'):
+        value = value.replace(sample, channel)
+    for sample in ('"Nodo de ejemplo"', '"Nombre largo"', '"Example node"', '"Long name"'):
+        value = value.replace(sample, '"<nombre_largo>"' if lang == 'es' else '"<long_name>"')
+    value = value.replace('PSK_BASE64', '<psk_base64>')
+    return value
+
+
 def lines(text, font, size, width):
     result = []
     for paragraph in text.split('\n'):
@@ -80,7 +105,11 @@ class Chapter:
         return es if self.lang == 'es' else en
 
     def para(self, es, en, size=9.5):
-        self.y = text(self.page, 42, self.y, self.choose(es, en), size) + 9
+        value = self.choose(es, en)
+        # Behaviour prose uses the command name; full syntax is in its box.
+        if '/' in value:
+            value = value.replace(' PSVR', '')
+        self.y = text(self.page, 42, self.y, value, size) + 9
         self.check()
 
     def heading(self, es, en):
@@ -88,14 +117,25 @@ class Chapter:
         self.y = text(self.page, 42, self.y, self.choose(es, en), 11.2, 'Bold') + 7
         self.check()
 
-    def code(self, es, en=None, size=9.5):
+    def code(self, es, en=None, size=9.5, literal=False):
         value = es if en is None else self.choose(es, en)
+        is_command = any(line.startswith('/') for line in value.splitlines())
+        if is_command and not literal:
+            value = '\n'.join(dict.fromkeys(command_syntax(line, self.lang) if line.startswith('/') else line
+                                            for line in value.splitlines()))
+        label = self.choose('EJEMPLO - SUSTITUYE LOS DATOS', 'EXAMPLE - REPLACE THE VALUES') if literal else (
+            self.choose('SINTAXIS - ELIGE ID O NOMBRE CORTO', 'SYNTAX - CHOOSE ID OR SHORT NAME') if is_command else
+            self.choose('RESPUESTA', 'REPLY'))
         rows = lines(value, 'Mono', size, 487)
-        h = len(rows) * size * 1.4 + 17
+        h = len(rows) * size * 1.4 + 27
         self.page.draw_rect(fitz.Rect(42, self.y, 553, self.y+h), fill=PALE, color=None)
-        text(self.page, 54, self.y+8, value, size, 'Mono', width=487, leading=size*1.4)
+        text(self.page, 54, self.y+6, label, 6.5, 'Bold', width=487, color=RED)
+        text(self.page, 54, self.y+19, value, size, 'Mono', width=487, leading=size*1.4)
         self.y += h + 10
         self.check()
+
+    def example(self, es, en=None, size=9.5):
+        self.code(es, en, size=size, literal=True)
 
     def callout(self, title_es, title_en, es, en):
         title = self.choose(title_es, title_en)
@@ -111,6 +151,8 @@ class Chapter:
         rows = self.choose(es, en)
         widths = widths or [180, 331]
         for row_index, row in enumerate(rows):
+            row = tuple(command_syntax(value, self.lang) if value.startswith('/') or ('PSVR' in value and '/' in value)
+                        else value for value in row)
             header = row_index == 0
             font = 'Bold' if header else 'Sans'
             row_lines = [lines(value, font, size, width-18) for value, width in zip(row, widths)]
@@ -132,7 +174,7 @@ class Chapter:
 
 def footer(p, number, lang):
     p.draw_line((42, 785), (553, 785), color=(.86,.85,.86), width=.5)
-    label = 'Legion · manual amigable · edición 1.6 · ID o nombre corto' if lang == 'es' else 'Legion · friendly user manual · edition 1.6 · ID or short name'
+    label = 'Legion · manual amigable · edición 1.7 · ID o nombre corto' if lang == 'es' else 'Legion · friendly user manual · edition 1.7 · ID or short name'
     text(p, 42, 801, label, 7, color=GREY)
     text(p, 534, 801, f'{number:02d}', 8, 'Bold', width=22, color=RED)
 
@@ -147,7 +189,7 @@ def copy_page(out, source, old, number, lang):
                 p.add_redact_annot(rect + (-1,-1,1,1), fill=(.035,.035,.04))
         p.apply_redactions(images=0, graphics=0)
         font_setup(p)
-        text(p, 42, 790, 'Legion 0.7.2  /  Manual 1.6', 9, color=(.78,.78,.8))
+        text(p, 42, 790, 'Legion 0.7.2  /  Manual 1.7', 9, color=(.78,.78,.8))
         text(p, 498, 790, '23 NOV 2026', 8, width=60, color=(.78,.78,.8))
         return
     tag = next((line for line in p.get_text().splitlines() if re.match(r'^\d{2} / ',line)), '')
@@ -178,8 +220,9 @@ def build(lang):
             c.para('Para RAK3401 1W + RAK13302. Puedes enviar las órdenes desde un nodo con Meshtastic estándar; el que las ejecuta debe llevar Legion.',
                    'For RAK3401 1W + RAK13302. The requesting node can run standard Meshtastic; the executing node must run Legion.')
             c.code('/telemetry !abcdef01\n/telemetry PSVR')
-            c.para('Son dos formas de seleccionar el mismo nodo si su nombre corto es PSVR. Se aplican a todas las órdenes dirigidas.',
-                   'These select the same node when its short name is PSVR. Both forms work in every targeted command.')
+            c.para('Sustituye !nodeid o nombrecorto por los datos reales de tu nodo. La barra | significa «o»; no se escribe. PSVR y AZTH son solo nombres cortos de ejemplo.',
+                   'Replace !nodeid or shortname with your actual node details. The | bar means “or”; do not type it. PSVR and AZTH are only example short names.')
+            c.example('/telemetry PSVR\n/telemetry AZTH',size=9)
             c.table([('Quiero…','Página'),('Preparar LegionRF y elegir nodo','3–4'),('Consultar telemetría, posición, arranque y componentes','5–7'),('Enviar texto o invocar Drakarys','8–9'),('Gestionar canales y reiniciar','10–11'),('Explorar rutas, ignorar y filtrar spam','12–15'),('Guardar y recuperar ajustes','16–17'),('Usar APC, incluido armado permanente','18–20'),('Entender voltajes y recuperación','21–22'),('Actualizar y consultar DAILY','23–24'),('Recetas, dudas, chuletas y créditos','25–29')],
                     [('I want to…','Page'),('Set up LegionRF and select a node','3–4'),('Query telemetry, position, boot and components','5–7'),('Send text or invoke Drakarys','8–9'),('Manage channels and restart','10–11'),('Explore routes, ignore nodes and filter spam','12–15'),('Save and restore settings','16–17'),('Use APC, including permanent arming','18–20'),('Understand voltage and energy recovery','21–22'),('Update and query DAILY','23–24'),('Recipes, questions, cheat sheets and credits','25–29')],widths=[444,67],size=9)
             c.callout('ESTADO EN HW','HW STATUS','Funciones heredadas de 0.7.1: probadas en HW. Base y novedades de 0.7.2: pendientes de HW. Véase la ficha final.',
@@ -199,8 +242,8 @@ def build(lang):
             c=chapter(old,'ANTES DE ESCRIBIR','BEFORE YOU TYPE','Un ID o un nombre.\nLa misma orden.','An ID or a name.\nThe same command.',
                       'Todas las órdenes dirigidas aceptan ambas formas. Los IDs siguen disponibles.','Every targeted command accepts both forms. Existing ID syntax remains available.')
             c.code('/telemetry !abcdef01\n/telemetry PSVR\n/trace PSVR RLY1\n/backup status PSVR')
-            c.para('El nombre corto se compara completo sin distinguir mayúsculas ASCII. Si contiene espacios, ponlo entre comillas: /boot "AB C". Escribe el comando en minúsculas; cada línea se envía por separado en LegionRF.',
-                   'Short names match in full without ASCII case differences. Quote spaces: /boot "AB C". Commands are lowercase; send each line separately in LegionRF.')
+            c.para('!nodeid | nombrecorto significa elegir uno y sustituirlo. No escribas barras, paréntesis ni los marcadores. El nombre corto se compara completo sin distinguir mayúsculas ASCII. Si contiene espacios, ponlo entre comillas: /boot "AB C". Escribe el comando en minúsculas; cada línea se envía por separado en LegionRF.',
+                   '!nodeid | shortname means choose one and replace it. Do not type bars, parentheses or placeholders. Short names match in full without ASCII case differences. Quote spaces: /boot "AB C". Commands are lowercase; send each line separately in LegionRF.')
             c.callout('NOMBRES REPETIDOS','DUPLICATE NAMES','Cada Legion reconoce su propio nombre. Si varios comparten nombre y canal, pueden actuar todos. El ID completo elige uno de forma inequívoca.',
                       'Each Legion recognizes its own name. Several Legions sharing that name and channel can all act. A full ID selects one uniquely.')
             c.para('En trace, ignore, unignore y guard clear, el segundo nodo también admite nombre corto. Debe existir una sola coincidencia en la NodeDB del ejecutor; si falta o es ambiguo, responde un error y pide el ID. La selección pendiente se vuelve a comprobar. En /ignore name, el nombre largo entre comillas sigue siendo la regla literal de filtrado.',
@@ -222,6 +265,21 @@ def build(lang):
             c.code('/position !abcdef01\n/position PSVR')
             c.para('Devuelve FIXED/LIVE, valid:0/1, latitud y longitud; LoRa_cfg, canal (desde 1), precisión efectiva en bits, intervalo configurado y smart; MQTT_cfg, uplink del canal y map. Son datos locales y configuración: no confirman un fix reciente ni que LoRa o MQTT hayan entregado una posición.',
                    'Returns FIXED/LIVE, valid:0/1, latitude and longitude; LoRa_cfg, channel (from 1), effective precision in bits, configured interval and smart; MQTT_cfg, channel uplink and map. These are local data and configuration, not confirmation of a recent fix or LoRa/MQTT delivery.',size=9.3)
+        elif old == 6:
+            c=chapter(old,'CONSULTAR · /boot','QUERY · /boot','¿Qué pasó\nal arrancar?','What happened\nat boot?',
+                      'Una foto del arranque y pistas sobre el reinicio anterior.','A boot snapshot and clues about the previous restart.')
+            c.code('/boot !abcdef01')
+            c.table([('Campo','Qué te dice'),('reset','Motivo del reset de hardware y máscara completa. Sin evidencia queda desconocido.'),('prev','Parada protectora anterior registrada, como batería/VDD bajos, temperatura o Scramble. No es un historial.'),('VBAT / VDD','Primeras muestras físicas del arranque, en milivoltios.'),('USB','Detección USB en aquella muestra.'),('NA','Dato no disponible.')],
+                    [('Field','What it tells you'),('reset','Hardware reset reason and full mask. Missing evidence stays unknown.'),('prev','Previous recorded protective stop, such as low battery/VDD, temperature or Scramble. Not a history.'),('VBAT / VDD','First physical samples at boot, in millivolts.'),('USB','USB detection at that sample.'),('NA','Unavailable reading.')],widths=[105,406],size=9.4)
+            c.heading('Los voltajes pertenecen al arranque','These voltages belong to boot')
+            c.para('No son lecturas en directo ni necesariamente los valores que había cuando ocurrió un fallo. Para voltaje actual consulta telemetría.',
+                   'They are not live readings or necessarily the voltage when a fault happened. Query telemetry for current voltage.')
+            c.heading('Componentes y contadores, por separado','Components and counters are separate')
+            c.code('/components !abcdef01')
+            c.para('CC310, SPI, REG1 y SAVE se explican en la página siguiente. En todas las consultas usa el ID o nombre corto real del nodo.',
+                   'CC310, SPI, REG1 and SAVE are explained on the next page. Every targeted query accepts the actual node ID or short name.')
+            c.callout('CONSULTAR NO CAMBIA EL NODO','QUERYING DOES NOT CHANGE THE NODE','boot y components son de solo lectura. No guardan ajustes ni reinicializan componentes.',
+                      'boot and components are read-only. They do not save settings or reinitialize components.')
         elif old == 7:
             c=chapter(old,'CONSULTAR · /components','QUERY · /components','Los demonios,\npor dentro.','The demons,\nfrom the inside.',
                       'Criptografía, radio, regulador y guardados de preferencias en un informe corto.','Cryptography, radio, regulator and preference saves in one short report.')
@@ -233,6 +291,18 @@ def build(lang):
                    'SAVE covers protobuf preference saves, not every filesystem write. CC310 and SAVE reset with the node. SHA/MAC do not count XEdDSA signing in the new base.')
             c.callout('CONSULTAR NO CAMBIA EL NODO','READING DOES NOT CHANGE THE NODE','MAC:0 puede ser normal. 8MHz es un ajuste, no una medición física. El informe no activa ni reinicializa componentes, no guarda ajustes y no mide ahorro energético.',
                       'MAC:0 can be normal. 8MHz is a setting, not a physical measurement. The report does not activate or reinitialize components, save settings or measure energy savings.')
+        elif old == 8:
+            c=chapter(old,'ACTUAR · /msg','ACT · /msg','Que hable\nese Legion.','Let that\nLegion speak.',
+                      'Envía texto desde el nodo elegido, aunque estés conectado a otro.','Send text from the selected node, even while connected to another.')
+            c.code('/msg !abcdef01 SFNarrow Hola desde Legion', '/msg !abcdef01 SFNarrow Hello from Legion')
+            c.table([('Marcador','Qué debes poner'),('!nodeid | nombrecorto','El ID completo o nombre corto real del Legion que emitirá.'),('<canal>','Un canal habilitado en ese nodo. Entre comillas si lleva espacios.'),('<mensaje>','El texto que publicará el nodo en ese canal.')],
+                    [('Placeholder','What to supply'),('!nodeid | shortname','The full ID or actual short name of the transmitting Legion.'),('<channel>','An enabled channel on that node. Quote spaces.'),('<message>','The text the node will publish on that channel.')],widths=[166,345],size=9.5)
+            c.heading('Ejemplo con nombre corto','Short-name example')
+            c.example('/msg AZTH "Mi canal" Hola a todos','/msg AZTH "My channel" Hello everyone')
+            c.para('AZTH es solo un ejemplo de nombre corto; sustitúyelo por el de tu nodo. La orden viaja por LegionRF y el texto sale por el canal indicado. El nombre de canal admite hasta 11 bytes UTF-8 y toda la orden hasta 199 bytes. Una tilde puede ocupar varios bytes.',
+                   'AZTH is only an example short name; replace it with your node’s name. The command travels in LegionRF and the text is sent on the selected channel. Channel names allow 11 UTF-8 bytes and the complete command 199 bytes. Accented characters can use several bytes.')
+            c.callout('QUÉ CONFIRMA LA RESPUESTA','WHAT THE REPLY CONFIRMS','queued confirma la cola local, no entrega remota. Un canal inválido no se sustituye por otro y no se reenvía automáticamente la orden.',
+                      'queued confirms local queuing, not remote delivery. An invalid channel is not replaced with another and the command is not automatically retried.')
         elif old == 9:
             c=chapter(old,'GESTIONAR · CANALES','MANAGE · CHANNELS','Ver los canales.\nCrear o borrar.','See the channels.\nCreate or delete.',
                       'Consulta la lista o edita canales secundarios sin reiniciar el nodo.','List channels or edit secondary channels without restarting the node.')
@@ -262,6 +332,18 @@ def build(lang):
                       'Without saved arming, APC returns OFF and antispam OBSERVE. Saved /arm permanent restores both after checks. Statistics and warmup begin again; DAILY starts another 24-hour count.')
             c.para('Un reinicio normal no restaura un backup por sí solo. Una configuración sana conserva prioridad.',
                    'A normal restart does not by itself restore a backup. Healthy current settings retain priority.')
+        elif old == 11:
+            c=chapter(old,'EXPLORAR · /zerohop','EXPLORE · /zerohop','¿A quién oye\ndirectamente?','Who can it hear\ndirectly?',
+                      'Vecinos observados por radio sin intermediarios.','Neighbours observed over radio without intermediaries.')
+            c.code('/zerohop !abcdef01\n/zerohop !abcdef01 2')
+            c.para('Lista las observaciones RF directas desde el arranque, con nombre corto y SNR, de mayor a menor SNR. La primera forma abre la lista; el número opcional selecciona otra página. Usa Next: para seguir y deja al menos 6 s tras cada respuesta.',
+                   'Lists direct RF observations since boot, with short name and SNR, from highest to lowest SNR. The first form opens the list; the optional number selects another page. Follow Next: and allow six seconds after each reply.')
+            c.table([('Lo que ves','Cómo interpretarlo'),('SNR cero o negativo','Es válido; no significa que la fila esté vacía.'),('Falta un nodo','Puede no haber sido observado directamente en este arranque.'),('partial','La captura superó su capacidad de hasta 128 filas.')],
+                    [('What you see','How to read it'),('Zero or negative SNR','Valid; the row is not empty.'),('Missing node','It may not have been heard directly during this boot.'),('partial','The snapshot exceeded its capacity of up to 128 rows.')],widths=[150,361],size=9.5)
+            c.callout('UNA LIBRETA DE OBSERVACIONES','A NOTEBOOK OF OBSERVATIONS','No es un escaneo activo ni demuestra comunicación en los dos sentidos. Para probar una ruta, usa trace.',
+                      'This is not an active scan or proof of two-way communication. Use trace to test a route.')
+            c.para('Las páginas comparten una captura fija de 15 min ligada al solicitante y al canal. Repetir la página 1 la reutiliza aunque esté vacía. Al caducar se crea otra; cambiar la radio la invalida.',
+                   'Pages share a frozen 15-minute snapshot bound to requester and channel. Repeating page 1 reuses it even when empty. Expiry creates another; a radio change invalidates it.')
         elif old == 12:
             c=chapter(old,'EXPLORAR · /trace','EXPLORE · /trace','¿Por dónde\nviaja el mensaje?','Which way does\nthe message travel?',
                       'Pide una ruta hacia otro nodo y recibe ambos caminos en LegionRF.','Request a route to another node and receive both paths in LegionRF.')
@@ -300,6 +382,18 @@ def build(lang):
             c.code('/scramble !abcdef01\n/scramble PSVR')
             c.para('Corta el tráfico habitual al recibir la orden. Intenta el aviso Entering hibernation for Scramble. durante hasta 4 s; apaga LoRa, Bluetooth y datos USB. A los 60 min reinicia e intenta Hibernation ended. Scramble complete. El armado permanente se aplica tras arrancar; un reset o corte de alimentación puede acortar el silencio.',
                    'Stops normal traffic on receipt. Attempts Entering hibernation for Scramble. for up to four seconds, then turns off LoRa, Bluetooth and USB data. After 60 minutes it restarts and attempts Hibernation ended. Scramble complete. Saved arming applies after boot; reset or power loss can shorten the silence.',size=9)
+        elif old == 15:
+            c=chapter(old,'RESCATE · /backup','RESCUE · /backup','Guarda un punto\nal que volver.','Save a point\nto return to.',
+                      'Crear y reemplazar son acciones explícitas. Instalar o reiniciar no actualiza el backup.','Creating and replacing are explicit actions. Installing or restarting does not refresh the backup.')
+            c.code('/backup !abcdef01\n/backup status !abcdef01\n/backup replace !abcdef01')
+            c.para('backup crea si no existe; status consulta sin cambiarlo; replace guarda expresamente los ajustes actuales y omite la escritura si coinciden. El selector es siempre el ID o nombre corto real del ejecutor.',
+                   'backup creates if absent; status reads without changing it; replace explicitly saves current settings and skips an identical write. Always select the executor by its actual ID or short name.')
+            c.callout('ESPERA LA CONFIRMACIÓN','WAIT FOR CONFIRMATION','saved and verified; recovery armed confirma guardado verificado y rescate armado. Telemetría y backup comparten una pausa de 60 s.',
+                      'saved and verified; recovery armed confirms a verified save and armed recovery. Telemetry and backup share a 60-second cooldown.')
+            c.table([('Estado','Significado'),('up to date; recovery armed','Los bloques guardados coinciden con los actuales.'),('OUTDATED: owner,channels','Esos bloques difieren; el punto anterior sigue utilizable.'),('freshness unavailable','No se puede comparar con fiabilidad ahora.'),('no rescue point','No hay punto de rescate activo.'),('invalid or incompatible','El registro no puede utilizarse.')],
+                    [('State','Meaning'),('up to date; recovery armed','Saved blocks match current settings.'),('OUTDATED: owner,channels','Those blocks differ; the earlier point remains usable.'),('freshness unavailable','Reliable comparison is unavailable now.'),('no rescue point','No active rescue point.'),('invalid or incompatible','The record cannot be used.')],widths=[212,299],size=9.1)
+            c.para('Puede señalar owner, config, modules, channels y position, sin mostrar secretos. GPS dinámico no lo vuelve obsoleto; editar canales puede hacerlo. DAILY compara sin guardar otro backup. Tras un cambio que quieras conservar, consulta status y decide si usar replace.',
+                   'May identify owner, config, modules, channels and position without exposing secrets. Dynamic GPS does not make it stale; channel edits can. DAILY compares without saving another backup. After a change you want to keep, query status and decide whether to replace.')
         elif old == 16:
             c=chapter(old,'RESCATE · RESTAURAR Y BORRAR','RESCUE · RESTORE AND DELETE','Que renazca\ncon su identidad.','Let it rise again\nwith its identity.',
                       'El rescate actúa ante pérdida o corrupción confirmada de preferencias esenciales.','Rescue acts on confirmed loss or corruption of essential preferences.')
@@ -394,7 +488,7 @@ def build(lang):
                    'Record version, command and reply. Add telemetry, boot, components and APC status if active. zerohop uses a 15-minute snapshot; trace unknown only means no reply within 90 seconds.',size=9)
         elif old == 26:
             c=chapter(old,'CHULETA · CONSULTAR Y ACTUAR','CHEAT SHEET · QUERY AND ACT','Lo que más vas\na escribir.','What you will\ntype most often.',
-                      'Ejemplos con PSVR. En todas las órdenes dirigidas puedes usar también !nodeid.','Examples use PSVR. Every targeted command also accepts !nodeid.')
+                      'Sintaxis general: sustituye los marcadores por el ID o nombre corto real. No escribas |.','General syntax: replace placeholders with the actual ID or short name. Do not type |.')
             c.heading('Estado, posición y último DAILY','Status, position and last DAILY')
             c.code('/telemetry PSVR\n/boot PSVR\n/components PSVR\n/position PSVR\n/daily PSVR',size=9)
             c.heading('Mensajes, canales y reinicio','Messages, channels and restart')
@@ -409,7 +503,7 @@ def build(lang):
                    'The second node accepts an ID or a short name unique in the executor’s NodeDB. Omit brackets: page is optional. Quote short names with spaces. Antispam and long names: next page.',size=9)
         elif old == 27:
             c=chapter(old,'CHULETA · RESCATE, APC Y ANTISPAM','CHEAT SHEET · RESCUE, APC AND ANTISPAM','Guardar, armar\ny volver.','Save, arm\nand return.',
-                      'Sustituye PSVR por el nombre corto o el ID completo del ejecutor.','Replace PSVR with the executor’s short name or full ID.')
+                      'Elige ID o nombre corto real en cada orden; no escribas las barras ni los paréntesis.','Choose the actual ID or short name in each command; omit bars and parentheses.')
             c.heading('Punto de rescate','Rescue point')
             c.code('/backup PSVR\n/backup status PSVR\n/backup replace PSVR\n/backup delete PSVR',size=8.8)
             c.para('Crear si no existe; consultar; refrescar expresamente; borrar y desarmar rescate. Antes de factory reset en blanco, espera deleted; recovery disabled.',
@@ -426,8 +520,8 @@ def build(lang):
         elif old == 28:
             c=chapter(old,'SOBRE ESTA EDICIÓN','ABOUT THIS EDITION','Muchos demonios.\nUn mismo manual.','Many demons.\nOne shared manual.',
                       'Ediciones española e inglesa con la misma organización.','Spanish and English editions share the same organization.')
-            c.table([('Dato','Referencia'),('Manual','Edición 1.6 · 23 de noviembre de 2026.'),('Firmware','Legion 0.7.2 · 2.8.3.Legion0.7.2.'),('Base Meshtastic','Nightly 2.8.3.d0f4096 · commit d0f4096788545fb3c5e22d2a7e52ac6c268caac1.'),('Hardware','RAK3401 1W + RAK13302; batería y RAK19007.')],
-                    [('Item','Reference'),('Manual','Edition 1.6 · 23 November 2026.'),('Firmware','Legion 0.7.2 · 2.8.3.Legion0.7.2.'),('Meshtastic base','Nightly 2.8.3.d0f4096 · commit d0f4096788545fb3c5e22d2a7e52ac6c268caac1.'),('Hardware','RAK3401 1W + RAK13302; battery and RAK19007.')],widths=[118,393],size=9)
+            c.table([('Dato','Referencia'),('Manual','Edición 1.7 · 23 de noviembre de 2026.'),('Firmware','Legion 0.7.2 · 2.8.3.Legion0.7.2.'),('Base Meshtastic','Nightly 2.8.3.d0f4096 · commit d0f4096788545fb3c5e22d2a7e52ac6c268caac1.'),('Hardware','RAK3401 1W + RAK13302; batería y RAK19007.')],
+                    [('Item','Reference'),('Manual','Edition 1.7 · 23 November 2026.'),('Firmware','Legion 0.7.2 · 2.8.3.Legion0.7.2.'),('Meshtastic base','Nightly 2.8.3.d0f4096 · commit d0f4096788545fb3c5e22d2a7e52ac6c268caac1.'),('Hardware','RAK3401 1W + RAK13302; battery and RAK19007.')],widths=[118,393],size=9)
             c.heading('Probado en HW / pendiente de HW','Tested on HW / pending HW')
             c.para('Javier confirmó las funciones de Legion 0.7.1 probadas en HW el 23/11/2026, incluidos comandos, DAILY, limpieza de temporales y aviso de posición fija. Esta observación pertenece a la versión anterior.',
                    'Javier confirmed Legion 0.7.1 functions tested on HW on 23 November 2026, including commands, DAILY, temporary cleanup and fixed-position warning. This observation belongs to the previous version.',size=9.2)
@@ -465,7 +559,7 @@ def build(lang):
     for stale in ('LEGIONFW · 0.7.1','Manual 1.5','2.8.3.Legion0.6.6','30 dBm','rc.2','rc2','arranca siempre','Every boot starts OFF'):
         assert stale not in full,(lang,stale)
     out.set_metadata({'title':T('Legion 0.7.2 · Manual endiabladamente amigable','Legion 0.7.2 · Devilishly friendly user manual'),
-                      'author':'Ethan (Javier) · RAK3401 Legion','subject':'Legion 0.7.2 / manual 1.6',
+                      'author':'Ethan (Javier) · RAK3401 Legion','subject':'Legion 0.7.2 / manual 1.7',
                       'creationDate':'D:20261123000000Z','modDate':'D:20261123000000Z'})
     out.subset_fonts()
     target=ROOT/relative

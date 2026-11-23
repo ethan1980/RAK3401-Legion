@@ -2,6 +2,8 @@
 
 ## 0.7.2 - 2026-11-23
 
+- Clarify command syntax with full node ID or short-name placeholders; separate examples and update both manuals to edition 1.7.
+
 - Rebase Legion onto Meshtastic nightly 2.8.3.d0f4096; retain upstream CC310 signing acceleration, startup LoRa validation and interrupted XModem transfer recovery.
 - Accept full node IDs or short names in all targeted commands, including peer selection for trace, ignore/unignore and guard clear.
 - Add `/daily` for the last closed MeshHealth cut and `/position` for local position and configured publication.

@@ -21,12 +21,30 @@ hexadecimal node ID or the node's own short name, as described below.
 
 ## Node selection
 
-`!abcdef01` and `PSVR` are alternative selectors for the same Legion when its
-short name is PSVR. For example, `/telemetry !abcdef01` and `/telemetry PSVR`
-perform the same query. This applies to **every targeted command**, including
-APC/guard actions, backup subcommands, pagination and the new commands below.
-Existing ID forms remain available. `/telemetry` without a selector still asks
-all reachable Legion nodes on the channel to report.
+The general selector is **`!nodeid | shortname`**: choose either the full
+`!` plus eight-digit hexadecimal node ID or the executing Legion's actual short
+name. These are placeholders, not words to send. `|` means **or**; parentheses
+group alternatives, square brackets mark an optional argument, and angle
+brackets mark a value to replace. Do not type this notation literally.
+
+```text
+/telemetry !nodeid | shortname
+/trace (!nodeid | shortname) (!peerid | shortname)
+/backup status !nodeid | shortname
+```
+
+**Examples - PSVR and AZTH are sample short names, not part of any command:**
+
+```text
+/telemetry PSVR
+/telemetry AZTH
+/telemetry !2fcd88d4
+```
+
+Substitute the name or ID of your own target. The rule applies to **every targeted
+command**, including APC/guard actions, backup subcommands and pagination.
+`/telemetry` without a selector still asks all reachable Legion nodes on the
+channel to report.
 
 Short names match the entire name without ASCII case differences. Quote a name
 containing spaces, for example `/boot "AB C"`. Commands and channel names retain
@@ -35,7 +53,7 @@ same LegionRF channel share that short name, both can execute the command.
 Use the full ID to select one uniquely.
 
 The second node in `/trace`, `/ignore`, `/unignore` and `/guard clear` also accepts
-a short name, for example `/trace PSVR RLY1` or `/ignore PSVR !12345678`.
+a short name. Syntax: `/trace (!nodeid | shortname) (!peerid | shortname)`.
 It must resolve to exactly one named entry in the executing Legion's NodeDB.
 Missing or ambiguous names produce an error asking for the full ID. A queued
 operation rechecks the name before acting and cancels if its identity changed.
@@ -44,45 +62,45 @@ it is separate from these node selectors.
 
 ## Command reference
 
-| Message | Result |
+| General syntax | Result |
 | --- | --- |
 | `/telemetry` | Reachable Legion nodes report telemetry. |
-| `/telemetry !abcdef01` | Only the selected Legion reports telemetry. |
-| `/msg !abcdef01 SFNarrow Hello` | The selected Legion broadcasts text on its named channel. |
-| [`/drakarys !abcdef01 SFNarrow Hello`](#drakarys) | Sends the message on the selected channel at maximum available power and 7 hops. Use is under the user's responsibility; the user must assess legality in their region. |
-| `/reboot !abcdef01` | Schedules a normal restart 20 seconds after acceptance. |
-| `/zerohop !abcdef01 [page]` | Lists direct RF peers, short names and SNR. |
-| `/ignore !abcdef01 !12345678` | The selected Legion ignores the second node. |
-| `/unignore !abcdef01 !12345678` | The selected Legion removes the second node from its effective ignore list. |
-| `/ignorelist !abcdef01 [page]` | The selected Legion reports its own ignore list. |
-| `/ignore name !abcdef01 "Long name"` | Saves an exact long-name rule on the selected Legion. |
-| `/unignorename !abcdef01 "Long name"` | Removes that name rule. |
-| `/ignorelist names !abcdef01 [page]` | Lists the name rules with their last seen IDs and drop counters. |
-| `/trace !abcdef01 !12345678` | The selected Legion traces the second node and returns both paths. |
-| `/boot !abcdef01` | Reports boot evidence and first boot voltages. |
-| `/components !abcdef01` | Reports CC310 counters, radio SPI, REG1 DC/DC and preference-save counters. |
-| `/daily PSVR` | Reports the last closed 24-hour MeshHealth cut and its age. |
-| `/position PSVR` | Reports local position, validity, precision and configured LoRa/MQTT publication. |
-| `/listchannels PSVR` | Lists enabled configured channels and their one-based positions. |
-| `/createch !abcdef01 name psk` | Creates a secondary channel in the first available slot using a Base64 PSK. |
-| `/deletech !abcdef01 name` | Deletes the uniquely named secondary channel. |
-| `/backup !abcdef01` | Creates a rescue point if none exists. |
-| `/backup status !abcdef01` | Reports rescue validity and freshness. |
-| `/backup replace !abcdef01` | Explicitly refreshes the rescue point. |
-| `/backup delete !abcdef01` | Deletes the rescue point and disables its recovery. |
-| `/apc observe\|shadow\|on\|off !abcdef01` | Selects an [Adaptive Power Control mode](APC.md). |
-| `/arm !abcdef01` | Enables APC S1+S2 and antispam for this run; clears saved permanent arming. |
-| `/arm permanent PSVR` | Enables both and saves automatic arming across restarts. |
-| `/disarm !abcdef01` | Turns both OFF and clears saved permanent arming. |
-| `/guard status !abcdef01` | Reports antispam mode, quarantines and counters. |
-| `/guard observe\|on\|off !abcdef01` | Selects the RAM-only antispam mode. |
-| `/guard clear !abcdef01 !12345678` | Clears temporary antispam evidence; manual ignores remain. |
-| `/spamlist !abcdef01 [page]` | Lists temporary quarantines; see [Antispam](ANTISPAM.md). |
-| `/scramble !abcdef01` | Silences the selected Legion for 60 minutes, then restarts it. |
-| `/apc status !abcdef01 [page]` | Reports APC status, pages 1–7. |
+| `/telemetry !nodeid \| shortname` | Only the selected Legion reports telemetry. |
+| `/msg (!nodeid \| shortname) <channel> <message>` | The selected Legion broadcasts text on its named channel. |
+| [`/drakarys (!nodeid \| shortname) <channel> <message>`](#drakarys) | Sends the message on the selected channel at maximum available power and 7 hops. Use is under the user's responsibility; the user must assess legality in their region. |
+| `/reboot !nodeid \| shortname` | Schedules a normal restart 20 seconds after acceptance. |
+| `/zerohop (!nodeid \| shortname) [page]` | Lists direct RF peers, short names and SNR. |
+| `/ignore (!nodeid \| shortname) (!peerid \| shortname)` | The selected Legion ignores the second node. |
+| `/unignore (!nodeid \| shortname) (!peerid \| shortname)` | The selected Legion removes the second node from its effective ignore list. |
+| `/ignorelist (!nodeid \| shortname) [page]` | The selected Legion reports its own ignore list. |
+| `/ignore name (!nodeid \| shortname) "<long_name>"` | Saves an exact long-name rule on the selected Legion. |
+| `/unignorename (!nodeid \| shortname) "<long_name>"` | Removes that name rule. |
+| `/ignorelist names (!nodeid \| shortname) [page]` | Lists the name rules with their last seen IDs and drop counters. |
+| `/trace (!nodeid \| shortname) (!peerid \| shortname)` | The selected Legion traces the second node and returns both paths. |
+| `/boot !nodeid \| shortname` | Reports boot evidence and first boot voltages. |
+| `/components !nodeid \| shortname` | Reports CC310 counters, radio SPI, REG1 DC/DC and preference-save counters. |
+| `/daily !nodeid \| shortname` | Reports the last closed 24-hour MeshHealth cut and its age. |
+| `/position !nodeid \| shortname` | Reports local position, validity, precision and configured LoRa/MQTT publication. |
+| `/listchannels !nodeid \| shortname` | Lists enabled configured channels and their one-based positions. |
+| `/createch (!nodeid \| shortname) <channel> <psk>` | Creates a secondary channel in the first available slot using a Base64 PSK. |
+| `/deletech (!nodeid \| shortname) <channel>` | Deletes the uniquely named secondary channel. |
+| `/backup !nodeid \| shortname` | Creates a rescue point if none exists. |
+| `/backup status !nodeid \| shortname` | Reports rescue validity and freshness. |
+| `/backup replace !nodeid \| shortname` | Explicitly refreshes the rescue point. |
+| `/backup delete !nodeid \| shortname` | Deletes the rescue point and disables its recovery. |
+| `/apc (observe \| shadow \| on \| off) (!nodeid \| shortname)` | Selects an [Adaptive Power Control mode](APC.md). |
+| `/arm !nodeid \| shortname` | Enables APC S1+S2 and antispam for this run; clears saved permanent arming. |
+| `/arm permanent !nodeid \| shortname` | Enables both and saves automatic arming across restarts. |
+| `/disarm !nodeid \| shortname` | Turns both OFF and clears saved permanent arming. |
+| `/guard status !nodeid \| shortname` | Reports antispam mode, quarantines and counters. |
+| `/guard (observe \| on \| off) (!nodeid \| shortname)` | Selects the RAM-only antispam mode. |
+| `/guard clear (!nodeid \| shortname) (!peerid \| shortname)` | Clears temporary antispam evidence; manual ignores remain. |
+| `/spamlist (!nodeid \| shortname) [page]` | Lists temporary quarantines; see [Antispam](ANTISPAM.md). |
+| `/scramble !nodeid \| shortname` | Silences the selected Legion for 60 minutes, then restarts it. |
+| `/apc status (!nodeid \| shortname) [page]` | Reports APC status, pages 1–7. |
 
 Square brackets denote optional arguments; do not type them. `/ignorelist` requires
-the executor selector before its optional page. All ID examples also accept a short name. Backup details are in [RECOVERY.md](RECOVERY.md).
+the executor selector before its optional page. Every targeted syntax shows both choices. Backup details are in [RECOVERY.md](RECOVERY.md).
 
 ## Timing and replies
 
@@ -153,7 +171,7 @@ Reports over 199 bytes use `DAILY 1/2` for APC, SPAM, BACKUP and BAT, and
 
 ### Manual DAILY query
 
-Send `/daily !abcdef01` or `/daily PSVR` to read the **last closed** 24-hour
+Send `/daily !nodeid | shortname` to read the **last closed** 24-hour
 MeshHealth cut. It returns the MeshHealth score or `NA`/`PARTIAL`, the cut's
 activity fields, any `~` estimate markers and `age:...s` since that cut closed.
 Before the first 24-hour period closes, it replies that DAILY is unavailable.
@@ -162,7 +180,7 @@ schedule. Its response is the MeshHealth portion, not a fresh battery reading.
 
 ## Position query
 
-Send `/position !abcdef01` or `/position PSVR`. The read-only reply includes
+Send `/position !nodeid | shortname`. The read-only reply includes
 `FIXED` or `LIVE`, coordinate validity, latitude/longitude, effective position
 precision in bits, selected sharing channel (one-based), the configured broadcast
 interval and smart-position flag. It also reports LoRa TX/sharing configuration
@@ -174,18 +192,18 @@ radio reconfiguration or flash save is made.
 
 ## Arm and disarm
 
-Send `/arm !abcdef01` or `/arm PSVR` on LegionRF to enable APC S1+S2 and antispam
+Send `/arm !nodeid | shortname` on LegionRF to enable APC S1+S2 and antispam
 for this run. APC requires CLIENT and follows its usual warmup. If activation
 requirements fail, the request leaves both modes and the saved preference as they were.
 
-Use `/arm permanent PSVR` to enable both and **save automatic arming across
+Use `/arm permanent !nodeid | shortname` to enable both and **save automatic arming across
 restarts**. The saved preference is read back before confirmation. On the next
 boot it restores both after configuration and activation checks are ready;
 APC starts a fresh session and warmup. Statistics, samples and spam quarantines
 are still RAM-only. Missing or invalid saved state uses APC OFF and spam OBSERVE.
 
-Ordinary `/arm PSVR` clears a previous permanent preference while arming the
-current run. `/disarm PSVR` turns both OFF, clears temporary spam evidence and
+Ordinary `/arm !nodeid | shortname` clears a previous permanent preference while arming the
+current run. `/disarm !nodeid | shortname` turns both OFF, clears temporary spam evidence and
 clears the permanent preference. A save failure reports an error and leaves
 both modes as they were. Individual `/apc` and `/guard` mode changes affect the
 current run; the saved preference remains until ordinary `/arm` or `/disarm`.
@@ -193,20 +211,20 @@ APC status page 1 and mode replies expose `AUTOARM:saved` or `AUTOARM:OFF`.
 
 | Command | Confirmation |
 | --- | --- |
-| `/arm PSVR` | `!abcdef01: APC ON (S1+S2). SPAM ON.` |
-| `/arm permanent PSVR` | `!abcdef01: APC ON (S1+S2). SPAM ON. AUTOARM saved.` |
-| `/disarm PSVR` | `!abcdef01: APC OFF. SPAM OFF.` |
+| `/arm !nodeid \| shortname` | `!abcdef01: APC ON (S1+S2). SPAM ON.` |
+| `/arm permanent !nodeid \| shortname` | `!abcdef01: APC ON (S1+S2). SPAM ON. AUTOARM saved.` |
+| `/disarm !nodeid \| shortname` | `!abcdef01: APC OFF. SPAM OFF.` |
 
 ## Messages, restarts and ignored nodes
 
 For `/msg`, use an enabled channel name on the executing Legion. Quote names
-containing spaces, for example `/msg !abcdef01 "My channel" Hello`. The complete
+containing spaces, for example `/msg (!nodeid | shortname) "My channel" Hello`. The complete
 command must fit the normal 199-byte text limit; channel names are limited to
 11 bytes. There is no fallback to another channel or automatic command resend.
 
 ### Drakarys
 
-Send `/drakarys !abcdef01 SFNarrow Hello` or `/drakarys PSVR SFNarrow Hello`
+Send `/drakarys (!nodeid | shortname) <channel> <message>`
 in LegionRF. The syntax, channel selection and text limits are the same as
 for `/msg`.
 
@@ -251,7 +269,7 @@ Name rules are local to the executing Legion and are outside the rescue snapshot
 
 ### Scramble
 
-Send `/scramble !abcdef01` as a broadcast on **LegionRF**. The node selector chooses the
+Send `/scramble !nodeid | shortname` as a broadcast on **LegionRF**. The node selector chooses the
 Legion to silence. On receipt, normal traffic stops. The node can attempt one
 `Entering hibernation for Scramble.` notice on LegionRF. The notice has up to
 4 seconds to transmit under the usual TX checks. The node then turns off LoRa,
@@ -265,7 +283,7 @@ silence early. Normal low-voltage recovery still applies when the node boots.
 
 ## Secondary channels
 
-Send `/listchannels !abcdef01` or `/listchannels PSVR` to list the executing
+Send `/listchannels !nodeid | shortname` to list the executing
 node's enabled configured channels, including the primary and LegionRF:
 
 ```text
@@ -277,7 +295,7 @@ slots leave gaps; deleting a channel does not renumber the rest. No PSKs are
 reported and the query does not change the channels.
 
 
-`/createch !abcdef01 "My channel" <psk>` uses the first disabled secondary slot
+`/createch (!nodeid | shortname) <channel> <psk>` uses the first disabled secondary slot
 (indices 1–7). The name is limited to 11 UTF-8 bytes; quote spaces as for `/msg`.
 The PSK must be canonical standard Base64 decoding to **1, 16 or 32 bytes**,
 including the required padding; it is not an arbitrary text password. One-byte
@@ -285,7 +303,7 @@ values are Meshtastic short-key aliases. Use your own random 16- or 32-byte key
 for a private channel. Existing enabled names are not overwritten, MQTT forwarding
 starts disabled, and the new channel is usable without rebooting.
 
-`/deletech !abcdef01 "My channel"` takes no PSK. It requires one matching enabled
+`/deletech (!nodeid | shortname) <channel>` takes no PSK. It requires one matching enabled
 secondary channel and clears its slot without renumbering the others. Primary
 and LegionRF channels are protected. Names match without ASCII case differences;
 ambiguous matches are rejected. A slot used by Mesh Beacon, an active broadcast
@@ -354,7 +372,7 @@ The report adds no flash writes. `NA` means unavailable.
 
 ## Component fields
 
-`/components !abcdef01` is read-only; it does not reinitialize a component or save settings.
+`/components !nodeid | shortname` is read-only; it does not reinitialize a component or save settings.
 CC310, bulk SPI and REG1 DC/DC operate automatically. See
 [Automatic features](AUTOMATIC-FEATURES.md) for their purpose and the separate
 flash-persistence behavior. The command also reports preference-save counters.
